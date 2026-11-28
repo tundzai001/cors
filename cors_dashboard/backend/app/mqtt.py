@@ -251,30 +251,11 @@ def _cache_rtcm_signal_snapshot(serial: str, decoded: dict) -> None:
     if isinstance(raw_satellites, dict):
         raw_satellites = list(raw_satellites.values())
     for index, item in enumerate(raw_satellites):
-        if not isinstance(item, dict):
-            continue
-        satellite = dict(item)
-        try:
-            last_seen = int(float(satellite.get("lastSeen") or now_ms))
-        except (TypeError, ValueError):
-            last_seen = now_ms
-        if 0 < last_seen < 10_000_000_000:
-            last_seen *= 1000
-        if last_seen <= 0 or last_seen > now_ms + 60_000:
-            last_seen = now_ms
-        satellite["lastSeen"] = last_seen
-        key = str(
-            satellite.get("id")
-            or f"RTCM:{satellite.get('system') or 'un'}:{satellite.get('prn') or index}"
-        )
-        satellite_map[key] = satellite
-    for key, item in list(satellite_map.items()):
-        try:
-            last_seen = int(item.get("lastSeen") or 0)
-        except (TypeError, ValueError, AttributeError):
-            last_seen = 0
-        if last_seen and now_ms - last_seen > RTCM_SATELLITE_CACHE_TTL_MS:
-            satellite_map.pop(key, None)
+        entry = _normalize_rtcm_satellite(item, index, now_ms)
+        if entry:
+            key, satellite = entry
+            satellite_map[key] = satellite
+    _prune_rtcm_satellite_cache(satellite_map, now_ms)
     fresh_satellites = list(satellite_map.values())
     live["rtcm_signal_data"] = {
         **decoded,
@@ -289,6 +270,36 @@ def _cache_rtcm_signal_snapshot(serial: str, decoded: dict) -> None:
         live["rtcm_stats"] = decoded["packets"]
     elif decoded.get("rtcm_stats"):
         live["rtcm_stats"] = decoded["rtcm_stats"]
+
+
+def _normalize_rtcm_satellite(item, index, now_ms):
+    if not isinstance(item, dict):
+        return None
+    satellite = dict(item)
+    try:
+        last_seen = int(float(satellite.get("lastSeen") or now_ms))
+    except (TypeError, ValueError):
+        last_seen = now_ms
+    if 0 < last_seen < 10_000_000_000:
+        last_seen *= 1000
+    if last_seen <= 0 or last_seen > now_ms + 60_000:
+        last_seen = now_ms
+    satellite["lastSeen"] = last_seen
+    key = str(
+        satellite.get("id")
+        or f"RTCM:{satellite.get('system') or 'un'}:{satellite.get('prn') or index}"
+    )
+    return key, satellite
+
+
+def _prune_rtcm_satellite_cache(satellite_map, now_ms):
+    for key, item in list(satellite_map.items()):
+        try:
+            last_seen = int(item.get("lastSeen") or 0)
+        except (TypeError, ValueError, AttributeError):
+            last_seen = 0
+        if last_seen and now_ms - last_seen > RTCM_SATELLITE_CACHE_TTL_MS:
+            satellite_map.pop(key, None)
 
 
 def _expects_nmea_skyview(serial: str) -> bool:
@@ -615,133 +626,144 @@ async def batch_sync_checker():
     BEFORE: 30 devices × 1 DB conn/device/msg = 30+ conn/s → Pool tràn
     AFTER:  1 DB conn cho tất cả devices/60s → Giảm 1800 lần!
     """
-    global LAST_GLOBAL_SYNC_CHECK
-    
     while True:
         await asyncio.sleep(GLOBAL_SYNC_CHECK_INTERVAL)
-        
         if IS_SHUTTING_DOWN:
             break
-        
         try:
-            # Lấy danh sách devices online từ cache (không cần DB)
-            online_serials = [
-                serial for serial, status in device_status_cache.items()
-                if status in ['online', 'sleep', 'streaming', 'starting', 'configuring', 'locked']
-            ]
-            
-            if not online_serials:
-                continue
-            
-            # 🔥 CHỈ MỞ 1 KẾT NỐI DB DUY NHẤT
-            async with device_session_scope() as session:
-                # Lấy tất cả devices cùng lúc bằng 1 query
-                result = await session.execute(
-                    select(models.Device).filter(
-                        models.Device.serial.in_(online_serials)
-                    )
-                )
-                devices = result.scalars().all()
-                
-                checked_count = 0
-                
-                # Check sync cho từng device (KHÔNG mở thêm DB connection)
-                for device in sorted(devices, key=lambda item: item.serial):
-                    serial = device.serial
-                    if device.name:
-                        device_name_cache[serial] = device.name
-                    
-                    # Lấy config từ cache (đã nhận qua MQTT)
-                    agent_base = device_sync_cache.get(f"{serial}_base_config", {})
-                    agent_service = crud.normalize_service_config(
-                        device_sync_cache.get(f"{serial}_service_config")
-                    )
-                    
-                    # Serialize policy retries with admin edits so an older retry
-                    # cannot re-enable a host the admin just blocked.
-                    policy_row_locked = bool(device.server_config_lock)
-                    if policy_row_locked:
-                        device = await crud.get_device_for_update(session, serial)
-                        if not device:
-                            continue
-                    # DB config (chuẩn)
-                    db_base = device.base_config or {}
-                    db_service = crud.normalize_service_config(device.service_config)
-                    
-                    is_relay_like = serial.startswith(("RELAY_", "MONITOR_"))
-                    
-                    # Base 4G reports decoded observations, not editable target settings.
-                    from .mobile_base import is_readonly_base
-                    readonly_4g = is_readonly_base(device)
-                    # So sánh
-                    base_ok, base_errs = _compare_configs(agent_base, db_base, "Base", is_relay=is_relay_like)
-                    srv_ok, srv_errs = _compare_configs(agent_service, db_service, "Service", is_relay=is_relay_like)
-                    
-                    if readonly_4g:
-                        base_ok, srv_ok, base_errs, srv_errs = True, True, [], []
-
-                    if device.server_config_lock and not readonly_4g:
-                        desired = locked_server_ids(device.server_config_lock)
-                        report = (device.system_info or {}).get("device_lock") or {}
-                        applied = report.get("locked_servers")
-                        if supports_server_device_lock(device):
-                            if applied == desired and not report.get("all"):
-                                device.is_locked = False
-                            if applied != desired or device.is_locked or report.get("all"):
-                                from .command_dispatcher import send_command_to_pi
-                                try:
-                                    await send_command_to_pi(serial, {"command": "LOCK_DEVICE", "payload": {"locked_servers": desired}})
-                                except Exception as exc:
-                                    logging.warning("Device lock for %s awaits delivery (%s)", serial, type(exc).__name__)
-                            elif not desired:
-                                device.server_config_lock = None
-                        elif not desired:
-                            from .command_dispatcher import send_command_to_pi
-                            try:
-                                await send_command_to_pi(serial, {"command": "UNLOCK_DEVICE", "payload": {}})
-                                device.server_config_lock = None
-                                device.is_locked = False
-                            except Exception as exc:
-                                logging.warning("Unlock for %s awaits delivery (%s)", serial, type(exc).__name__)
-                        else:
-                            logging.warning("Device lock for %s requires an agent update", serial)
-
-                    version_ok = _version_matches(device.version)
-                    version_errs = [] if version_ok else [f"[Version] Agent={device.version or '??'} vs Server={settings.APP_VERSION}"]
-                    report = (device.system_info or {}).get("device_lock") or {}
-                    lock_ok = readonly_4g or not device.server_config_lock or (report.get("locked_servers") == locked_server_ids(device.server_config_lock) and not report.get("all"))
-                    if not lock_ok:
-                        version_errs.append("Khoá server chưa được agent xác nhận")
-                    is_synced = base_ok and srv_ok and version_ok and lock_ok
-                    
-                    # Cập nhật cache
-                    old_sync = device_sync_cache.get(serial)
-                    device_sync_cache[serial] = is_synced
-                    if not is_synced:
-                        device_sync_cache[f"{serial}_errors"] = base_errs + srv_errs + version_errs
-                    else:
-                        device_sync_cache.pop(f"{serial}_errors", None)
-                    device_last_sync_check[serial] = time.time()
-                    
-                    # Log nếu sync status thay đổi
-                    if old_sync is not None and old_sync != is_synced:
-                        if is_synced:
-                            logging.info("Device %s SYNCED", serial)
-                        else:
-                            logging.warning("Device %s OUT OF SYNC: %s", serial, base_errs + srv_errs + version_errs)
-                    
-                    sync_changed = device.is_synced != is_synced
-                    if sync_changed:
-                        device.is_synced = is_synced
-                    if sync_changed or policy_row_locked:
-                        await session.commit()
-                    checked_count += 1
-            
-            LAST_GLOBAL_SYNC_CHECK = time.time()
-            logging.info(f"✓ Batch sync check completed: {checked_count}/{len(online_serials)} devices")
-        
+            await _run_batch_sync_check()
         except Exception as e:
             logging.exception(f"❌ Batch sync checker error: {e}", exc_info=True)
+
+
+async def _run_batch_sync_check():
+    global LAST_GLOBAL_SYNC_CHECK
+    online_serials = [
+        serial for serial, status in device_status_cache.items()
+        if status in ["online", "sleep", "streaming", "starting", "configuring", "locked"]
+    ]
+    if not online_serials:
+        return
+    async with device_session_scope() as session:
+        result = await session.execute(
+            select(models.Device).filter(models.Device.serial.in_(online_serials))
+        )
+        devices = result.scalars().all()
+        checked_count = 0
+        for device in sorted(devices, key=lambda item: item.serial):
+            if await _check_device_sync(session, device):
+                checked_count += 1
+    LAST_GLOBAL_SYNC_CHECK = time.time()
+    logging.info("✓ Batch sync check completed: %s/%s devices", checked_count, len(online_serials))
+
+
+async def _check_device_sync(session, device):
+    serial = device.serial
+    if device.name:
+        device_name_cache[serial] = device.name
+    agent_base = device_sync_cache.get(f"{serial}_base_config", {})
+    agent_service = crud.normalize_service_config(
+        device_sync_cache.get(f"{serial}_service_config")
+    )
+    policy_row_locked = bool(device.server_config_lock)
+    if policy_row_locked:
+        device = await crud.get_device_for_update(session, serial)
+        if not device:
+            return False
+    from .mobile_base import is_readonly_base
+    readonly_4g = is_readonly_base(device)
+    if device.server_config_lock and not readonly_4g:
+        await _reconcile_device_lock(serial, device)
+    is_synced, errors = _device_sync_result(serial, device, agent_base, agent_service, readonly_4g)
+    sync_changed = _record_device_sync(serial, device, is_synced, errors)
+    if sync_changed or policy_row_locked:
+        await session.commit()
+    return True
+
+
+async def _reconcile_device_lock(serial, device):
+    desired = locked_server_ids(device.server_config_lock)
+    report = (device.system_info or {}).get("device_lock") or {}
+    if supports_server_device_lock(device):
+        await _reconcile_supported_device_lock(serial, device, desired, report)
+        return
+    await _reconcile_unsupported_device_lock(serial, device, desired)
+
+
+async def _reconcile_supported_device_lock(serial, device, desired, report):
+    applied = report.get("locked_servers")
+    if applied == desired and not report.get("all"):
+        device.is_locked = False
+    if applied != desired or device.is_locked or report.get("all"):
+        from .command_dispatcher import send_command_to_pi
+        try:
+            await send_command_to_pi(
+                serial,
+                {"command": "LOCK_DEVICE", "payload": {"locked_servers": desired}},
+            )
+        except Exception as exc:
+            logging.warning("Device lock for %s awaits delivery (%s)", serial, type(exc).__name__)
+    elif not desired:
+        device.server_config_lock = None
+
+
+async def _reconcile_unsupported_device_lock(serial, device, desired):
+    if not desired:
+        from .command_dispatcher import send_command_to_pi
+        try:
+            await send_command_to_pi(serial, {"command": "UNLOCK_DEVICE", "payload": {}})
+            device.server_config_lock = None
+            device.is_locked = False
+        except Exception as exc:
+            logging.warning("Unlock for %s awaits delivery (%s)", serial, type(exc).__name__)
+        return
+    logging.warning("Device lock for %s requires an agent update", serial)
+
+
+def _device_sync_result(serial, device, agent_base, agent_service, readonly_4g):
+    db_base = device.base_config or {}
+    db_service = crud.normalize_service_config(device.service_config)
+    is_relay_like = serial.startswith(("RELAY_", "MONITOR_"))
+    base_ok, base_errs = _compare_configs(agent_base, db_base, "Base", is_relay=is_relay_like)
+    srv_ok, srv_errs = _compare_configs(agent_service, db_service, "Service", is_relay_like)
+    if readonly_4g:
+        base_ok, srv_ok, base_errs, srv_errs = True, True, [], []
+    version_ok = _version_matches(device.version)
+    version_errs = [] if version_ok else [
+        f"[Version] Agent={device.version or '??'} vs Server={settings.APP_VERSION}"
+    ]
+    report = (device.system_info or {}).get("device_lock") or {}
+    lock_ok = (
+        readonly_4g
+        or not device.server_config_lock
+        or (
+            report.get("locked_servers") == locked_server_ids(device.server_config_lock)
+            and not report.get("all")
+        )
+    )
+    if not lock_ok:
+        version_errs.append("Khoá server chưa được agent xác nhận")
+    is_synced = base_ok and srv_ok and version_ok and lock_ok
+    return is_synced, base_errs + srv_errs + version_errs
+
+
+def _record_device_sync(serial, device, is_synced, errors):
+    old_sync = device_sync_cache.get(serial)
+    device_sync_cache[serial] = is_synced
+    if not is_synced:
+        device_sync_cache[f"{serial}_errors"] = errors
+    else:
+        device_sync_cache.pop(f"{serial}_errors", None)
+    device_last_sync_check[serial] = time.time()
+    if old_sync is not None and old_sync != is_synced:
+        if is_synced:
+            logging.info("Device %s SYNCED", serial)
+        else:
+            logging.warning("Device %s OUT OF SYNC: %s", serial, errors)
+    sync_changed = device.is_synced != is_synced
+    if sync_changed:
+        device.is_synced = is_synced
+    return sync_changed
 
 # ==============================================================================
 # MAIN MESSAGE HANDLER (ĐàTỐI ƯU HÓA - KHÔNG MỞ DB MỖI MESSAGE)
@@ -1054,7 +1076,12 @@ def _status_write_flags(serial, data, metadata, now, command_source_changed, is_
     last_known_status = device_status_cache.get(serial, "unknown")
     new_status = data.get("status")
     changes = _status_change_flags(data, metadata, command_source_changed, is_retained)
-    should_write = any(changes.values())
+    should_write = any(
+        changes[name]
+        for name in (
+            "command_source_changed", "device_lock_changed", "chip_type_changed", "boot_result_changed"
+        )
+    )
     if not should_write and changes["token_pending_state_changed"]:
         should_write = True
     elif not should_write and new_status and new_status != last_known_status:
@@ -1230,126 +1257,116 @@ async def handle_message_async(topic: str, payload: bytes, is_retained: bool = F
 # CONFIG COMPARISON (Giữ nguyên)
 # ==============================================================================
 
-def _compare_configs(config1: dict, config2: dict, prefix: str = "", is_relay: bool = False) -> tuple[bool, list[str]]:
-    """
-    So sánh cấu hình: config1 (Agent/Real), config2 (DB/Target).
-    Đã tối ưu để tránh lỗi NoneType và sai số Float.
-    """
-    errors = []
-    
-    if not isinstance(config1, dict): 
-        config1 = {}
-    if not isinstance(config2, dict): 
-        config2 = {}
+def _is_secret_config_field(key: object) -> bool:
+    normalized = str(key or "").strip().lower().replace("-", "_")
+    return any(marker in normalized for marker in ("password", "passwd", "secret", "token")) or normalized.endswith(("_pass", "pass"))
 
-    ignore_fields = {
-        'timestamp', 'last_update', 'created_at', 'updated_at',
-        'is_provisioned', 'device_name', 'serial',
-        'is_synced', 'sync_errors', 'warning',
-        'bps', 'ntrip_connected', 'ntrip_status', 'gnss_stats',
-        'user_id',
-        # Runtime wake/sleep changes independently of the saved service config.
-        'stream_active', 'server1_stream_active', 'server2_stream_active'
+
+def _normalize_config_value(value):
+    if isinstance(value, dict):
+        return {key: _normalize_config_value(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_normalize_config_value(item) for item in value]
+    if value is None:
+        return ""
+    normalized = str(value).strip().lower()
+    if normalized in {"true", "false"}:
+        return normalized
+    if normalized in {"none", "null"}:
+        return ""
+    try:
+        return round(float(normalized), 9)
+    except ValueError:
+        return normalized
+
+
+def _ignored_service_config_fields(agent_config, db_config):
+    enable_fields = {
+        key for key in db_config
+        if key == "rtcm_enabled"
+        or (key.startswith("server") and key.endswith("_enabled") and key[6:-8].isdigit())
     }
-    if prefix == 'Base.conversion_report.location':
-        # The province lookup echoes its input. The actual Base position is compared under Base.coords.
-        ignore_fields.add('input_coord')
-    if (prefix == 'Base' and config1.get('base_setup_method') == 'SURVEY_IN'
-            and config2.get('base_setup_method') == 'SURVEY_IN'):
-        # Fixed LLA fields may remain in the DB after switching to Survey-In.
-        # Survey targets are survey_in_duration and survey_in_accuracy instead.
-        ignore_fields.update({'coords', 'accuracy', 'altitude_reference'})
+    disabled_fields = {
+        key for key in enable_fields
+        if _normalize_config_value(db_config[key]) in ("false", "off", 0.0, "")
+        and _normalize_config_value(agent_config.get(key)) in ("false", "off", 0.0, "")
+    }
+    ignored = set(disabled_fields)
+    for flag in disabled_fields:
+        if flag == "rtcm_enabled":
+            ignored.update({"rtcmserver1", "rtcmport1", "rtcmmountpoint1", "rtcmusername1", "rtcmntripversion1"})
+            continue
+        server_id = flag[6:-8]
+        ignored.update(
+            f"{field}{server_id}"
+            for field in ("serverhost", "port", "mountpoint", "username", "ntrip_version")
+        )
+        ignored.add(f"server{server_id}_stream_on_demand")
+    if enable_fields and disabled_fields == enable_fields:
+        ignored.update({"ncomport", "reconnectioninterval", "stream_on_demand"})
+    return ignored
 
-    def is_secret_field(key: object) -> bool:
-        normalized = str(key or "").strip().lower().replace("-", "_")
-        return any(marker in normalized for marker in ("password", "passwd", "secret", "token")) or normalized.endswith(("_pass", "pass"))
 
-    def normalize_val(v):
-        if isinstance(v, dict):
-            return {key: normalize_val(value) for key, value in v.items()}
-        if isinstance(v, list):
-            return [normalize_val(value) for value in v]
-        if v is None: 
-            return ""
-        s = str(v).strip().lower()
-        if s == "true": 
-            return "true"
-        if s == "false": 
-            return "false"
-        if s == "none" or s == "null": 
-            return ""
-        # Xử lý số float: làm tròn về 9 chữ số thập phân để so sánh
-        try:
-            f = float(s)
-            return round(f, 9) 
-        except ValueError:
-            return s
+def _compare_nested_config(agent_value, db_value, current_path, is_relay):
+    if not isinstance(agent_value, dict):
+        if not db_value and not agent_value:
+            return []
+        return [f"[{current_path}] Type mismatch"]
+    _, errors = _compare_configs(agent_value, db_value, current_path, is_relay=is_relay)
+    return errors
 
+
+def _compare_config_entry(config1, key, db_value, prefix, is_relay, ignore_fields):
+    if key in ignore_fields or _is_secret_config_field(key):
+        return []
+    agent_value = config1.get(key)
+    current_path = f"{prefix}.{key}" if prefix else key
+    if (
+        key == "altitude_reference"
+        and agent_value is None
+        and config1.get("base_setup_method") == "FIXED_LLA"
+        and _normalize_config_value(db_value) == "legacy"
+    ):
+        agent_value = "LEGACY"
+    if agent_value is None and db_value is not None:
+        if is_relay:
+            return []
+        return [f"[{current_path}] Agent=None"]
+    if isinstance(db_value, dict):
+        return _compare_nested_config(agent_value, db_value, current_path, is_relay)
+    norm_db = _normalize_config_value(db_value)
+    norm_agent = _normalize_config_value(agent_value)
+    if norm_db == norm_agent:
+        return []
+    return [f"[{current_path}] DB={db_value} vs Agent={agent_value}"]
+
+
+def _compare_configs(config1: dict, config2: dict, prefix: str = "", is_relay: bool = False) -> tuple[bool, list[str]]:
+    """Compare agent settings with the saved target while ignoring runtime-only values."""
+    if not isinstance(config1, dict):
+        config1 = {}
+    if not isinstance(config2, dict):
+        config2 = {}
+    ignore_fields = {
+        "timestamp", "last_update", "created_at", "updated_at",
+        "is_provisioned", "device_name", "serial", "is_synced", "sync_errors", "warning",
+        "bps", "ntrip_connected", "ntrip_status", "gnss_stats", "user_id",
+        "stream_active", "server1_stream_active", "server2_stream_active",
+    }
+    if prefix == "Base.conversion_report.location":
+        ignore_fields.add("input_coord")
+    if (
+        prefix == "Base"
+        and config1.get("base_setup_method") == "SURVEY_IN"
+        and config2.get("base_setup_method") == "SURVEY_IN"
+    ):
+        ignore_fields.update({"coords", "accuracy", "altitude_reference"})
     if prefix == "Service":
-        def is_disabled(value):
-            return normalize_val(value) in ("false", "off", 0.0, "")
-
-        # A disabled service may omit its connection settings from telemetry.
-        # Still compare enable flags whenever the agent reports it running.
-        enable_fields = {key for key in config2 if key == "rtcm_enabled" or (
-            key.startswith("server") and key.endswith("_enabled")
-            and key[6:-8].isdigit())}
-        disabled_fields = {key for key in enable_fields
-                           if is_disabled(config2[key]) and is_disabled(config1.get(key))}
-        for flag in disabled_fields:
-            ignore_fields.add(flag)
-            if flag == "rtcm_enabled":
-                ignore_fields.update({"rtcmserver1", "rtcmport1", "rtcmmountpoint1",
-                                      "rtcmusername1", "rtcmntripversion1"})
-            else:
-                server_id = flag[6:-8]
-                ignore_fields.update(f"{field}{server_id}" for field in
-                                     ("serverhost", "port", "mountpoint", "username", "ntrip_version"))
-                ignore_fields.add(f"server{server_id}_stream_on_demand")
-        if enable_fields and disabled_fields == enable_fields:
-            ignore_fields.update({"ncomport", "reconnectioninterval", "stream_on_demand"})
-
-    for key, db_val in config2.items():
-        if key in ignore_fields or is_secret_field(key):
-            continue
-            
-        agent_val = config1.get(key)
-        current_path = f"{prefix}.{key}" if prefix else key
-
-        # Legacy fixed-position commands omitted this field and preserved the
-        # receiver's geoid configuration. Missing metadata never proves ELLIPSOID.
-        if (key == 'altitude_reference' and agent_val is None
-                and config1.get('base_setup_method') == 'FIXED_LLA'
-                and normalize_val(db_val) == 'legacy'):
-            agent_val = 'LEGACY'
-        
-        if agent_val is None and db_val is not None:
-            if is_relay:
-                continue
-            errors.append(f"[{current_path}] Agent=None")
-            continue
-            
-        if isinstance(db_val, dict):
-            if not isinstance(agent_val, dict):
-                if not db_val and not agent_val: 
-                    continue
-                errors.append(f"[{current_path}] Type mismatch")
-                continue
-            
-            _, sub_errors = _compare_configs(agent_val, db_val, current_path, is_relay=is_relay)
-            errors.extend(sub_errors)
-            continue
-
-        norm_db = normalize_val(db_val)
-        norm_agent = normalize_val(agent_val)
-        
-        if norm_db != norm_agent:
-            if norm_db == "" and norm_agent == "":
-                continue
-            
-            errors.append(f"[{current_path}] DB={db_val} vs Agent={agent_val}")
-
-    return (len(errors) == 0), errors
+        ignore_fields.update(_ignored_service_config_fields(config1, config2))
+    errors = []
+    for key, db_value in config2.items():
+        errors.extend(_compare_config_entry(config1, key, db_value, prefix, is_relay, ignore_fields))
+    return not errors, errors
 
 # ==============================================================================
 # START/STOP MQTT
