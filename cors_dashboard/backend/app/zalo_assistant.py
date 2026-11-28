@@ -326,6 +326,79 @@ class ZaloAssistantRepository:
             await db.refresh(binding)
             return binding, user
 
+    async def _load_group_link_code(self, db, code_hash, now):
+        result = await db.execute(
+            select(models.ZaloLinkCode)
+            .where(models.ZaloLinkCode.code_hash == code_hash)
+            .with_for_update()
+        )
+        link = result.scalars().first()
+        valid_link_types = {"group_admin", "group_public"}
+        if (
+            not link or link.used_at is not None or int(link.expires_at) < now
+            or str(link.link_type or "private") not in valid_link_types
+        ):
+            raise ValueError("Mã liên kết không hợp lệ, đã dùng hoặc đã hết hạn.")
+        return link
+
+    async def _require_active_group_admin(self, db, link):
+        user = await db.get(models.User, link.user_id)
+        if not user or not user.is_active:
+            raise ValueError("Tài khoản dashboard không tồn tại hoặc đã bị vô hiệu hóa.")
+        if user.role != auth.Role.ADMIN:
+            raise ValueError("Chỉ tài khoản dashboard admin mới tạo được mã đăng ký group admin.")
+        return user
+
+    async def _upsert_group_binding(self, db, link, chat_id, sender_id, display_name, now):
+        result = await db.execute(
+            select(models.ZaloChatBinding).where(models.ZaloChatBinding.chat_id == str(chat_id))
+        )
+        binding = result.scalars().first()
+        if binding is None:
+            binding = models.ZaloChatBinding(chat_id=str(chat_id), chat_type="group", created_at=now)
+            db.add(binding)
+        binding.chat_type = "group"
+        binding.binding_type = str(link.link_type)
+        binding.user_id = None
+        binding.sender_id = None
+        binding.display_name = str(display_name or "")[:255] or None
+        binding.registered_by = str(sender_id)
+        binding.is_active = True
+        binding.onboarding_completed = False
+        binding.last_seen_at = now
+        binding.station_scope_mode = (
+            str(link.station_scope_mode or "all")
+            if binding.binding_type == "group_public" else "all"
+        )
+        binding.allowed_bases = (
+            list(link.allowed_bases or [])
+            if binding.binding_type == "group_public" and binding.station_scope_mode == "selected" else []
+        )
+        link.used_at = now
+        link.used_by_chat_id = str(chat_id)
+        await db.flush()
+        return binding
+
+    async def _save_group_notification_preference(self, db, binding, now):
+        result = await db.execute(
+            select(models.ZaloNotificationPreference)
+            .where(models.ZaloNotificationPreference.binding_id == binding.id)
+        )
+        preference = result.scalars().first()
+        scopes = {
+            "mode": binding.station_scope_mode,
+            "allowed_bases": list(binding.allowed_bases or []),
+        }
+        if preference is None:
+            db.add(models.ZaloNotificationPreference(
+                binding_id=binding.id, enabled=True, min_severity="critical",
+                scopes=scopes, timezone=DEFAULT_TIMEZONE,
+                critical_override=True, updated_at=now,
+            ))
+            return
+        preference.scopes = scopes
+        preference.updated_at = now
+
     async def consume_group_link_code(
         self, code: str, chat_id: str, sender_id: str, display_name: Optional[str] = None
     ) -> tuple[models.ZaloChatBinding, models.User]:
@@ -333,74 +406,10 @@ class ZaloAssistantRepository:
         now = _now()
         code_hash = _hash_token(code, "link")
         async with auth_session_scope() as db:
-            rs = await db.execute(
-                select(models.ZaloLinkCode)
-                .where(models.ZaloLinkCode.code_hash == code_hash)
-                .with_for_update()
-            )
-            link = rs.scalars().first()
-            if (
-                not link or link.used_at is not None or int(link.expires_at) < now
-                or str(link.link_type or "private") not in {"group_admin", "group_public"}
-            ):
-                raise ValueError("Mã liên kết không hợp lệ, đã dùng hoặc đã hết hạn.")
-            user = await db.get(models.User, link.user_id)
-            if not user or not user.is_active:
-                raise ValueError("Tài khoản dashboard không tồn tại hoặc đã bị vô hiệu hóa.")
-            if user.role != auth.Role.ADMIN:
-                raise ValueError("Chỉ tài khoản dashboard admin mới tạo được mã đăng ký group admin.")
-
-            binding_rs = await db.execute(
-                select(models.ZaloChatBinding).where(models.ZaloChatBinding.chat_id == str(chat_id))
-            )
-            binding = binding_rs.scalars().first()
-            if binding is None:
-                binding = models.ZaloChatBinding(
-                    chat_id=str(chat_id), chat_type="group", created_at=now,
-                )
-                db.add(binding)
-            binding.chat_type = "group"
-            binding.binding_type = str(link.link_type)
-            binding.user_id = None
-            binding.sender_id = None
-            binding.display_name = str(display_name or "")[:255] or None
-            binding.registered_by = str(sender_id)
-            binding.is_active = True
-            binding.onboarding_completed = False
-            binding.last_seen_at = now
-            binding.station_scope_mode = (
-                str(link.station_scope_mode or "all")
-                if binding.binding_type == "group_public" else "all"
-            )
-            binding.allowed_bases = (
-                list(link.allowed_bases or [])
-                if binding.binding_type == "group_public"
-                and binding.station_scope_mode == "selected" else []
-            )
-            link.used_at = now
-            link.used_by_chat_id = str(chat_id)
-            await db.flush()
-
-            pref_rs = await db.execute(
-                select(models.ZaloNotificationPreference)
-                .where(models.ZaloNotificationPreference.binding_id == binding.id)
-            )
-            pref = pref_rs.scalars().first()
-            if pref is None:
-                db.add(models.ZaloNotificationPreference(
-                    binding_id=binding.id, enabled=True, min_severity="critical",
-                    scopes={
-                        "mode": binding.station_scope_mode,
-                        "allowed_bases": list(binding.allowed_bases or []),
-                    }, timezone=DEFAULT_TIMEZONE,
-                    critical_override=True, updated_at=now,
-                ))
-            else:
-                pref.scopes = {
-                    "mode": binding.station_scope_mode,
-                    "allowed_bases": list(binding.allowed_bases or []),
-                }
-                pref.updated_at = now
+            link = await self._load_group_link_code(db, code_hash, now)
+            user = await self._require_active_group_admin(db, link)
+            binding = await self._upsert_group_binding(db, link, chat_id, sender_id, display_name, now)
+            await self._save_group_notification_preference(db, binding, now)
             await db.commit()
             await db.refresh(binding)
             return binding, user

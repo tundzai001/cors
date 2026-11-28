@@ -87,15 +87,30 @@ class StatusReconciler:
         self._rejected_counts[reason] = self._rejected_counts.get(reason, 0) + 1
         return StatusDecision(False, None, reason, revision)
 
+    @staticmethod
+    def _normalized_status_serial(payload):
+        serial = str(payload.get("serial") or "").strip()
+        if not serial or len(serial) > 128:
+            return None
+        if any(ord(char) < 33 or ord(char) > 126 for char in serial):
+            return None
+        return serial
+
+    @staticmethod
+    def _normalized_agent_timestamp(payload):
+        timestamp = _as_timestamp(payload.get("agent_timestamp", payload.get("timestamp")))
+        # ESP uptime is neither an absolute date nor a safe ordering key across boots.
+        if timestamp is not None and (
+            not math.isfinite(timestamp) or timestamp < 1_000_000_000
+        ):
+            return None
+        return timestamp
+
     def _normalize_status_input(self, payload, source, retained, received_at):
         if not isinstance(payload, dict):
             return self._reject("invalid_payload")
-        serial = str(payload.get("serial") or "").strip()
-        invalid_serial = (
-            not serial or len(serial) > 128
-            or any(ord(char) < 33 or ord(char) > 126 for char in serial)
-        )
-        if invalid_serial:
+        serial = self._normalized_status_serial(payload)
+        if serial is None:
             return self._reject("missing_serial")
 
         now = float(received_at if received_at is not None else time.time())
@@ -103,13 +118,7 @@ class StatusReconciler:
         priority = SOURCE_PRIORITY.get(source_name, 0)
         boot_id = str(payload.get("status_boot_id") or "").strip() or None
         sequence = _as_sequence(payload.get("status_sequence"))
-        agent_timestamp = _as_timestamp(payload.get("agent_timestamp", payload.get("timestamp")))
-        # ESP reports uptime until its clock is synchronized. Uptime resets on
-        # reboot and cannot order different boots or date a retained snapshot.
-        if agent_timestamp is not None and (
-            not math.isfinite(agent_timestamp) or agent_timestamp < 1_000_000_000
-        ):
-            agent_timestamp = None
+        agent_timestamp = self._normalized_agent_timestamp(payload)
         status = str(payload.get("status") or "").strip().lower()
         event = str(payload.get("status_event") or "").strip().lower()
         if not status:
