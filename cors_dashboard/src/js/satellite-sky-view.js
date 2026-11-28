@@ -89,6 +89,77 @@ function getVisibleSatellites(satellites, maxAgeMs) {
     return Array.from(visibleByKey.values());
 }
 
+const skyPlotSystems = ['us', 'ru', 'eu', 'cn', 'jp', 'un'];
+
+function getSatelliteStructureHash(groupedSatellites) {
+    return skyPlotSystems
+        .map(system => groupedSatellites[system] ? `${system}:${groupedSatellites[system].map(sat => sat.prn).join(',')}` : '')
+        .join('|');
+}
+
+function satelliteBarColor(snr) {
+    if (snr >= 40) return '#00ff88';
+    if (snr >= 20) return '#ffc107';
+    return '#ff5252';
+}
+
+function createSkySatelliteBar(sat) {
+    const barFillHeight = Math.min(100, sat.snr / 55 * 100);
+    const barColor = satelliteBarColor(sat.snr);
+    const itemDiv = document.createElement('div');
+    itemDiv.className = 'sat-bar-item';
+    itemDiv.id = `sat-bar-${getSatelliteKey(sat).replace(/[^a-zA-Z0-9_-]/g, '-')}`;
+    itemDiv.innerHTML = `
+        <div class="sat-bar-snr" style="color: ${barColor}; font-weight: bold;">${Number(sat.snr)}</div>
+        <div class="sat-bar"><div class="sat-bar-fill" style="height: ${barFillHeight}%; background: ${barColor};"></div></div>
+        <div class="sat-bar-prn">${Number.isFinite(Number(getNormalizedPrn(sat))) ? Number(getNormalizedPrn(sat)) : ''}</div>
+    `;
+    return itemDiv;
+}
+
+function createSkySatelliteGroup(system, satellites) {
+    const groupDiv = document.createElement('div');
+    groupDiv.className = 'constellation-group';
+    const headerDiv = document.createElement('div');
+    headerDiv.className = 'constellation-header';
+    headerDiv.innerHTML = `<img src="${flags[system].src}" width="24" height="24" /> ${constellationNames[system]} (<span class="group-count">${satellites.length}</span>)`;
+    const barsWrapper = document.createElement('div');
+    barsWrapper.className = 'bars-wrapper';
+    satellites.forEach(sat => barsWrapper.appendChild(createSkySatelliteBar(sat)));
+    groupDiv.appendChild(headerDiv);
+    groupDiv.appendChild(barsWrapper);
+    return groupDiv;
+}
+
+function createSkySatelliteBars(groupedSatellites) {
+    const fragment = document.createDocumentFragment();
+    skyPlotSystems.forEach(system => {
+        const satellites = groupedSatellites[system];
+        if (!satellites || satellites.length === 0) return;
+        fragment.appendChild(createSkySatelliteGroup(system, satellites));
+    });
+    return fragment;
+}
+
+function updateSkySatelliteBar(sat) {
+    const itemDiv = document.getElementById(`sat-bar-${getSatelliteKey(sat).replace(/[^a-zA-Z0-9_-]/g, '-')}`);
+    if (!itemDiv) return;
+    const barFillHeight = Math.min(100, sat.snr / 55 * 100);
+    const barColor = satelliteBarColor(sat.snr);
+    const snrText = itemDiv.querySelector('.sat-bar-snr');
+    const fillDiv = itemDiv.querySelector('.sat-bar-fill');
+    if (snrText) { snrText.textContent = sat.snr; snrText.style.color = barColor; }
+    if (fillDiv) { fillDiv.style.height = `${barFillHeight}%`; fillDiv.style.background = barColor; }
+}
+
+function updateSkySatelliteBars(groupedSatellites) {
+    skyPlotSystems.forEach(system => {
+        const satellites = groupedSatellites[system];
+        if (!satellites) return;
+        satellites.forEach(updateSkySatelliteBar);
+    });
+}
+
 const SatelliteSkyView = memo(function SatelliteSkyView({ nmeaData }) {
     const bgCanvasRef = useRef(null);
     const satCanvasRef = useRef(null);
@@ -324,66 +395,17 @@ const SatelliteSkyView = memo(function SatelliteSkyView({ nmeaData }) {
             const trackingSats = allSats.filter(s => s.isTracking).length;
             setSatStats({ total: totalSats, tracking: trackingSats, bySystem: groupedFinal });
 
-            const structureHash = ['us','ru','eu','cn','jp','un']
-                .map(sys => groupedFinal[sys] ? `${sys}:${groupedFinal[sys].map(s => s.prn).join(',')}` : '')
-                .join('|');
+            const structureHash = getSatelliteStructureHash(groupedFinal);
 
             if (lastSatelliteDataRef.current !== structureHash) {
                 lastSatelliteDataRef.current = structureHash;
-                const fragment = document.createDocumentFragment();
-                ['us', 'ru', 'eu', 'cn', 'jp', 'un'].forEach(system => {
-                    if (!groupedFinal[system] || groupedFinal[system].length === 0) return;
-                    const sats = groupedFinal[system];
-                    const groupDiv = document.createElement('div');
-                    groupDiv.className = 'constellation-group';
-                    const headerDiv = document.createElement('div');
-                    headerDiv.className = 'constellation-header';
-                    headerDiv.innerHTML = `<img src="${flags[system].src}" width="24" height="24" /> ${constellationNames[system]} (<span class="group-count">${sats.length}</span>)`;
-                    const barsWrapper = document.createElement('div');
-                    barsWrapper.className = 'bars-wrapper';
-
-                    sats.forEach(sat => {
-                        const barFillHeight = Math.min(100, sat.snr / 55 * 100);
-                        let barColor = colors[system];
-                        if (sat.snr >= 40) barColor = '#00ff88';
-                        else if (sat.snr >= 20) barColor = '#ffc107';
-                        else barColor = '#ff5252';
-                        const itemDiv = document.createElement('div');
-                        itemDiv.className = 'sat-bar-item';
-                        itemDiv.id = `sat-bar-${getSatelliteKey(sat).replace(/[^a-zA-Z0-9_-]/g, '-')}`;
-                        itemDiv.innerHTML = `
-                            <div class="sat-bar-snr" style="color: ${barColor}; font-weight: bold;">${Number(sat.snr)}</div>
-                            <div class="sat-bar"><div class="sat-bar-fill" style="height: ${barFillHeight}%; background: ${barColor};"></div></div>
-                            <div class="sat-bar-prn">${Number.isFinite(Number(getNormalizedPrn(sat))) ? Number(getNormalizedPrn(sat)) : ''}</div>
-                        `;
-                        barsWrapper.appendChild(itemDiv);
-                    });
-                    groupDiv.appendChild(headerDiv);
-                    groupDiv.appendChild(barsWrapper);
-                    fragment.appendChild(groupDiv);
-                });
                 container.innerHTML = '';
-                container.appendChild(fragment);
+                container.appendChild(createSkySatelliteBars(groupedFinal));
                 return;
             }
 
             // Fast in-place SNR update
-            ['us', 'ru', 'eu', 'cn', 'jp', 'un'].forEach(system => {
-                if (!groupedFinal[system]) return;
-                groupedFinal[system].forEach(sat => {
-                    const itemDiv = document.getElementById(`sat-bar-${getSatelliteKey(sat).replace(/[^a-zA-Z0-9_-]/g, '-')}`);
-                    if (!itemDiv) return;
-                    const barFillHeight = Math.min(100, sat.snr / 55 * 100);
-                    let barColor = colors[system];
-                    if (sat.snr >= 40) barColor = '#00ff88';
-                    else if (sat.snr >= 20) barColor = '#ffc107';
-                    else barColor = '#ff5252';
-                    const snrText = itemDiv.querySelector('.sat-bar-snr');
-                    const fillDiv = itemDiv.querySelector('.sat-bar-fill');
-                    if (snrText) { snrText.textContent = sat.snr; snrText.style.color = barColor; }
-                    if (fillDiv) { fillDiv.style.height = `${barFillHeight}%`; fillDiv.style.background = barColor; }
-                });
-            });
+            updateSkySatelliteBars(groupedFinal);
         };
 
         const handleResize = () => {

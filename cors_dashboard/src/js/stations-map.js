@@ -555,7 +555,13 @@
                 const satBtn = el?.querySelector('.station-map-sat-btn');
                 satBtn?.addEventListener('click', () => {
                     const serial = satBtn.dataset.serial;
-                    const dev = (devices || []).find(d => String(d.serial).trim() === serial);
+                    let dev = null;
+                    for (const candidate of devices || []) {
+                        if (String(candidate.serial).trim() === serial) {
+                            dev = candidate;
+                            break;
+                        }
+                    }
                     if (dev) {
                         const devStatus = dev.status || '';
                         if (satBtn.dataset.offline === 'true' || devStatus === 'offline' || devStatus === 'lost') {
