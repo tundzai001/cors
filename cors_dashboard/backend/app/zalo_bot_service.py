@@ -229,21 +229,25 @@ class ZaloBotService(
         return "".join(segments)
 
     @staticmethod
+    def _safe_debug_mapping(value: dict, depth: int) -> dict:
+        safe = {}
+        for key, item in value.items():
+            key_text = str(key)
+            if any(part in key_text.lower() for part in ("token", "secret", "authorization", "password")):
+                safe[key_text] = REDACTED_VALUE
+            elif key_text.lower() in {"text", "content", "message_text"} and isinstance(item, str):
+                safe[key_text] = ZaloBotService._redact_command_secret(item)
+            else:
+                safe[key_text] = ZaloBotService._safe_debug_value(item, depth + 1)
+        return safe
+
+    @staticmethod
     def _safe_debug_value(value: Any, depth: int = 0) -> Any:
         """Keep webhook diagnostics useful without leaking credentials."""
         if depth > 8:
             return "<max-depth>"
         if isinstance(value, dict):
-            safe = {}
-            for key, item in value.items():
-                key_text = str(key)
-                if any(part in key_text.lower() for part in ("token", "secret", "authorization", "password")):
-                    safe[key_text] = REDACTED_VALUE
-                elif key_text.lower() in {"text", "content", "message_text"} and isinstance(item, str):
-                    safe[key_text] = ZaloBotService._redact_command_secret(item)
-                else:
-                    safe[key_text] = ZaloBotService._safe_debug_value(item, depth + 1)
-            return safe
+            return ZaloBotService._safe_debug_mapping(value, depth)
         if isinstance(value, (list, tuple)):
             return [ZaloBotService._safe_debug_value(item, depth + 1) for item in value[:50]]
         if isinstance(value, str):

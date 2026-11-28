@@ -1394,6 +1394,13 @@ def _remember_baud_hint(port_device: str, baud: int) -> None:
     CHIP_DETECT_BAUD_HINTS[str(port_device).strip()] = int(baud)
 
 
+def _append_serial_response_chunk(chunks, chunk, max_bytes):
+    if not chunk:
+        return False
+    chunks.append(chunk)
+    return sum(len(item) for item in chunks) >= max_bytes
+
+
 def _wait_for_serial_response(ser, wait_seconds: float, max_bytes: int = 2048) -> bytes:
     deadline = time.time() + max(0.1, float(wait_seconds))
     chunks = []
@@ -1406,10 +1413,9 @@ def _wait_for_serial_response(ser, wait_seconds: float, max_bytes: int = 2048) -
             read_size = min(waiting, max_bytes)
             chunk = ser.read(read_size)
             if chunk:
-                chunks.append(chunk)
                 seen_data = True
                 idle_ticks_after_data = 0
-                if sum(len(x) for x in chunks) >= max_bytes:
+                if _append_serial_response_chunk(chunks, chunk, max_bytes):
                     break
             time.sleep(0.03)
             continue
@@ -2008,6 +2014,17 @@ def _nmea_checksum(body: str) -> str:
         csum ^= ord(ch)
     return f"{csum:02X}"
 
+def _apply_ubx_satellite_count(parts):
+    numsv = globals().get("LAST_UBX_NUMSV")
+    numsv_ts = float(globals().get("LAST_UBX_NUMSV_TS") or 0.0)
+    if numsv is None or (time.time() - numsv_ts) > 2.5:
+        return
+    try:
+        parts[7] = str(max(0, min(int(numsv), 99)))
+    except Exception:
+        pass
+
+
 def _normalize_gga_for_ntrip(raw_gga: str) -> str | None:
     """
     Normalize outbound GGA for NTRIP:
@@ -2031,19 +2048,7 @@ def _normalize_gga_for_ntrip(raw_gga: str) -> str | None:
         if len(parts) < 15:
             return s
 
-        numsv = globals().get("LAST_UBX_NUMSV")
-        numsv_ts = float(globals().get("LAST_UBX_NUMSV_TS") or 0.0)
-        if numsv is not None and (time.time() - numsv_ts) <= 2.5:
-            try:
-                n = int(numsv)
-                if n < 0:
-                    n = 0
-                if n > 99:
-                    n = 99
-                parts[7] = str(n)
-            except Exception:
-                pass
-
+        _apply_ubx_satellite_count(parts)
         body2 = ",".join(parts)
         return f"${body2}*{_nmea_checksum(body2)}"
     except Exception:
