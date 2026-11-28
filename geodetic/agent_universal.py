@@ -3181,6 +3181,72 @@ class RTCMSignalDecoder:
             return active
         return {}
 
+    @staticmethod
+    def _extract_rtcm_packet(buffer: bytes) -> tuple[bytes | None, bytes]:
+        start = buffer.find(b"\xD3")
+        if start < 0:
+            return None, b""
+        if start > 0:
+            buffer = buffer[start:]
+        if len(buffer) < 3:
+            return None, buffer
+        packet_length = 3 + (((buffer[1] & 0x03) << 8) | buffer[2]) + 3
+        if len(buffer) < packet_length:
+            return None, buffer
+        return buffer[:packet_length], buffer[packet_length:]
+
+    def _record_rtcm_message_stats(self, serial: str, message_type: int) -> None:
+        import time
+        now = time.time()
+        if not hasattr(self, '_stats_by_serial'):
+            self._stats_by_serial = {}
+        if serial not in self._stats_by_serial:
+            self._stats_by_serial[serial] = {}
+        message_key = str(message_type)
+        stats = self._stats_by_serial[serial]
+        if message_key not in stats:
+            stats[message_key] = {"last_seen": now, "interval": 0.0, "count": 1}
+            return
+        stat = stats[message_key]
+        stat["interval"] = round(now - stat["last_seen"], 2)
+        stat["last_seen"] = now
+        stat["count"] += 1
+
+    def _decode_rtcm_message(self, message_type: int, payload: bytes, serial: str):
+        if message_type in (1005, 1006):
+            self._decode_1005(payload, serial)
+            return None
+        if message_type == 1019:
+            self._decode_1019(payload, serial)
+            return None
+        if message_type == 1020:
+            self._decode_1020(payload, serial)
+            return None
+        if message_type == 1042:
+            self._decode_1042(payload, serial)
+            return None
+        if message_type == 1044:
+            self._decode_1044(payload, serial)
+            return None
+        if message_type == 1045:
+            self._decode_1045(payload, serial)
+            return None
+        return self._decode_msm_payload(message_type, payload, serial)
+
+    @staticmethod
+    def _append_rtcm_result(message_type, decoded, packets, satellites_by_id):
+        if not decoded:
+            packets.append({"messageType": message_type, "satelliteCount": 0})
+            return
+        packets.append({
+            "messageType": message_type,
+            "navSystem": decoded["navSystem"],
+            "msmLevel": decoded["msmLevel"],
+            "satelliteCount": len(decoded["satellites"]),
+        })
+        for satellite in decoded["satellites"]:
+            satellites_by_id[satellite["id"]] = satellite
+
     def decode_sync(self, serial: str, payload: bytes) -> dict[str, Any] | None:
         buffer = self._buffers.get(serial, b"") + payload
         packets: list[dict[str, Any]] = []
@@ -3188,92 +3254,29 @@ class RTCMSignalDecoder:
         errors = 0
 
         while len(buffer) >= 3:
-            start = buffer.find(b"\xD3")
-            if start < 0:
-                buffer = b""
+            packet, buffer = self._extract_rtcm_packet(buffer)
+            if packet is None:
                 break
-            if start > 0:
-                buffer = buffer[start:]
-            if len(buffer) < 3:
-                break
-
-            message_length = ((buffer[1] & 0x03) << 8) | buffer[2]
-            packet_length = 3 + message_length + 3
-            if len(buffer) < packet_length:
-                break
-
-            packet = buffer[:packet_length]
-            buffer = buffer[packet_length:]
-
-            expected_crc = int.from_bytes(packet[-3:], "big")
-            if crc24q(packet[:-3]) != expected_crc:
+            if crc24q(packet[:-3]) != int.from_bytes(packet[-3:], "big"):
                 errors += 1
                 continue
 
             payload_bytes = packet[3:-3]
             message_type = (payload_bytes[0] << 4) | (payload_bytes[1] >> 4) if len(payload_bytes) >= 2 else -1
-
             if message_type > 0:
-                import time
-                now = time.time()
-                if not hasattr(self, '_stats_by_serial'):
-                    self._stats_by_serial = {}
-                if serial not in self._stats_by_serial:
-                    self._stats_by_serial[serial] = {}
-                msg_str = str(message_type)
-                if msg_str not in self._stats_by_serial[serial]:
-                    self._stats_by_serial[serial][msg_str] = {"last_seen": now, "interval": 0.0, "count": 1}
-                else:
-                    last_seen = self._stats_by_serial[serial][msg_str]["last_seen"]
-                    self._stats_by_serial[serial][msg_str]["interval"] = round(now - last_seen, 2)
-                    self._stats_by_serial[serial][msg_str]["last_seen"] = now
-                    self._stats_by_serial[serial][msg_str]["count"] += 1
-
+                self._record_rtcm_message_stats(serial, message_type)
             try:
-                if message_type in (1005, 1006):
-                    self._decode_1005(payload_bytes, serial)
-                    decoded = None
-                elif message_type == 1019:
-                    self._decode_1019(payload_bytes, serial)
-                    decoded = None
-                elif message_type == 1020:
-                    self._decode_1020(payload_bytes, serial)
-                    decoded = None
-                elif message_type == 1042:
-                    self._decode_1042(payload_bytes, serial)
-                    decoded = None
-                elif message_type == 1044:
-                    self._decode_1044(payload_bytes, serial)
-                    decoded = None
-                elif message_type == 1045:
-                    self._decode_1045(payload_bytes, serial)
-                    decoded = None
-                else:
-                    decoded = self._decode_msm_payload(message_type, payload_bytes, serial)
+                decoded = self._decode_rtcm_message(message_type, payload_bytes, serial)
             except (IndexError, ValueError):
                 decoded = None
                 errors += 1
-            if decoded:
-                packets.append(
-                    {
-                        "messageType": message_type,
-                        "navSystem": decoded["navSystem"],
-                        "msmLevel": decoded["msmLevel"],
-                        "satelliteCount": len(decoded["satellites"]),
-                    }
-                )
-                for sat in decoded["satellites"]:
-                    satellites_by_id[sat["id"]] = sat
-            else:
-                packets.append({"messageType": message_type, "satelliteCount": 0})
+            self._append_rtcm_result(message_type, decoded, packets, satellites_by_id)
 
         if len(buffer) > MAX_BUFFER_BYTES:
             buffer = buffer[-MAX_BUFFER_BYTES:]
         self._buffers[serial] = buffer
-
         if not packets and not satellites_by_id and errors == 0:
             return None
-
         return {
             "type": "rtcm_signal",
             "serial": serial,

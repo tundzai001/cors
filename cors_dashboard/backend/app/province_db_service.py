@@ -403,6 +403,106 @@ async def list_legacy_units(db, kind, province_code=None, district_code=None):
                 and (not district_code or r['district_code'] == district_code)]
 
 
+def _administrative_units_sql(version, tokens, limit):
+    params = {f'token{i}': '%' + token + '%' for i, token in enumerate(tokens)}
+    params['limit'] = limit * 4
+    predicates = ' AND '.join(f"search_name LIKE :token{i}" for i in range(len(tokens)))
+    if version == 'legacy':
+        units_sql = """
+            SELECT 'ward' AS type, w.code, w.name, w.full_name,
+                   p.code AS province_code, p.full_name AS province_name,
+                   d.code AS district_code, d.full_name AS district_name,
+                   lower(replace(w.code_name || ' ' || d.code_name || ' ' || p.code_name, '_', ' ')) AS search_name
+            FROM vn_admin_legacy.wards w
+            JOIN vn_admin_legacy.districts d ON d.code = w.district_code
+            JOIN vn_admin_legacy.provinces p ON p.code = d.province_code
+            UNION ALL
+            SELECT 'district', d.code, d.name, d.full_name, p.code, p.full_name,
+                   NULL, NULL, lower(replace(d.code_name || ' ' || p.code_name, '_', ' '))
+            FROM vn_admin_legacy.districts d JOIN vn_admin_legacy.provinces p ON p.code = d.province_code
+            UNION ALL
+            SELECT 'province', p.code, p.name, p.full_name, p.code, p.full_name,
+                   NULL, NULL, lower(replace(p.code_name, '_', ' '))
+            FROM vn_admin_legacy.provinces p
+        """
+    else:
+        units_sql = """
+            SELECT 'ward' AS type, w.code, w.name, w.full_name,
+                   w.province_code, p.full_name AS province_name,
+                   NULL AS district_code, NULL AS district_name,
+                   lower(replace(coalesce(w.code_name, '') || ' ' || coalesce(p.code_name, ''), '_', ' ')) AS search_name
+            FROM wards w JOIN provinces p ON p.code = w.province_code
+            UNION ALL
+            SELECT 'province', p.code, p.name, p.full_name,
+                   p.code, p.full_name, NULL, NULL,
+                   lower(replace(coalesce(p.code_name, ''), '_', ' '))
+            FROM provinces p
+        """
+    statement = text('SELECT * FROM (' + units_sql + ') units WHERE ' + predicates + ' LIMIT :limit')
+    return statement, params
+
+
+def _format_administrative_unit(row, query, version):
+    item = dict(row)
+    item.pop('search_name', None)
+    item['display_name'] = ', '.join(filter(None, [
+        item['full_name'] or item['name'], item['district_name'],
+        item['province_name'] if item['type'] != 'province' else None,
+    ]))
+    if not matches_place(query, item['name'], item['display_name']):
+        return None
+    item.update(
+        dataset=version,
+        dataset_version='v2.4.1' if version == 'legacy' else 'v5.2.0',
+        lat=None,
+        lon=None,
+        coordinate_source=None,
+        source='Cơ sở dữ liệu hành chính Việt Nam',
+        storage='postgresql',
+    )
+    return item
+
+
+async def _search_administrative_units_sql(db, query, tokens, limit, version):
+    statement, params = _administrative_units_sql(version, tokens, limit)
+    try:
+        async with db.begin_nested():
+            found = (await db.execute(statement, params)).mappings().all()
+        results = []
+        for row in found:
+            item = _format_administrative_unit(row, query, version)
+            if item is not None:
+                results.append(item)
+        return results
+    except Exception as exc:
+        logger.debug("Administrative SQL lookup unavailable (%s); using versioned catalogue: %s", version, exc)
+        return []
+
+
+def _merge_administrative_catalogue(results, query, limit, dataset):
+    seen = {(row['dataset'], row['type'], row['code']) for row in results}
+    for item in search_catalog(query, limit=limit, dataset=dataset):
+        key = (item['dataset'], item['type'], item['code'])
+        if key in seen:
+            continue
+        results.append(item)
+        seen.add(key)
+    first = (query_parts(query) or [''])[0]
+    results.sort(key=lambda row: (
+        normalize(row['name']) != first,
+        row['dataset'] != 'current',
+        len(normalize(row['name'])),
+        row['display_name'],
+    ))
+    for item in results:
+        if item['type'] != 'province':
+            continue
+        item['lat'], item['lon'] = lookup_coords(item['name'])
+        if item['lat'] is not None:
+            item['coordinate_source'] = 'known_province_point'
+    return results[:limit]
+
+
 async def search_administrative_units(db: Optional[AsyncSession], query: str, limit: int = 15,
                                       dataset: str = "all") -> list[dict[str, Any]]:
     """Search current SQL names and a separately versioned pre-merger catalogue."""
@@ -413,75 +513,8 @@ async def search_administrative_units(db: Optional[AsyncSession], query: str, li
         tokens = ' '.join(query_parts(query)).split()
         versions = ('current', 'legacy') if dataset == 'all' else (dataset,)
         for version in versions if tokens else ():
-            params = {f'token{i}': '%' + token + '%' for i, token in enumerate(tokens)}
-            params['limit'] = limit * 4
-            predicates = ' AND '.join(f"search_name LIKE :token{i}" for i in range(len(tokens)))
-            if version == 'legacy':
-                units_sql = """
-                    SELECT 'ward' AS type, w.code, w.name, w.full_name,
-                           p.code AS province_code, p.full_name AS province_name,
-                           d.code AS district_code, d.full_name AS district_name,
-                           lower(replace(w.code_name || ' ' || d.code_name || ' ' || p.code_name, '_', ' ')) AS search_name
-                    FROM vn_admin_legacy.wards w
-                    JOIN vn_admin_legacy.districts d ON d.code = w.district_code
-                    JOIN vn_admin_legacy.provinces p ON p.code = d.province_code
-                    UNION ALL
-                    SELECT 'district', d.code, d.name, d.full_name, p.code, p.full_name,
-                           NULL, NULL, lower(replace(d.code_name || ' ' || p.code_name, '_', ' '))
-                    FROM vn_admin_legacy.districts d JOIN vn_admin_legacy.provinces p ON p.code = d.province_code
-                    UNION ALL
-                    SELECT 'province', p.code, p.name, p.full_name, p.code, p.full_name,
-                           NULL, NULL, lower(replace(p.code_name, '_', ' '))
-                    FROM vn_admin_legacy.provinces p
-                """
-            else:
-                units_sql = """
-                    SELECT 'ward' AS type, w.code, w.name, w.full_name,
-                           w.province_code, p.full_name AS province_name,
-                           NULL AS district_code, NULL AS district_name,
-                           lower(replace(coalesce(w.code_name, '') || ' ' || coalesce(p.code_name, ''), '_', ' ')) AS search_name
-                    FROM wards w JOIN provinces p ON p.code = w.province_code
-                    UNION ALL
-                    SELECT 'province', p.code, p.name, p.full_name,
-                           p.code, p.full_name, NULL, NULL,
-                           lower(replace(coalesce(p.code_name, ''), '_', ' '))
-                    FROM provinces p
-                """
-            statement = text('SELECT * FROM (' + units_sql + ') units WHERE ' + predicates + ' LIMIT :limit')
-            try:
-                async with db.begin_nested():
-                    found = (await db.execute(statement, params)).mappings().all()
-                for row in found:
-                    item = dict(row)
-                    item.pop('search_name', None)
-                    item['display_name'] = ', '.join(filter(None, [
-                        item['full_name'] or item['name'], item['district_name'],
-                        item['province_name'] if item['type'] != 'province' else None]))
-                    if not matches_place(query, item['name'], item['display_name']):
-                        continue
-                    item.update(dataset=version, dataset_version='v2.4.1' if version == 'legacy' else 'v5.2.0',
-                                lat=None, lon=None, coordinate_source=None,
-                                source='Cơ sở dữ liệu hành chính Việt Nam', storage='postgresql')
-                    results.append(item)
-            except Exception as exc:
-                logger.debug("Administrative SQL lookup unavailable (%s); using versioned catalogue: %s", version, exc)
-
-    seen = {(r['dataset'], r['type'], r['code']) for r in results}
-    for item in search_catalog(query, limit=limit, dataset=dataset):
-        key = (item['dataset'], item['type'], item['code'])
-        if key not in seen:
-            results.append(item)
-            seen.add(key)
-    first = (query_parts(query) or [''])[0]
-    results.sort(key=lambda r: (normalize(r['name']) != first,
-                                r['dataset'] != 'current', len(normalize(r['name'])), r['display_name']))
-    for item in results:
-        # A known provincial point is never inherited by a ward or district.
-        if item['type'] == 'province':
-            item['lat'], item['lon'] = lookup_coords(item['name'])
-            if item['lat'] is not None:
-                item['coordinate_source'] = 'known_province_point'
-    return results[:limit]
+            results.extend(await _search_administrative_units_sql(db, query, tokens, limit, version))
+    return _merge_administrative_catalogue(results, query, limit, dataset)
 
 
 if __name__ == "__main__":

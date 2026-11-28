@@ -37,98 +37,100 @@ class CasterClient:
         self.admin_user = str(admin_user or env_master_user).strip()
         self.admin_password = str(admin_password or env_master_password).strip()
 
+    async def _open_command_connection(self, deadline):
+        # Retry before sending bytes; replaying a control command may duplicate an action.
+        for attempt in range(3):
+            try:
+                remaining = deadline - asyncio.get_running_loop().time()
+                connection = await asyncio.wait_for(
+                    asyncio.open_connection(self.host, self.port),
+                    timeout=max(0.01, min(10.0, remaining)),
+                )
+                if self._connection_errors.pop((self.host, self.port), None):
+                    logger.info("Caster connection restored (%s:%s)", self.host, self.port)
+                return connection
+            except (OSError, asyncio.TimeoutError):
+                delay = attempt + 1
+                if attempt == 2 or deadline - asyncio.get_running_loop().time() <= delay:
+                    raise
+                await asyncio.sleep(delay)
+
+    @staticmethod
+    def _is_table_query(command):
+        clean_command = command.strip()
+        return (
+            any(path in command for path in ("/usertable", "/sourcetable", "/clienttable"))
+            or clean_command.startswith("GET / HTTP/")
+            or "\nGET / HTTP/" in command
+        )
+
+    async def _read_command_response(self, reader, command, deadline, chunks):
+        is_table_query = self._is_table_query(command)
+        timeout = 5.0
+        marker_tail = b""
+        total_bytes = sum(len(chunk) for chunk in chunks)
+        while True:
+            try:
+                remaining = deadline - asyncio.get_running_loop().time()
+                if remaining <= 0:
+                    break
+                chunk = await asyncio.wait_for(reader.read(4096), timeout=timeout)
+                if not chunk:
+                    break
+                chunks.append(chunk)
+                total_bytes += len(chunk)
+                if total_bytes > MAX_RESPONSE_BYTES:
+                    logger.warning("Caster response exceeded the %s-byte limit", MAX_RESPONSE_BYTES)
+                    return False
+                if not is_table_query:
+                    break
+                marker_window = (marker_tail + chunk).upper()
+                if any(marker in marker_window for marker in (b"ENDCLIENTTABLE", b"ENDUSERTABLE", b"ENDSOURCETABLE")):
+                    break
+                marker_tail = marker_window[-32:]
+                timeout = min(1.0, remaining)
+            except asyncio.TimeoutError:
+                break
+        return True
+
+    def _log_command_error(self, error):
+        if isinstance(error, (OSError, asyncio.TimeoutError)):
+            key = (self.host, self.port)
+            now = time.monotonic()
+            last = self._connection_errors.get(key)
+            if last is None or now - last >= 60:
+                logger.warning("Caster unavailable (%s:%s): %s; automatic polling will retry",
+                               self.host, self.port, type(error).__name__)
+                self._connection_errors[key] = now
+            return
+        logger.exception("Lỗi gọi Caster (%s:%s): %s", self.host, self.port, type(error).__name__)
+
     async def _send_command(self, command: str) -> str:
         reader, writer = None, None
         chunks = []
-        total_bytes = 0
         deadline = asyncio.get_running_loop().time() + MAX_RESPONSE_SECONDS
         try:
             if CLIENTTABLE_DEBUG:
                 logger.info(f"--- THỰC HIỆN KẾT NỐI ĐẾN {self.host}:{self.port} ---")
-            
-            # 1. Mở kết nối TCP
-            # Retry only before sending bytes: replaying a control command could
-            # create/delete an account twice after a response is lost.
-            for attempt in range(3):
-                try:
-                    remaining = deadline - asyncio.get_running_loop().time()
-                    reader, writer = await asyncio.wait_for(
-                        asyncio.open_connection(self.host, self.port),
-                        timeout=max(0.01, min(10.0, remaining)),
-                    )
-                    if self._connection_errors.pop((self.host, self.port), None):
-                        logger.info("Caster connection restored (%s:%s)", self.host, self.port)
-                    break
-                except (OSError, asyncio.TimeoutError):
-                    delay = attempt + 1
-                    if attempt == 2 or deadline - asyncio.get_running_loop().time() <= delay:
-                        raise
-                    await asyncio.sleep(delay)
-            
-            # 2. Gửi lệnh
+            reader, writer = await self._open_command_connection(deadline)
             writer.write(command.encode('ascii', errors='ignore'))
             await writer.drain()
-
-            # 3. Đọc dữ liệu
-            # Phân biệt truy vấn bảng dữ liệu lớn (usertable, sourcetable, clienttable, hoặc standard NTRIP GET /) và lệnh điều khiển ngắn
-            cmd_clean = command.strip()
-            is_table_query = any(x in command for x in ["/usertable", "/sourcetable", "/clienttable"]) or cmd_clean.startswith("GET / HTTP/") or "\nGET / HTTP/" in command
-            
-            # Tăng timeout an toàn lên 5.0s để chờ Caster xử lý xong vòng lặp UI (tối đa 2.0s)
-            timeout = 5.0
-            marker_tail = b""
-            
-            while True:
-                try:
-                    remaining = deadline - asyncio.get_running_loop().time()
-                    if remaining <= 0:
-                        break
-                    chunk = await asyncio.wait_for(reader.read(4096), timeout=timeout)
-                    if not chunk:
-                        break
-                    chunks.append(chunk)
-                    total_bytes += len(chunk)
-                    if total_bytes > MAX_RESPONSE_BYTES:
-                        logger.warning("Caster response exceeded the %s-byte limit", MAX_RESPONSE_BYTES)
-                        return ""
-                    
-                    # Với các lệnh điều khiển ngắn, chỉ đọc gói dữ liệu đầu tiên rồi thoát ngay để tránh block kết nối
-                    if not is_table_query:
-                        break
-                    
-                    # Thoát sớm chỉ khi gặp marker kết thúc thật sự của response.
-                    marker_window = (marker_tail + chunk).upper()
-                    if any(marker in marker_window for marker in (b"ENDCLIENTTABLE", b"ENDUSERTABLE", b"ENDSOURCETABLE")):
-                        break
-                    marker_tail = marker_window[-32:]
-                    
-                    # Các lần đọc tiếp theo của bảng dữ liệu có thể dùng timeout ngắn hơn (1.0s)
-                    timeout = min(1.0, remaining)
-                except asyncio.TimeoutError:
-                    # Chấp nhận timeout như là dấu hiệu kết thúc luồng dữ liệu
-                    break
-            
+            if not await self._read_command_response(reader, command, deadline, chunks):
+                return ""
             return b"".join(chunks).decode('utf-8', errors='ignore')
-
-        except Exception as e:
-            if isinstance(e, (OSError, asyncio.TimeoutError)):
-                key = (self.host, self.port)
-                now = time.monotonic()
-                last = self._connection_errors.get(key)
-                if last is None or now - last >= 60:
-                    logger.warning("Caster unavailable (%s:%s): %s; automatic polling will retry",
-                                   self.host, self.port, type(e).__name__)
-                    self._connection_errors[key] = now
-            else:
-                logger.exception("Lỗi gọi Caster (%s:%s): %s", self.host, self.port, type(e).__name__)
+        except Exception as error:
+            self._log_command_error(error)
+            total_bytes = sum(len(chunk) for chunk in chunks)
             if chunks and total_bytes <= MAX_RESPONSE_BYTES:
                 return b"".join(chunks).decode('utf-8', errors='ignore')
             return ""
         finally:
             if writer:
                 writer.close()
-                try: await writer.wait_closed()
-                except Exception: pass
+                try:
+                    await writer.wait_closed()
+                except Exception:
+                    pass
 
     @staticmethod
     def _parse_bool_token(raw_value, default: bool = True) -> bool:
