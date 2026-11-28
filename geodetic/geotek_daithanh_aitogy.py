@@ -1110,6 +1110,53 @@ class RTCMSignalDecoder:
             "bufferedBytes": len(buffer),
         }
 
+    @staticmethod
+    def _read_msm_cell_mask(reader, satellite_ids, signal_ids):
+        cells = []
+        for satellite_id in satellite_ids:
+            for signal_id in signal_ids:
+                if reader.read_uint(1):
+                    cells.append((satellite_id, signal_id))
+        return cells
+
+    def _msm_satellite_angles(self, serial, sat_str_id, epoch_time_ms, nav_system):
+        now = time.time()
+        cache = self._azel_cache.setdefault(serial, {})
+        cached = cache.get(sat_str_id)
+        if cached and now - cached[0] < 120.0:
+            return cached[1], cached[2]
+        base_pos = self._base_positions.get(serial)
+        eph = self._ephemeris_data.get(serial, {}).get(sat_str_id)
+        if not base_pos or not eph:
+            return 0.0, 0.0
+        if eph.get('type') == 'glonass':
+            sat_pos = self._glonass_eph2pos(eph, epoch_time_ms / 1000.0)
+        else:
+            sat_pos = self._eph2pos(eph, epoch_time_ms / 1000.0, nav_system)
+        if not sat_pos:
+            return 0.0, 0.0
+        azimuth, elevation = self._satazel(sat_pos, base_pos)
+        cache[sat_str_id] = (now, azimuth, elevation)
+        return azimuth, elevation
+
+    def _collect_msm_satellites(self, message_type, serial, info, satellite_ids, signal_cnr, epoch_time_ms, now_ms):
+        satellites = []
+        for satellite_id in satellite_ids:
+            best_signal_id, best_cnr = self._best_signal(signal_cnr, satellite_id)
+            if best_cnr <= 0:
+                continue
+            sat_str_id = f"RTCM:{info.system}:{satellite_id}"
+            azimuth, elevation = self._msm_satellite_angles(
+                serial, sat_str_id, epoch_time_ms, info.nav_system
+            )
+            satellites.append({
+                "id": sat_str_id, "prn": satellite_id, "system": info.system, "talker": "RTCM",
+                "snr": best_cnr, "cnr": best_cnr, "signalId": best_signal_id,
+                "messageType": message_type, "isTracking": True,
+                "elevation": elevation, "azimuth": azimuth, "lastSeen": now_ms,
+            })
+        return satellites
+
     def _decode_msm_payload(self, message_type: int, payload: bytes, serial: str) -> dict[str, Any] | None:
         type_info = _message_type_info(message_type)
         if not type_info:
@@ -1134,66 +1181,13 @@ class RTCMSignalDecoder:
         if not satellite_ids or not signal_ids:
             return {"navSystem": info.nav_system, "msmLevel": msm_level, "satellites": []}
 
-        cell_mask: list[tuple[int, int]] = []
-        for satellite_id in satellite_ids:
-            for signal_id in signal_ids:
-                if reader.read_uint(1):
-                    cell_mask.append((satellite_id, signal_id))
-
+        cell_mask = self._read_msm_cell_mask(reader, satellite_ids, signal_ids)
         self._skip_msm_satellite_data(reader, msm_level, len(satellite_ids))
         signal_cnr = self._read_msm_signal_cnr(reader, msm_level, cell_mask)
         now_ms = int(time.time() * 1000)
-
-        satellites: list[dict[str, Any]] = []
-        for satellite_id in satellite_ids:
-            best_signal_id, best_cnr = self._best_signal(signal_cnr, satellite_id)
-            if best_cnr <= 0:
-                continue
-                
-            sat_str_id = f"RTCM:{info.system}:{satellite_id}"
-            
-            elevation = 0.0
-            azimuth = 0.0
-            
-            now = time.time()
-            if serial not in self._azel_cache: self._azel_cache[serial] = {}
-            cached = self._azel_cache[serial].get(sat_str_id)
-            
-            if cached and now - cached[0] < 120.0:
-                azimuth, elevation = cached[1], cached[2]
-            else:
-                base_pos = self._base_positions.get(serial)
-                eph = self._ephemeris_data.get(serial, {}).get(sat_str_id)
-                
-                if base_pos and eph:
-                    if eph.get('type') == 'glonass':
-                        sat_pos = self._glonass_eph2pos(eph, epoch_time_ms / 1000.0)
-                    else:
-                        sat_pos = self._eph2pos(eph, epoch_time_ms / 1000.0, info.nav_system)
-                        
-                    if sat_pos:
-                        az, el = self._satazel(sat_pos, base_pos)
-                        azimuth = az
-                        elevation = el
-                        self._azel_cache[serial][sat_str_id] = (now, azimuth, elevation)
-
-            satellites.append(
-                {
-                    "id": sat_str_id,
-                    "prn": satellite_id,
-                    "system": info.system,
-                    "talker": "RTCM",
-                    "snr": best_cnr,
-                    "cnr": best_cnr,
-                    "signalId": best_signal_id,
-                    "messageType": message_type,
-                    "isTracking": True,
-                    "elevation": elevation,
-                    "azimuth": azimuth,
-                    "lastSeen": now_ms,
-                }
-            )
-
+        satellites = self._collect_msm_satellites(
+            message_type, serial, info, satellite_ids, signal_cnr, epoch_time_ms, now_ms
+        )
         return {"navSystem": info.nav_system, "msmLevel": msm_level, "satellites": satellites}
 
     @staticmethod
@@ -2340,50 +2334,49 @@ class MonitorWorker(threading.Thread):
         self.wakeup_event.set()
         self._close_live_socket()
     
-    def publish_status(self):
-        if not self.mqtt_client or not self.mqtt_client.is_connected():
-            return
-
-        now = time.time()
+    def _status_from_connection_state(self, now):
         if self.is_prefix7:
             recent_rtcm = self.last_rtcm_received_at > 0 and 0 <= now - self.last_rtcm_received_at < self.max_no_data_seconds
-            current_status = "online" if self.is_connected and recent_rtcm else "offline"
-        elif self.is_connected:
-            current_status = "online" if self.current_bps > 0 else "sleep"
-        else:
-            current_status = "offline"
-        satellites = {
+            return "online" if self.is_connected and recent_rtcm else "offline"
+        if self.is_connected:
+            return "online" if self.current_bps > 0 else "sleep"
+        return "offline"
+
+    def _active_satellites(self, now):
+        self.satellites = {
             key: sat for key, sat in self.satellites.items()
             if now - float(sat.get("last_seen", 0)) <= 30
         }
-        self.satellites = satellites
-        satellite_count = len([sat for sat in satellites.values() if sat.get("snr", 0) > 0])
-        decoder = globals().get("rtcm_signal_decoder")
-        rtcm_stats = decoder.get_stats(self.serial) if decoder else {}
-        
+        return self.satellites
+
+    def _status_coordinates(self, decoder):
         decoded_coords = decoder.get_base_coordinates(self.serial) if decoder else None
         coords = dict(zip(('lat', 'lon', 'alt'), decoded_coords)) if decoded_coords else {
             'lat': self.cfg.get('lat', 0.0), 'lon': self.cfg.get('lon', 0.0), 'alt': self.cfg.get('alt', 0.0)
         }
         if self.is_prefix7 and not decoded_coords:
             coords = {}  # GGA positions are not decoded RTCM observations.
-        # Physical ESP firmware owns presence, configuration and license state.
-        # The pull worker contributes decoded observations only.
-        if self.serial.lower().startswith("esp_") and not self.is_prefix7:
-            observation = {
-                "type": "rtcm_skyview_calculated",
-                "satellites": list(satellites.values()),
-                "packets": rtcm_stats,
-                "timestamp": round(now, 3),
-            }
-            if decoded_coords:
-                observation["base_coords"] = coords
-            if rtcm_stats or satellites or decoded_coords:
-                self.mqtt_client.publish(
-                    f"pi/devices/{self.serial}/raw_data", json.dumps(observation), qos=0
-                )
-            return
-        status = {
+        return decoded_coords, coords
+
+    def _publish_esp_observation(self, satellites, rtcm_stats, now, decoded_coords, coords):
+        if not self.serial.lower().startswith("esp_") or self.is_prefix7:
+            return False
+        observation = {
+            "type": "rtcm_skyview_calculated",
+            "satellites": list(satellites.values()),
+            "packets": rtcm_stats,
+            "timestamp": round(now, 3),
+        }
+        if decoded_coords:
+            observation["base_coords"] = coords
+        if rtcm_stats or satellites or decoded_coords:
+            self.mqtt_client.publish(
+                f"pi/devices/{self.serial}/raw_data", json.dumps(observation), qos=0
+            )
+        return True
+
+    def _build_relay_status(self, now, current_status, rtcm_stats, coords, satellites, satellite_count):
+        return {
             "serial": self.serial,
             "rtcm_stats": rtcm_stats,
             "name": self.cfg.get('name') or self.cfg['mountpoint'],
@@ -2391,10 +2384,7 @@ class MonitorWorker(threading.Thread):
             "version": RELAY_VERSION,
             "agent_token_fingerprint": None if self.is_prefix7 else get_license_fingerprint(self.serial),
             "timestamp": round(now, 3),
-            "base_config": {
-                "base_setup_method": "FIXED_LLA",
-                "coords": coords
-            },
+            "base_config": {"base_setup_method": "FIXED_LLA", "coords": coords},
             "ntrip_connected": self.is_connected,
             "ntrip_stats": {"server1_bps": self.current_bps},
             "ntrip_status": {"server1": {"connected": self.is_connected, "bps": self.current_bps}},
@@ -2406,7 +2396,7 @@ class MonitorWorker(threading.Thread):
                 "stream_on_demand": not self.is_prefix7,
                 "server1_stream_on_demand": not self.is_prefix7,
                 "stream_active": bool(self.is_connected and self.current_bps > 0),
-                "active_mountpoint": self.cfg['mountpoint']
+                "active_mountpoint": self.cfg['mountpoint'],
             },
             "source_mountpoint": self.cfg['mountpoint'],
             "rtk_fix_status": "NO_FIX" if self.is_prefix7 else ("FIXED" if satellite_count > 0 else "NO_FIX"),
@@ -2416,14 +2406,28 @@ class MonitorWorker(threading.Thread):
                 "gga": None,
                 "gsa": None,
                 "satellites": satellites,
-                "base_coords": coords or None
+                "base_coords": coords or None,
             },
-            "gnss_stats": {
-                "satellites": satellite_count
-            },
-            "satellite_count": satellite_count
+            "gnss_stats": {"satellites": satellite_count},
+            "satellite_count": satellite_count,
         }
-        
+
+    def publish_status(self):
+        if not self.mqtt_client or not self.mqtt_client.is_connected():
+            return
+
+        now = time.time()
+        current_status = self._status_from_connection_state(now)
+        satellites = self._active_satellites(now)
+        satellite_count = len([sat for sat in satellites.values() if sat.get("snr", 0) > 0])
+        decoder = globals().get("rtcm_signal_decoder")
+        rtcm_stats = decoder.get_stats(self.serial) if decoder else {}
+        decoded_coords, coords = self._status_coordinates(decoder)
+        # Physical ESP firmware owns presence, configuration and license state.
+        # The pull worker contributes decoded observations only.
+        if self._publish_esp_observation(satellites, rtcm_stats, now, decoded_coords, coords):
+            return
+        status = self._build_relay_status(now, current_status, rtcm_stats, coords, satellites, satellite_count)
         try:
             self.mqtt_client.publish(self.topic_status, json.dumps(status), qos=0, retain=True)
             if satellites:

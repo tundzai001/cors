@@ -3289,6 +3289,54 @@ class RTCMSignalDecoder:
             "bufferedBytes": len(buffer),
         }
 
+    @staticmethod
+    def _read_msm_cell_mask(reader, satellite_ids, signal_ids):
+        cells = []
+        for satellite_id in satellite_ids:
+            for signal_id in signal_ids:
+                if reader.read_uint(1):
+                    cells.append((satellite_id, signal_id))
+        return cells
+
+    def _msm_satellite_angles(self, serial, sat_str_id, epoch_time_ms, nav_system, cache_ttl):
+        now = time.time()
+        cache = self._azel_cache.setdefault(serial, {})
+        cached = cache.get(sat_str_id)
+        if cached and now - cached[0] < cache_ttl:
+            return cached[1], cached[2]
+        base_pos = self._base_positions.get(serial)
+        eph = self._ephemeris_data.get(serial, {}).get(sat_str_id)
+        if not base_pos or not eph:
+            return 0.0, 0.0
+        if eph.get('type') == 'glonass':
+            sat_pos = self._glonass_eph2pos(eph, epoch_time_ms / 1000.0)
+        else:
+            sat_pos = self._eph2pos(eph, epoch_time_ms / 1000.0, nav_system)
+        if not sat_pos:
+            return 0.0, 0.0
+        azimuth, elevation = self._satazel(sat_pos, base_pos)
+        cache[sat_str_id] = (now, azimuth, elevation)
+        return azimuth, elevation
+
+    def _collect_msm_satellites(self, message_type, serial, info, satellite_ids, signal_cnr, epoch_time_ms, now_ms):
+        satellites = []
+        for satellite_id in satellite_ids:
+            best_signal_id, best_cnr = self._best_signal(signal_cnr, satellite_id)
+            if best_cnr < 0:
+                continue
+            prn = satellite_id + 192 if info.system == "jp" and 1 <= satellite_id <= 10 else satellite_id
+            sat_str_id = f"RTCM:{info.system}:{prn}"
+            azimuth, elevation = self._msm_satellite_angles(
+                serial, sat_str_id, epoch_time_ms, info.nav_system, 10.0
+            )
+            satellites.append({
+                "id": sat_str_id, "prn": prn, "system": info.system, "talker": "RTCM",
+                "snr": round(best_cnr), "cnr": best_cnr, "signalId": best_signal_id,
+                "messageType": message_type, "isTracking": best_cnr > 0,
+                "elevation": elevation, "azimuth": azimuth, "lastSeen": now_ms,
+            })
+        return satellites
+
     def _decode_msm_payload(self, message_type: int, payload: bytes, serial: str) -> dict[str, Any] | None:
         type_info = _message_type_info(message_type)
         if not type_info:
@@ -3313,67 +3361,13 @@ class RTCMSignalDecoder:
         if not satellite_ids or not signal_ids:
             return {"navSystem": info.nav_system, "msmLevel": msm_level, "satellites": []}
 
-        cell_mask: list[tuple[int, int]] = []
-        for satellite_id in satellite_ids:
-            for signal_id in signal_ids:
-                if reader.read_uint(1):
-                    cell_mask.append((satellite_id, signal_id))
-
+        cell_mask = self._read_msm_cell_mask(reader, satellite_ids, signal_ids)
         self._skip_msm_satellite_data(reader, msm_level, len(satellite_ids))
         signal_cnr = self._read_msm_signal_cnr(reader, msm_level, cell_mask)
         now_ms = int(time.time() * 1000)
-
-        satellites: list[dict[str, Any]] = []
-        for satellite_id in satellite_ids:
-            best_signal_id, best_cnr = self._best_signal(signal_cnr, satellite_id)
-            if best_cnr < 0:
-                continue
-                
-            prn = satellite_id + 192 if info.system == "jp" and 1 <= satellite_id <= 10 else satellite_id
-            sat_str_id = f"RTCM:{info.system}:{prn}"
-            
-            elevation = 0.0
-            azimuth = 0.0
-            
-            now = time.time()
-            if serial not in self._azel_cache: self._azel_cache[serial] = {}
-            cached = self._azel_cache[serial].get(sat_str_id)
-            
-            if cached and now - cached[0] < 10.0:
-                azimuth, elevation = cached[1], cached[2]
-            else:
-                base_pos = self._base_positions.get(serial)
-                eph = self._ephemeris_data.get(serial, {}).get(sat_str_id)
-                
-                if base_pos and eph:
-                    if eph.get('type') == 'glonass':
-                        sat_pos = self._glonass_eph2pos(eph, epoch_time_ms / 1000.0)
-                    else:
-                        sat_pos = self._eph2pos(eph, epoch_time_ms / 1000.0, info.nav_system)
-                        
-                    if sat_pos:
-                        az, el = self._satazel(sat_pos, base_pos)
-                        azimuth = az
-                        elevation = el
-                        self._azel_cache[serial][sat_str_id] = (now, azimuth, elevation)
-
-            satellites.append(
-                {
-                    "id": sat_str_id,
-                    "prn": prn,
-                    "system": info.system,
-                    "talker": "RTCM",
-                    "snr": round(best_cnr),
-                    "cnr": best_cnr,
-                    "signalId": best_signal_id,
-                    "messageType": message_type,
-                    "isTracking": best_cnr > 0,
-                    "elevation": elevation,
-                    "azimuth": azimuth,
-                    "lastSeen": now_ms,
-                }
-            )
-
+        satellites = self._collect_msm_satellites(
+            message_type, serial, info, satellite_ids, signal_cnr, epoch_time_ms, now_ms
+        )
         return {"navSystem": info.nav_system, "msmLevel": msm_level, "satellites": satellites}
 
     @staticmethod
