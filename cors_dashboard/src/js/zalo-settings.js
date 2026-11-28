@@ -658,11 +658,7 @@
         state.modal.show();
     }
 
-    async function saveBinding() {
-        const id = Number(document.getElementById('edit-binding-id').value);
-        const item = state.items.find(row => row.id === id);
-        if (!item) return;
-        const selectedStations = [...document.querySelectorAll('.station-scope-item:checked')].map(input => input.value);
+    function buildBindingPayload(item, selectedStations) {
         const payload = {
             display_name: document.getElementById('edit-display-name').value.trim(),
             notifications_enabled: document.getElementById('edit-notifications').checked,
@@ -673,20 +669,35 @@
         };
         if (state.isAdmin) {
             const mode = document.querySelector('input[name="delivery-mode"]:checked').value;
-            payload.delivery_mode = mode === 'paused' ? (item.delivery_mode || (item.binding_type === 'cors_public' ? 'cors_only' : 'standard')) : mode;
+            if (mode === 'paused') {
+                payload.delivery_mode = item.delivery_mode || (item.binding_type === 'cors_public' ? 'cors_only' : 'standard');
+            } else {
+                payload.delivery_mode = mode;
+            }
             payload.cors_notify_changes = document.getElementById('edit-cors-notify').checked;
             payload.binding_type = document.getElementById('edit-binding-type').value;
             payload.is_active = mode !== 'paused';
         }
         if (item.chat_type === 'group' && payload.delivery_mode === 'standard') {
-            payload.station_scope_mode = payload.binding_type === 'cors_public' ? 'none' : payload.binding_type === 'group_admin'
-                ? 'all' : document.getElementById('edit-scope-mode').value;
+            if (payload.binding_type === 'cors_public') payload.station_scope_mode = 'none';
+            else if (payload.binding_type === 'group_admin') payload.station_scope_mode = 'all';
+            else payload.station_scope_mode = document.getElementById('edit-scope-mode').value;
             payload.allowed_bases = payload.station_scope_mode === 'selected' ? selectedStations : [];
             if (payload.station_scope_mode === 'selected' && !payload.allowed_bases.length) {
                 window.CorsUI?.showToast?.('warning', 'Hãy chọn ít nhất một trạm hoặc đổi phạm vi.');
-                return;
+                return null;
             }
         }
+        return payload;
+    }
+
+    async function saveBinding() {
+        const id = Number(document.getElementById('edit-binding-id').value);
+        const item = state.items.find(row => row.id === id);
+        if (!item) return;
+        const selectedStations = [...document.querySelectorAll('.station-scope-item:checked')].map(input => input.value);
+        const payload = buildBindingPayload(item, selectedStations);
+        if (!payload) return;
         const button = document.getElementById('save-binding');
         button.disabled = true;
         try {
