@@ -3330,11 +3330,16 @@ document.addEventListener('DOMContentLoaded', async () => {
         }
     }
 
+    function shouldSkipMountpointRefresh(container, background) {
+        if (!container || mountpointsRefreshInProgress) return true;
+        return background && (document.querySelector('.modal.show')
+            || document.getElementById('sync-mountpoints-btn')?.disabled);
+    }
+
     // ✅ Load and render mountpoints into tab
     async function loadAndRenderMountpoints({ background = false } = {}) {
         const container = document.getElementById('mountpoints-container');
-        if (!container || mountpointsRefreshInProgress) return;
-        if (background && (document.querySelector('.modal.show') || document.getElementById('sync-mountpoints-btn')?.disabled)) return;
+        if (shouldSkipMountpointRefresh(container, background)) return;
         mountpointsRefreshInProgress = true;
 
         if (!background) container.innerHTML = '<div class="text-center py-5"><div class="spinner-border spinner-border-sm text-info me-2"></div><span class="text-muted">Đang tải danh sách mountpoints...</span></div>';

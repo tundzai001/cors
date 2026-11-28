@@ -15,6 +15,16 @@
     }
     const reducedMotion = () => Boolean(window.matchMedia?.('(prefers-reduced-motion: reduce)').matches);
     const spinStep = zoom => 3 * Math.max(0, Math.min(1, (5 - zoom) / 2));
+    const gnssPointStatus = properties => properties.identityStatus === 'retired'
+        ? 'Đã ngừng khai thác · không ghép RTCM'
+        : properties.identityKnown === false ? 'Chưa xác nhận PRN hiện hành; không ghép RTCM'
+            : properties.tracked ? 'Agent đang nhận RTCM' : 'Không có PRN RTCM khớp';
+    const gnssPointDescription = properties => properties.kind === 'ipp'
+        ? `IPP 350 km · VTEC ${properties.vtec ?? '--'} TECU`
+        : `${properties.name} · NORAD ${properties.noradId} · ${Math.round(properties.altKm)} km · ${gnssPointStatus(properties)}`;
+    const gnssPointSource = isIpp => isIpp
+        ? 'Nguồn: <a href="https://www.swpc.noaa.gov/products/global-total-electron-content-glotec" target="_blank" rel="noopener noreferrer" style="color:#38bdf8;text-decoration:none;">NOAA SWPC GloTEC <i class="bi bi-box-arrow-up-right" style="font-size:0.6rem;"></i></a>'
+        : 'Nguồn: <a href="https://celestrak.org/NORAD/elements/" target="_blank" rel="noopener noreferrer" style="color:#38bdf8;text-decoration:none;">CelesTrak (NORAD GP) <i class="bi bi-box-arrow-up-right" style="font-size:0.6rem;"></i></a>';
 
     class MapboxGlobeView {
         constructor() {
@@ -186,20 +196,7 @@
                     const properties = event.features?.[0]?.properties;
                     if (properties && !this.measureEnabled) this._textPopup(event.lngLat, `Rover: ${properties.username}`, `Mountpoint: ${properties.mountpoint} · ${properties.statusLabel} · ${properties.nsv} vệ tinh`);
                 });
-                for (const id of ['cors-gnss-points', 'cors-gnss-ipp']) map.on('click', id, event => {
-                    const properties = event.features?.[0]?.properties;
-                    if (properties && !this.measureEnabled) {
-                        const isIpp = properties.kind === 'ipp';
-                        this._textPopup(
-                            event.lngLat,
-                            properties.code,
-                            isIpp ? `IPP 350 km · VTEC ${properties.vtec ?? '--'} TECU` : `${properties.name} · NORAD ${properties.noradId} · ${Math.round(properties.altKm)} km · ${properties.identityStatus === 'retired' ? 'Đã ngừng khai thác · không ghép RTCM' : properties.identityKnown === false ? 'Chưa xác nhận PRN hiện hành; không ghép RTCM' : properties.tracked ? 'Agent đang nhận RTCM' : 'Không có PRN RTCM khớp'}`,
-                            isIpp
-                                ? `Nguồn: <a href="https://www.swpc.noaa.gov/products/global-total-electron-content-glotec" target="_blank" rel="noopener noreferrer" style="color:#38bdf8;text-decoration:none;">NOAA SWPC GloTEC <i class="bi bi-box-arrow-up-right" style="font-size:0.6rem;"></i></a>`
-                                : `Nguồn: <a href="https://celestrak.org/NORAD/elements/" target="_blank" rel="noopener noreferrer" style="color:#38bdf8;text-decoration:none;">CelesTrak (NORAD GP) <i class="bi bi-box-arrow-up-right" style="font-size:0.6rem;"></i></a>`
-                        );
-                    }
-                });
+                this._bindGnssPointClicks(map);
                 const pause = () => {
                     this.interacting = true; this.flying = false;
                     clearTimeout(this.resumeTimer);
@@ -216,6 +213,16 @@
             } catch (error) {
                 if (generation === this.generation) this._fail(error.message || 'Chưa mở được bản đồ.');
             }
+        }
+
+        _bindGnssPointClicks(map) {
+            for (const id of ['cors-gnss-points', 'cors-gnss-ipp']) map.on('click', id, event => {
+                const properties = event.features?.[0]?.properties;
+                if (!properties || this.measureEnabled) return;
+                const isIpp = properties.kind === 'ipp';
+                this._textPopup(event.lngLat, properties.code,
+                    gnssPointDescription(properties), gnssPointSource(isIpp));
+            });
         }
 
         _fail(reason) {

@@ -1446,43 +1446,43 @@
         en: new RegExp(`(^|[^\\p{L}\\p{N}])(\\d+)\\s*(${Object.keys(viNumericUnits).map(escapePattern).join('|')})(?=$|[^\\p{L}\\p{N}])`, 'giu'),
         vi: new RegExp(`(^|[^\\p{L}\\p{N}])(\\d+)\\s*(${[...enNumericUnits.keys()].sort((a, b) => b.length - a.length).map(escapePattern).join('|')})(?=$|[^\\p{L}\\p{N}])`, 'giu')
     };
+    const VI_REVERSE_OVERRIDES = {
+        'cancel': 'Hủy',
+        'ended': 'Đã kết thúc',
+        'expired': 'Hết hạn',
+        'locked': 'Đã khóa',
+        'read-only group': 'Group chỉ tra cứu',
+        'system is off': 'Hệ thống đang tắt',
+        'type': 'Loại',
+        'unknown': 'Không xác định',
+        'centimeter-level positioning': 'Định vị chính xác centimet',
+        'loading receivers…': 'Đang tải danh sách máy…',
+        'could not load mountpoints from the caster': 'Không thể tải danh sách mountpoint từ Caster',
+        'no mountpoint assigned': 'Chưa có MP',
+        'could not load the receiver list.': 'Không tải được danh sách máy.',
+        'select at least one station or enter a mountpoint.': 'Vui lòng chọn ít nhất một trạm hoặc nhập Mountpoint.',
+        'receivers': 'Số receiver',
+        'minutes': 'phút',
+        'seconds': 'giây',
+        'meters': 'mét',
+        'stations': 'trạm',
+        'fields': 'thông số',
+        'satellites': 'vệ tinh',
+        'servers': 'máy chủ',
+        'cores': 'lõi CPU'
+    };
+    const shouldIncludeTranslation = (from, language, minLength, maxLength) =>
+        !(language === 'vi' && from === 'Thu') && from.length >= minLength && from.length < maxLength;
     const buildTranslationPlan = (language, minLength, maxLength) => {
         const replacements = new Map();
         for (const [vietnamese, english] of translations) {
             const from = language === 'en' ? vietnamese : english;
             const to = language === 'en' ? english : vietnamese;
-            // "Thu" is also the Vietnamese word for signal reception.
-            if (language === 'vi' && from === 'Thu') continue;
-            if (from.length < minLength || from.length >= maxLength) continue;
+            if (!shouldIncludeTranslation(from, language, minLength, maxLength)) continue;
             if (!replacements.has(from.toLowerCase())) replacements.set(from.toLowerCase(), to);
         }
         if (language === 'vi') {
-            const reverseOverrides = {
-                'cancel': 'Hủy',
-                'ended': 'Đã kết thúc',
-                'expired': 'Hết hạn',
-                'locked': 'Đã khóa',
-                'read-only group': 'Group chỉ tra cứu',
-                'system is off': 'Hệ thống đang tắt',
-                'type': 'Loại',
-                'unknown': 'Không xác định',
-                'centimeter-level positioning': 'Định vị chính xác centimet',
-                'loading receivers…': 'Đang tải danh sách máy…',
-                'could not load mountpoints from the caster': 'Không thể tải danh sách mountpoint từ Caster',
-                'no mountpoint assigned': 'Chưa có MP',
-                'could not load the receiver list.': 'Không tải được danh sách máy.',
-                'select at least one station or enter a mountpoint.': 'Vui lòng chọn ít nhất một trạm hoặc nhập Mountpoint.',
-                'receivers': 'Số receiver',
-                'minutes': 'phút',
-                'seconds': 'giây',
-                'meters': 'mét',
-                'stations': 'trạm',
-                'fields': 'thông số',
-                'satellites': 'vệ tinh',
-                'servers': 'máy chủ',
-                'cores': 'lõi CPU'
-            };
-            for (const [english, vietnamese] of Object.entries(reverseOverrides)) {
+            for (const [english, vietnamese] of Object.entries(VI_REVERSE_OVERRIDES)) {
                 if (replacements.has(english)) replacements.set(english, vietnamese);
             }
         }

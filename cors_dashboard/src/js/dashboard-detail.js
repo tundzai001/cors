@@ -534,17 +534,30 @@ function getSystemHealthScore(info, device) {
     return Math.max(score, 0);
 }
 
-function getMemoryRingLabel(memory, isEsp) {
-    if (isEsp || memory.total_heap_bytes || (memory.total_mb && memory.total_mb < 5)) {
-        const totalKb = memory.total_kb !== undefined ? Math.round(memory.total_kb)
-            : memory.total_heap_bytes ? Math.round(memory.total_heap_bytes / 1024)
-                : Math.round((memory.total_mb || 0) * 1024);
-        const usedKb = memory.used_kb !== undefined ? Math.round(memory.used_kb)
-            : memory.total_heap_bytes && memory.free_heap_bytes !== undefined
-                ? Math.round((memory.total_heap_bytes - memory.free_heap_bytes) / 1024)
-                : Math.round((memory.used_mb || 0) * 1024);
-        return totalKb > 0 ? `${usedKb}/${totalKb} KB` : `${Math.round(memory.percent || 0)}%`;
+function getMemoryCapacityKb(memory) {
+    if (memory.total_kb !== undefined) return Math.round(memory.total_kb);
+    if (memory.total_heap_bytes) return Math.round(memory.total_heap_bytes / 1024);
+    return Math.round((memory.total_mb || 0) * 1024);
+}
+
+function getMemoryUsedKb(memory) {
+    if (memory.used_kb !== undefined) return Math.round(memory.used_kb);
+    if (memory.total_heap_bytes && memory.free_heap_bytes !== undefined) {
+        return Math.round((memory.total_heap_bytes - memory.free_heap_bytes) / 1024);
     }
+    return Math.round((memory.used_mb || 0) * 1024);
+}
+
+function getHeapMemoryRingLabel(memory) {
+    const totalKb = getMemoryCapacityKb(memory);
+    return totalKb > 0
+        ? `${getMemoryUsedKb(memory)}/${totalKb} KB`
+        : `${Math.round(memory.percent || 0)}%`;
+}
+
+function getMemoryRingLabel(memory, isEsp) {
+    const isHeapMemory = isEsp || memory.total_heap_bytes || (memory.total_mb && memory.total_mb < 5);
+    if (isHeapMemory) return getHeapMemoryRingLabel(memory);
     if (memory.total_mb !== undefined && memory.used_mb !== undefined) {
         return `${Math.round(memory.used_mb)}/${Math.round(memory.total_mb)}MB`;
     }
