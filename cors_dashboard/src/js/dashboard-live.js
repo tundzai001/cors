@@ -412,56 +412,133 @@ function getRfReadErrorReason(errorKind) {
     return 'Lần đọc MON-RF gần nhất bị lỗi.';
 }
 
-function getRfAssessment({live, rf, um, readError, receiver, security, unicore = false}) {
-    const unknown = (reason, next) => ({tone:'warning',title:'Chưa đủ dữ liệu kết luận',reason,next});
-    if (!live) return unknown('Trạm không có dữ liệu trực tiếp.', 'Kết nối lại trạm rồi kiểm tra mẫu RF mới.');
-    if (!unicore && (security || receiver?.itfm_supported === false)) {
-        if (!security || security.error) return unknown(security?.error ? 'Lần đọc SEC-SIG chưa thành công.' : 'Đang chờ trạng thái nhiễu và giả mạo tín hiệu từ chip.', 'Pi tự đọc lại SEC-SIG; chưa có phản hồi mới để kết luận.');
-        if (security.spoof_enabled && security.spoof_state >= 2) return {tone:'danger',title:security.spoof_state === 3 ? 'Chip xác nhận giả mạo tín hiệu' : 'Chip nghi ngờ giả mạo tín hiệu',reason:'Cảnh báo từ SEC-SIG; xem nhật ký sự kiện và trạng thái nhiễu bên dưới.',next:'Đối chiếu nguồn tín hiệu và tọa độ trước khi dùng kết quả đo.'};
-        if (security.jam_enabled && security.jam_state === 2) return {tone:'warning',title:'Chip báo nhiễu ảnh hưởng thu tín hiệu',reason:'SEC-SIG báo nhiễu ảnh hưởng khả năng bám tín hiệu. Các tần số bị ảnh hưởng được liệt kê bên dưới.',next:'Theo dõi các đợt tiếp theo và mức C/N₀. Cảnh báo không xác định thiết bị phát gây nhiễu.'};
-        if (!security.jam_enabled || !security.spoof_enabled || security.jam_state === 0 || security.spoof_state === 0) return unknown('Chip chưa có kết luận đầy đủ hoặc một bộ phát hiện đang tắt.', 'Xem riêng trạng thái nhiễu và giả mạo bên dưới; Pi tiếp tục thu mẫu.');
-        return {tone:'info',title:'Chip chưa báo nhiễu hoặc giả mạo',reason:'SEC-SIG hiện không báo bất thường trong hai bộ phát hiện.',next:'Xem lịch sử để kiểm tra những thời điểm khác; trạng thái này không xác minh độ đúng tọa độ Base.'};
+function unknownRfAssessment(reason, next) {
+    return {tone: 'warning', title: 'Chưa đủ dữ liệu kết luận', reason, next};
+}
+
+function getSecurityRfAssessment(security) {
+    if (!security || security.error) {
+        const reason = security?.error ? 'Lần đọc SEC-SIG chưa thành công.' : 'Đang chờ trạng thái nhiễu và giả mạo tín hiệu từ chip.';
+        return unknownRfAssessment(reason, 'Pi tự đọc lại SEC-SIG; chưa có phản hồi mới để kết luận.');
     }
-    if (readError) return unknown(
-        getRfReadErrorReason(readError.error_kind),
-        'Xem chi tiết lỗi đọc; chưa dùng riêng hình phổ để kết luận trạm sạch nhiễu.'
+    if (security.spoof_enabled && security.spoof_state >= 2) {
+        return {
+            tone: 'danger',
+            title: security.spoof_state === 3 ? 'Chip xác nhận giả mạo tín hiệu' : 'Chip nghi ngờ giả mạo tín hiệu',
+            reason: 'Cảnh báo từ SEC-SIG; xem nhật ký sự kiện và trạng thái nhiễu bên dưới.',
+            next: 'Đối chiếu nguồn tín hiệu và tọa độ trước khi dùng kết quả đo.',
+        };
+    }
+    if (security.jam_enabled && security.jam_state === 2) {
+        return {
+            tone: 'warning',
+            title: 'Chip báo nhiễu ảnh hưởng thu tín hiệu',
+            reason: 'SEC-SIG báo nhiễu ảnh hưởng khả năng bám tín hiệu. Các tần số bị ảnh hưởng được liệt kê bên dưới.',
+            next: 'Theo dõi các đợt tiếp theo và mức C/N₀. Cảnh báo không xác định thiết bị phát gây nhiễu.',
+        };
+    }
+    if (!security.jam_enabled || !security.spoof_enabled || security.jam_state === 0 || security.spoof_state === 0) {
+        return unknownRfAssessment(
+            'Chip chưa có kết luận đầy đủ hoặc một bộ phát hiện đang tắt.',
+            'Xem riêng trạng thái nhiễu và giả mạo bên dưới; Pi tiếp tục thu mẫu.'
+        );
+    }
+    return {
+        tone: 'info',
+        title: 'Chip chưa báo nhiễu hoặc giả mạo',
+        reason: 'SEC-SIG hiện không báo bất thường trong hai bộ phát hiện.',
+        next: 'Xem lịch sử để kiểm tra những thời điểm khác; trạng thái này không xác minh độ đúng tọa độ Base.',
+    };
+}
+
+function getUnicoreRfAssessment(um) {
+    if (!um?.jamming) {
+        const reason = um?.agc ? 'UM mới có AGC; chưa có chỉ báo nhiễu CW.' : 'Chưa nhận được chỉ báo nhiễu CW từ UM.';
+        return unknownRfAssessment(reason, 'AGC đơn lẻ không đủ để phân loại nhiễu. Cần phản hồi JAMSTATUS hoặc FREQJAMSTATUS.');
+    }
+    const severity = Math.max(...um.jamming.flags);
+    const severityDetails = {
+        2: {tone: 'danger', title: 'Chip báo nhiễu CW mạnh'},
+        1: {tone: 'warning', title: 'Chip báo có nhiễu CW'},
+        0: {tone: 'info', title: 'Chưa ghi nhận nhiễu CW'},
+    }[severity] || {tone: 'info', title: 'Chưa ghi nhận nhiễu CW'};
+    const next = severity
+        ? 'Giữ mẫu hiện tại, thử tách nguồn phát của mình khỏi anten rồi so sánh lại.'
+        : 'Kết quả chỉ áp dụng cho nhiễu CW lúc đọc; nếu đo vẫn lệch, tiếp tục kiểm tra tọa độ, hệ quy chiếu và chiều cao anten.';
+    return {...severityDetails, reason: 'Kết quả từ cờ cảnh báo CW của UM, không suy ra từ AGC hay hình phổ.', next};
+}
+
+function getUbxUnknownJammingAssessment(receiver) {
+    if (receiver?.itfm_enabled === false) {
+        return unknownRfAssessment(
+            'Chip xác nhận bộ phát hiện nhiễu đang tắt (CFG-ITFM-ENABLE = 0).',
+            'Bật Phát hiện nhiễu GNSS trong cấu hình BASE rồi bấm Áp dụng cấu hình BASE.'
+        );
+    }
+    if (receiver?.itfm_enabled === true) {
+        return unknownRfAssessment(
+            'Bộ phát hiện nhiễu đang bật, nhưng MON-RF vẫn trả trạng thái chưa xác định.',
+            'Đối chiếu firmware chip và giữ mẫu RF; không coi cờ 0 là trạm sạch nhiễu.'
+        );
+    }
+    return unknownRfAssessment(
+        'MON-RF trả trạng thái chưa xác định; chưa đọc được cấu hình bộ phát hiện nhiễu.',
+        'Cần phản hồi MON-VER và cấu hình ITFM để phân biệt phiên bản và trạng thái bật/tắt.'
     );
-    if (unicore || um) {
-        if (!um?.jamming) return unknown(um?.agc ? 'UM mới có AGC; chưa có chỉ báo nhiễu CW.' : 'Chưa nhận được chỉ báo nhiễu CW từ UM.', 'AGC đơn lẻ không đủ để phân loại nhiễu. Cần phản hồi JAMSTATUS hoặc FREQJAMSTATUS.');
-        const severity = Math.max(...um.jamming.flags);
-        const severityDetails = {
-            2: {tone: 'danger', title: 'Chip báo nhiễu CW mạnh'},
-            1: {tone: 'warning', title: 'Chip báo có nhiễu CW'},
-            0: {tone: 'info', title: 'Chưa ghi nhận nhiễu CW'},
-        }[severity] || {tone: 'info', title: 'Chưa ghi nhận nhiễu CW'};
-        let next = 'Kết quả chỉ áp dụng cho nhiễu CW lúc đọc; nếu đo vẫn lệch, tiếp tục kiểm tra tọa độ, hệ quy chiếu và chiều cao anten.';
-        if (severity) next = 'Giữ mẫu hiện tại, thử tách nguồn phát của mình khỏi anten rồi so sánh lại.';
-        return {...severityDetails, reason:'Kết quả từ cờ cảnh báo CW của UM, không suy ra từ AGC hay hình phổ.', next};
+}
+
+function getUbxRfAssessment(rf, receiver) {
+    if (!rf) {
+        return unknownRfAssessment(
+            'Chưa có MON-RF hợp lệ. Có phổ MON-SPAN cũng chưa thay thế được trạng thái cảnh báo.',
+            'Kiểm tra phản hồi MON-RF; giữ mẫu phổ để so sánh trước/sau khi đổi vị trí anten hoặc tắt thiết bị phát của mình.'
+        );
     }
-    if (!rf) return unknown('Chưa có MON-RF hợp lệ. Có phổ MON-SPAN cũng chưa thay thế được trạng thái cảnh báo.',
-        'Kiểm tra phản hồi MON-RF; giữ mẫu phổ để so sánh trước/sau khi đổi vị trí anten hoặc tắt thiết bị phát của mình.');
     const band = block => getRfBlockLabel(block, rf.blocks, receiver);
-    const fault = rf.blocks.filter(b => b.antenna === 3 || b.antenna === 4);
-    if (fault.length) return {tone:'danger',title:'Chip báo lỗi đường anten',
-        reason:`${fault.map(band).join(', ')}: có chỉ báo hở mạch hoặc ngắn mạch anten.`,
-        next:'Kiểm tra cáp, đầu nối và nguồn anten.'};
-    const severity = Math.max(...rf.blocks.map(b => b.jamming));
-    if (severity >= 2) return {tone:severity === 3 ? 'danger' : 'warning',
-        title:severity === 3 ? 'Chip báo nhiễu nghiêm trọng' : 'Chip báo có nhiễu',
-        reason:`MON-RF báo nhiễu ở ${rf.blocks.filter(b=>b.jamming>=2).map(band).join(', ')}.`,
-        next:'Giữ mẫu hiện tại, thử tách nguồn phát của mình khỏi anten rồi so sánh lại.'};
-    if (rf.blocks.some(b=>b.agc_valid === false)) return unknown('Chip có trả RF nhưng có AGC ngoài dải mô tả.', 'Xem giá trị AGC gốc trong chi tiết; chưa dùng giá trị ngoài dải để đánh giá mức nhiễu.');
-    if (rf.blocks.some(b=>b.jamming === 0)) {
-        if (receiver?.itfm_enabled === false) return unknown('Chip xác nhận bộ phát hiện nhiễu đang tắt (CFG-ITFM-ENABLE = 0).',
-            'Bật Phát hiện nhiễu GNSS trong cấu hình BASE rồi bấm Áp dụng cấu hình BASE.');
-        if (receiver?.itfm_enabled === true) return unknown('Bộ phát hiện nhiễu đang bật, nhưng MON-RF vẫn trả trạng thái chưa xác định.',
-            'Đối chiếu firmware chip và giữ mẫu RF; không coi cờ 0 là trạm sạch nhiễu.');
-        return unknown('MON-RF trả trạng thái chưa xác định; chưa đọc được cấu hình bộ phát hiện nhiễu.',
-            'Cần phản hồi MON-VER và cấu hình ITFM để phân biệt phiên bản và trạng thái bật/tắt.');
+    const faults = rf.blocks.filter(block => block.antenna === 3 || block.antenna === 4);
+    if (faults.length) {
+        return {
+            tone: 'danger',
+            title: 'Chip báo lỗi đường anten',
+            reason: `${faults.map(band).join(', ')}: có chỉ báo hở mạch hoặc ngắn mạch anten.`,
+            next: 'Kiểm tra cáp, đầu nối và nguồn anten.',
+        };
     }
-    return {tone:'info',title:'Chưa ghi nhận nhiễu đáng kể',
-        reason:`MON-RF của ${rf.blocks.map(band).join(', ')} đều báo không có nhiễu đáng kể ở lần đọc này.`,
-        next:'Nếu đo vẫn lệch, tiếp tục kiểm tra tọa độ, hệ quy chiếu và chiều cao anten; kết quả RF không chứng minh tọa độ Base đúng.'};
+    const severity = Math.max(...rf.blocks.map(block => block.jamming));
+    if (severity >= 2) {
+        return {
+            tone: severity === 3 ? 'danger' : 'warning',
+            title: severity === 3 ? 'Chip báo nhiễu nghiêm trọng' : 'Chip báo có nhiễu',
+            reason: `MON-RF báo nhiễu ở ${rf.blocks.filter(block => block.jamming >= 2).map(band).join(', ')}.`,
+            next: 'Giữ mẫu hiện tại, thử tách nguồn phát của mình khỏi anten rồi so sánh lại.',
+        };
+    }
+    if (rf.blocks.some(block => block.agc_valid === false)) {
+        return unknownRfAssessment(
+            'Chip có trả RF nhưng có AGC ngoài dải mô tả.',
+            'Xem giá trị AGC gốc trong chi tiết; chưa dùng giá trị ngoài dải để đánh giá mức nhiễu.'
+        );
+    }
+    if (rf.blocks.some(block => block.jamming === 0)) return getUbxUnknownJammingAssessment(receiver);
+    return {
+        tone: 'info',
+        title: 'Chưa ghi nhận nhiễu đáng kể',
+        reason: `MON-RF của ${rf.blocks.map(band).join(', ')} đều báo không có nhiễu đáng kể ở lần đọc này.`,
+        next: 'Nếu đo vẫn lệch, tiếp tục kiểm tra tọa độ, hệ quy chiếu và chiều cao anten; kết quả RF không chứng minh tọa độ Base đúng.',
+    };
+}
+
+function getRfAssessment({live, rf, um, readError, receiver, security, unicore = false}) {
+    if (!live) return unknownRfAssessment('Trạm không có dữ liệu trực tiếp.', 'Kết nối lại trạm rồi kiểm tra mẫu RF mới.');
+    if (!unicore && (security || receiver?.itfm_supported === false)) return getSecurityRfAssessment(security);
+    if (readError) {
+        return unknownRfAssessment(
+            getRfReadErrorReason(readError.error_kind),
+            'Xem chi tiết lỗi đọc; chưa dùng riêng hình phổ để kết luận trạm sạch nhiễu.'
+        );
+    }
+    if (unicore || um) return getUnicoreRfAssessment(um);
+    return getUbxRfAssessment(rf, receiver);
 }
 
 function getLeaflet() {
