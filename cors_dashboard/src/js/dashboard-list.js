@@ -202,9 +202,10 @@ function getListDisplayStatus(device, offlineNow) {
     const effectiveStatus = sourceOffline ? 'offline' : operationalStatus;
     const displayStatusKey = tokenGap && rawStatus !== 'offline' ? 'awaiting_license' : effectiveStatus;
     const allowedStatuses = ['online', 'streaming', 'sleep', 'starting'];
-    const statusColorClass = tokenGap && rawStatus !== 'offline'
-        ? (allowedStatuses.includes(operationalStatus) ? operationalStatus : 'awaiting_license')
-        : effectiveStatus;
+    let statusColorClass = effectiveStatus;
+    if (tokenGap && rawStatus !== 'offline') {
+        statusColorClass = allowedStatuses.includes(operationalStatus) ? operationalStatus : 'awaiting_license';
+    }
     const statusText = STATUS_TEXT_MAP[displayStatusKey] || String(displayStatusKey || 'UNKNOWN').toUpperCase();
     const statusBadgeClass = STATUS_CLASS_MAP[displayStatusKey] || 'bg-secondary';
     const hideStatusBadge = !tokenGap && ['online', 'sleep', 'offline', 'streaming', 'starting'].includes(effectiveStatus);
@@ -212,8 +213,16 @@ function getListDisplayStatus(device, offlineNow) {
 }
 
 function getListOutputSpeed(server, sourceOffline, useRtcmSleepUi, rtcmInputBps) {
-    const bytes = sourceOffline ? 0 : (useRtcmSleepUi ? rtcmInputBps : server.bps);
+    let bytes = server.bps;
+    if (sourceOffline) bytes = 0;
+    else if (useRtcmSleepUi) bytes = rtcmInputBps;
     return formatListServerSpeed(bytes);
+}
+
+function getEmptyStationMessage(localSearchTerm, statusFilter, stationType) {
+    if (localSearchTerm || statusFilter !== 'all') return 'Không tìm thấy trạm phù hợp trong nhóm này.';
+    if (stationType === 'mobile') return 'Chưa có Base 4G trong danh sách của bạn.';
+    return 'Chưa có trạm cố định trong danh sách của bạn.';
 }
 
 function getDeviceListMetrics(device, offlineNow) {
@@ -521,10 +530,7 @@ const DeviceList = memo(function DeviceList({ devices, selectedDeviceSerial, onS
                 {displayedDevices.length === 0 ? (
                     <div className="text-center mt-4 text-muted" role="status">
                         <i className="bi bi-search opacity-50" aria-hidden="true"></i>
-                        <p className="mt-2 small">{localSearchTerm || statusFilter !== 'all'
-                            ? 'Không tìm thấy trạm phù hợp trong nhóm này.'
-                            : stationType === 'mobile' ? 'Chưa có Base 4G trong danh sách của bạn.'
-                            : 'Chưa có trạm cố định trong danh sách của bạn.'}</p>
+                        <p className="mt-2 small">{getEmptyStationMessage(localSearchTerm, statusFilter, stationType)}</p>
                     </div>
                 ) : (
                     displayedDevices.map((device, index) => (

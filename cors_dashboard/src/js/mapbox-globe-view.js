@@ -15,10 +15,12 @@
     }
     const reducedMotion = () => Boolean(window.matchMedia?.('(prefers-reduced-motion: reduce)').matches);
     const spinStep = zoom => 3 * Math.max(0, Math.min(1, (5 - zoom) / 2));
-    const gnssPointStatus = properties => properties.identityStatus === 'retired'
-        ? 'Đã ngừng khai thác · không ghép RTCM'
-        : properties.identityKnown === false ? 'Chưa xác nhận PRN hiện hành; không ghép RTCM'
-            : properties.tracked ? 'Agent đang nhận RTCM' : 'Không có PRN RTCM khớp';
+    const gnssPointStatus = properties => {
+        if (properties.identityStatus === 'retired') return 'Đã ngừng khai thác · không ghép RTCM';
+        if (properties.identityKnown === false) return 'Chưa xác nhận PRN hiện hành; không ghép RTCM';
+        if (properties.tracked) return 'Agent đang nhận RTCM';
+        return 'Không có PRN RTCM khớp';
+    };
     const gnssPointDescription = properties => properties.kind === 'ipp'
         ? `IPP 350 km · VTEC ${properties.vtec ?? '--'} TECU`
         : `${properties.name} · NORAD ${properties.noradId} · ${Math.round(properties.altKm)} km · ${gnssPointStatus(properties)}`;
@@ -372,7 +374,9 @@
         }
         _installMarkerImages() {
             for (const [name, color] of [['fixed', '#22c55e'], ['float', '#38bdf8'], ['3d', '#ef4444'], ['unknown', '#a3a3a3'], ['ipp', '#38bdf8'], ['base-4g', '#22c55e']]) {
-                const id = name === 'base-4g' ? 'cors-base-4g' : name === 'ipp' ? 'cors-ipp' : `cors-rover-${name}`;
+                let id = `cors-rover-${name}`;
+                if (name === 'base-4g') id = 'cors-base-4g';
+                else if (name === 'ipp') id = 'cors-ipp';
                 if (this.map.hasImage(id)) continue;
                 const canvas = document.createElement('canvas'); canvas.width = 56; canvas.height = 56;
                 const ctx = canvas.getContext('2d');

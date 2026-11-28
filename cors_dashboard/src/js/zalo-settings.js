@@ -39,8 +39,16 @@
         if (!target) return;
         target.innerHTML = state.bots.map(bot => {
             const count = state.items.filter(item => (item.bot_key || 'tun') === bot.key).length;
-            const status = !bot.token_configured ? 'Chưa cấu hình' : !state.system.enabled ? 'Đã tắt' : bot.running ? 'Đang chạy' : 'Chưa chạy';
-            const color = bot.running && state.system.enabled ? 'bg-success' : !bot.token_configured ? 'bg-warning text-dark' : 'bg-secondary';
+            let status = 'Chưa chạy';
+            let color = 'bg-secondary';
+            if (!bot.token_configured) {
+                status = 'Chưa cấu hình';
+                color = 'bg-warning text-dark';
+            } else if (!state.system.enabled) status = 'Đã tắt';
+            else if (bot.running) {
+                status = 'Đang chạy';
+                color = 'bg-success';
+            }
             return `<div class="col-12 col-md-6"><div class="ops-card zalo-bot-summary p-3 h-100">
                 <div class="d-flex flex-wrap justify-content-between align-items-start gap-2"><div>
                     <h2 class="h6 mb-1">${escapeHtml(bot.name)}</h2><div class="small text-muted">Chủ bot: ${escapeHtml(bot.owner)}</div>
@@ -576,9 +584,13 @@
             });
             const command = `/register ${data.code}`;
             document.getElementById('group-otp-command').textContent = command;
-            document.getElementById('group-otp-summary').textContent = bindingType === 'group_admin'
+            let scopeDescription = `${allowedBases.length} trạm`;
+            if (scopeMode === 'all') scopeDescription = 'tất cả trạm';
+            else if (scopeMode === 'none') scopeDescription = 'không có trạm';
+            const groupSummary = bindingType === 'group_admin'
                 ? 'Group admin · toàn quyền'
-                : `Group public · ${scopeMode === 'all' ? 'tất cả trạm' : scopeMode === 'none' ? 'không có trạm' : `${allowedBases.length} trạm`}`;
+                : `Group public · ${scopeDescription}`;
+            document.getElementById('group-otp-summary').textContent = groupSummary;
             document.getElementById('group-otp-result').classList.remove('d-none');
             document.getElementById('copy-group-otp').disabled = false;
             state.groupOtpExpiresAt = Number(data.expires_at) * 1000;
@@ -617,10 +629,10 @@
         document.getElementById('standard-scope-settings').classList.toggle('d-none', mode !== 'standard');
         document.getElementById('standard-alert-settings').classList.toggle('d-none', mode !== 'standard');
         document.getElementById('binding-type-field').classList.toggle('d-none', !state.isAdmin || mode !== 'standard');
-        document.getElementById('delivery-preview').textContent = mode === 'paused'
-            ? 'Bot sẽ không gửi phản hồi hoặc thông báo cho cuộc trò chuyện này. Cấu hình hiện tại được giữ nguyên.'
-            : isPublic ? 'Ví dụ: “CORS Cục đang hoạt động” hoặc “CORS Cục đang gián đoạn”. Không kèm cảnh báo base hay rover.'
-            : 'Bot hoạt động theo quyền và phạm vi đã liên kết. Các cảnh báo bên dưới chỉ gửi khi được bật.';
+        let deliveryPreview = 'Bot hoạt động theo quyền và phạm vi đã liên kết. Các cảnh báo bên dưới chỉ gửi khi được bật.';
+        if (mode === 'paused') deliveryPreview = 'Bot sẽ không gửi phản hồi hoặc thông báo cho cuộc trò chuyện này. Cấu hình hiện tại được giữ nguyên.';
+        else if (isPublic) deliveryPreview = 'Ví dụ: “CORS Cục đang hoạt động” hoặc “CORS Cục đang gián đoạn”. Không kèm cảnh báo base hay rover.';
+        document.getElementById('delivery-preview').textContent = deliveryPreview;
         const isGroupAdmin = !isPrivate && document.getElementById('edit-binding-type').value === 'group_admin';
         document.getElementById('private-scope-note').classList.toggle('d-none', !isPrivate || isPublic);
         document.getElementById('group-admin-scope-note').classList.toggle('d-none', !isGroupAdmin);
@@ -638,7 +650,8 @@
         document.getElementById('edit-display-name').value = item.display_name || '';
         document.getElementById('edit-binding-type').value = item.binding_type;
         document.getElementById('edit-active').checked = Boolean(item.is_active);
-        const mode = item.is_active ? (item.delivery_mode || (item.binding_type === 'cors_public' ? 'cors_only' : 'standard')) : 'paused';
+        let mode = 'paused';
+        if (item.is_active) mode = item.delivery_mode || (item.binding_type === 'cors_public' ? 'cors_only' : 'standard');
         document.querySelector(`input[name="delivery-mode"][value="${mode}"]`).checked = true;
         document.getElementById('delivery-standard').disabled = item.binding_type === 'cors_public';
         document.getElementById('edit-cors-notify').checked = Boolean(notification.cors_notify_changes);
@@ -669,9 +682,9 @@
     function applyGroupStationScope(payload, item, selectedStations) {
         if (item.chat_type !== 'group' || payload.delivery_mode !== 'standard') return true;
         const bindingType = payload.binding_type;
-        const scopeMode = bindingType === 'cors_public' ? 'none'
-            : bindingType === 'group_admin' ? 'all'
-            : document.getElementById('edit-scope-mode').value;
+        let scopeMode = document.getElementById('edit-scope-mode').value;
+        if (bindingType === 'cors_public') scopeMode = 'none';
+        else if (bindingType === 'group_admin') scopeMode = 'all';
         payload.station_scope_mode = scopeMode;
         payload.allowed_bases = scopeMode === 'selected' ? selectedStations : [];
         if (scopeMode !== 'selected' || payload.allowed_bases.length) return true;

@@ -146,9 +146,12 @@
 
         createIppIcon(tecVal) {
             const L = window.CorsDashboardShared?.getLeaflet?.() || window.L;
-            const color = tecVal !== null && tecVal !== undefined
-                ? (tecVal > 55 ? '#ef4444' : tecVal > 35 ? '#f97316' : tecVal > 20 ? '#eab308' : '#38bdf8')
-                : '#38bdf8';
+            let color = '#38bdf8';
+            if (tecVal !== null && tecVal !== undefined) {
+                if (tecVal > 55) color = '#ef4444';
+                else if (tecVal > 35) color = '#f97316';
+                else if (tecVal > 20) color = '#eab308';
+            }
             return L.divIcon({
                 className: 'gnss-ipp-icon-wrap',
                 html: `<div class="gnss-ipp-diamond" style="background:${color}; box-shadow:0 0 8px ${color};"></div>`,
@@ -522,20 +525,27 @@
 
         bindSatellitePopup(satObj, cfg, state) {
             const { lat, lon, altKm, look, isAboveHorizon, isTrackedByRtcm, elDeg, azDeg } = state;
-            const lookInfo = look ? `
+            let lookInfo = '';
+            if (look) {
+                const horizonColor = isAboveHorizon ? '#22c55e' : '#f87171';
+                const horizonLabel = isAboveHorizon ? 'Trên đường chân trời' : 'Dưới đường chân trời';
+                let rtcmInfo = '';
+                if (this.selectedStation) {
+                    const rtcmColor = isTrackedByRtcm ? '#22c55e' : '#94a3b8';
+                    const rtcmLabel = isTrackedByRtcm ? 'Agent đang nhận' : 'Không có PRN RTCM khớp';
+                    rtcmInfo = `
+                    <span class="station-map-popup-label">Trạng thái RTCM</span>
+                    <span class="station-map-popup-value" style="color:${rtcmColor};font-weight:700;">${rtcmLabel}</span>`;
+                }
+                lookInfo = `
                 <span class="station-map-popup-label">Góc ngẩng (El)</span>
-                <span class="station-map-popup-value" style="color:${isAboveHorizon ? '#22c55e' : '#f87171'};font-weight:700;">
-                    ${elDeg.toFixed(1)}° (${isAboveHorizon ? 'Trên đường chân trời' : 'Dưới đường chân trời'})
+                <span class="station-map-popup-value" style="color:${horizonColor};font-weight:700;">
+                    ${elDeg.toFixed(1)}° (${horizonLabel})
                 </span>
                 <span class="station-map-popup-label">Phương vị (Az)</span>
                 <span class="station-map-popup-value">${azDeg.toFixed(1)}°</span>
-                ${this.selectedStation ? `
-                    <span class="station-map-popup-label">Trạng thái RTCM</span>
-                    <span class="station-map-popup-value" style="color:${isTrackedByRtcm ? '#22c55e' : '#94a3b8'};font-weight:700;">
-                        ${isTrackedByRtcm ? 'Agent đang nhận' : 'Không có PRN RTCM khớp'}
-                    </span>
-                ` : ''}
-            ` : '';
+                ${rtcmInfo}`;
+            }
             satObj.marker.bindPopup(`
                 <div class="station-map-popup gnss-sat-popup">
                     <div class="d-flex justify-content-between align-items-center mb-1">

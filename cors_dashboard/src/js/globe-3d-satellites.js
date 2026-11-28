@@ -467,7 +467,10 @@
                 const isSleep = item.status === 'sleep';
                 const isSelected = selectedStation && (selectedStation.serial === item.device?.serial || selectedStation.name === item.device?.name);
 
-                const texKey = isSelected ? 'selected' : isOnline ? 'online' : isSleep ? 'sleep' : 'offline';
+                let texKey = 'offline';
+                if (isSleep) texKey = 'sleep';
+                if (isOnline) texKey = 'online';
+                if (isSelected) texKey = 'selected';
                 const tex = this.pinTextures[texKey] || this.pinTextures.online;
 
                 const spriteMat = new THREE.SpriteMaterial({
@@ -794,12 +797,22 @@
         getStationStatus(stationItem) {
             const isOnline = stationItem.status === 'online' || stationItem.status === 'streaming';
             const isSleep = stationItem.status === 'sleep';
+            let label = 'Mất kết nối';
+            let color = '#ef4444';
+            if (isSleep) {
+                label = 'Chế độ chờ (Sleep)';
+                color = '#f59e0b';
+            }
+            if (isOnline) {
+                label = 'Trực tuyến';
+                color = '#10b981';
+            }
             return {
                 isOnline,
                 isSleep,
                 isAvailable: isOnline || isSleep,
-                label: isOnline ? 'Trực tuyến' : isSleep ? 'Chế độ chờ (Sleep)' : 'Mất kết nối',
-                color: isOnline ? '#10b981' : isSleep ? '#f59e0b' : '#ef4444'
+                label,
+                color
             };
         }
 
@@ -815,9 +828,8 @@
         buildStationSignalSummary(tracking, status, unmatchedCodes, satChipsHtml) {
             const totalTracked = tracking.trackedSats.length;
             const unmatchedCount = Math.max(0, tracking.liveRtcmSatellites.length - totalTracked);
-            const unmatchedDetails = unmatchedCodes.length
-                ? `: ${unmatchedCodes.join(', ')}${unmatchedCount > 8 ? ', …' : ''}`
-                : '';
+            const truncationMark = unmatchedCount > 8 ? ', …' : '';
+            const unmatchedDetails = unmatchedCodes.length ? `: ${unmatchedCodes.join(', ')}${truncationMark}` : '';
             const liveSummary = tracking.hasLiveRtcm
                 ? `(${unmatchedCount} chưa ghép quỹ đạo${unmatchedDetails})`
                 : '(đang chờ RTCM)';
@@ -831,9 +843,13 @@
             const chipSection = status.isAvailable && totalTracked > 0
                 ? `<div class="tracked-sats-wrapper"><div class="tracked-sats-header"><span>Vệ tinh RTCM đang nhận (bấm để bám quỹ đạo):</span><span>${totalTracked} Sats</span></div><div class="tracked-sats-chips">${satChipsHtml}</div></div>`
                 : '';
-            const waitingMessage = status.isAvailable && !totalTracked
-                ? `<div class="small text-muted mt-2">${tracking.hasLiveRtcm ? 'Có RTCM mới nhưng chưa khớp PRN với quỹ đạo đã nạp.' : 'Đang chờ agent gửi RTCM mới.'}</div>`
-                : '';
+            let waitingMessage = '';
+            if (status.isAvailable && !totalTracked) {
+                const message = tracking.hasLiveRtcm
+                    ? 'Có RTCM mới nhưng chưa khớp PRN với quỹ đạo đã nạp.'
+                    : 'Đang chờ agent gửi RTCM mới.';
+                waitingMessage = `<div class="small text-muted mt-2">${message}</div>`;
+            }
             return {
                 trackedSummary,
                 liveSummary,

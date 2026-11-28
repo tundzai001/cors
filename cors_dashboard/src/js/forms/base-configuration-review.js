@@ -1,6 +1,14 @@
 import { Vn2000Result, projectionLabel, displayMeridian, displayProjectionScale, formatReportCoordinate } from './base-configuration-projection.js';
 import { getAutoBaseReviewText } from './base-configuration-state.js';
 
+function formatReviewedCoordinate(key, reviewCoords, currentReview, activeChip, formatCoord10, formatApprovedAltitude) {
+    if (currentReview?.pending) return 'Chờ tính lại';
+    const value = reviewCoords?.[key];
+    if (value == null) return 'Chưa có dữ liệu';
+    if (key === 'alt') return formatApprovedAltitude(value, activeChip);
+    return formatCoord10(value);
+}
+
 function AutoBaseCoordinateComparisonTable({
     conversionReport, reviewReport, autoProgress, reviewCoords, currentReview, activeChip,
     formatCoord10, formatApprovedAltitude,
@@ -14,7 +22,7 @@ function AutoBaseCoordinateComparisonTable({
                 <tr key={key}><th scope="row">{label}</th>
                     <td className="font-monospace">{formatReportCoordinate(conversionReport.input_coord?.[key], key)}</td>
                     <td className="font-monospace text-break">{formatReportCoordinate((reviewReport.calculated_coord || autoProgress.calculated_coord)?.[key], key)}</td>
-                    <td className="font-monospace">{currentReview?.pending ? 'Chờ tính lại' : reviewCoords?.[key] == null ? 'Chưa có dữ liệu' : key === 'alt' ? formatApprovedAltitude(reviewCoords[key], activeChip) : formatCoord10(reviewCoords[key])}</td>
+                    <td className="font-monospace">{formatReviewedCoordinate(key, reviewCoords, currentReview, activeChip, formatCoord10, formatApprovedAltitude)}</td>
                 </tr>
             ))}</tbody>
         </table>
@@ -27,8 +35,9 @@ function AutoBaseTransformDetails({ conversionReport, reviewReport }) {
         : 'Giữ LLH GNSS gốc; không chuyển hệ tọa độ.';
     const parameterSource = conversionReport.parameter_source === 'rtcm1021' ? 'RTCM 1021' : 'Chưa xác nhận';
     const residualSource = conversionReport.residual_source === 'rtcm1023' ? 'RTCM 1023' : 'Không có';
-    const projectionSource = conversionReport.projection_source === 'rtcm1025' ? 'RTCM 1025'
-        : conversionReport.projection_source === 'manual' ? 'Nhập thủ công' : 'Danh mục máy chủ';
+    let projectionSource = 'Danh mục máy chủ';
+    if (conversionReport.projection_source === 'rtcm1025') projectionSource = 'RTCM 1025';
+    else if (conversionReport.projection_source === 'manual') projectionSource = 'Nhập thủ công';
     return <>
         <div className="small">{transformSummary}</div>
         {conversionReport.received_messages && <div className="small text-muted mt-1">RTCM nhận trong phiên: {Object.keys(conversionReport.received_messages).join(', ') || 'Chưa có bản tin'}</div>}
@@ -83,8 +92,9 @@ function FixedLlaCoordinateFields(props) {
         setAltitudeReference, setCoordinatePasteNotice, fixedAccuracyM, setFixedAccuracyM,
     } = props;
     const pasteHelpId = `base-coordinate-paste-help-${device.serial}`;
-    const precisionHelp = activeChip === 'Ublox' ? ` base-ublox-precision-${device.serial}`
-        : activeChip === 'Unicorecomm' ? ` base-unicore-precision-${device.serial}` : '';
+    let precisionHelp = '';
+    if (activeChip === 'Ublox') precisionHelp = ` base-ublox-precision-${device.serial}`;
+    else if (activeChip === 'Unicorecomm') precisionHelp = ` base-unicore-precision-${device.serial}`;
     const coordinateDigits = activeChip === 'Ublox' ? 9 : 10;
     return <div className="row g-3">
         <div className="col-12 text-muted small fst-italic mb-2">* Chế độ này yêu cầu bạn đã có tọa độ chính xác (mốc địa chính).</div>

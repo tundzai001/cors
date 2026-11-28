@@ -101,10 +101,10 @@ document.addEventListener('DOMContentLoaded', async () => {
         renderBlacklistTable(statsData.rate_limiter.blacklisted_ips);
         const edge = statsData.rate_limiter.nginx_security || {};
         const edgeStatus = document.getElementById('proxy-block-status');
-        if (edgeStatus) edgeStatus.textContent = edge.state === 'reload_requested'
-            ? 'Nginx: đã gửi cập nhật danh sách chặn'
-            : edge.state === 'error' ? 'Đồng bộ Nginx lỗi · chặn ứng dụng vẫn hoạt động'
-            : edge.enabled ? 'Đang đồng bộ danh sách sang Nginx' : 'Hiện chỉ chặn tại ứng dụng';
+        let edgeMessage = edge.enabled ? 'Đang đồng bộ danh sách sang Nginx' : 'Hiện chỉ chặn tại ứng dụng';
+        if (edge.state === 'reload_requested') edgeMessage = 'Nginx: đã gửi cập nhật danh sách chặn';
+        else if (edge.state === 'error') edgeMessage = 'Đồng bộ Nginx lỗi · chặn ứng dụng vẫn hoạt động';
+        if (edgeStatus) edgeStatus.textContent = edgeMessage;
         renderTemporaryBlocksTable(statsData.rate_limiter.temporary_blocked_ips || []);
         renderBlockHistory(statsData.rate_limiter.recent_blocks || []);
         renderSuspiciousIPs(statsData.rate_limiter.suspicious_ips);
@@ -188,7 +188,11 @@ document.addEventListener('DOMContentLoaded', async () => {
         const app = health.application;
 
         // Helper đổi màu thanh progress (Xanh -> Vàng -> Đỏ)
-        const getColor = (val) => val > 90 ? 'bg-danger' : val > 70 ? 'bg-warning' : 'bg-success';
+        const getColor = val => {
+            if (val > 90) return 'bg-danger';
+            if (val > 70) return 'bg-warning';
+            return 'bg-success';
+        };
         const setBar = (idBar, idVal, val) => {
             const elBar = document.getElementById(idBar);
             const elVal = document.getElementById(idVal);
@@ -442,15 +446,19 @@ document.addEventListener('DOMContentLoaded', async () => {
                 : `<span class="text-muted small"><i class="bi bi-hdd-network me-1"></i>Chung IP mạng</span>`;
 
             const deviceName = escapeHtml(s.device_name || 'Không xác định');
-            const deviceIcon = /ipad/i.test(s.device_name || '') ? 'bi-tablet'
-                : /iphone|ipod|android/i.test(`${s.device_name || ''} ${s.user_agent || ''}`) ? 'bi-phone' : 'bi-laptop';
+            let deviceIcon = 'bi-laptop';
+            if (/ipad/i.test(s.device_name || '')) deviceIcon = 'bi-tablet';
+            else if (/iphone|ipod|android/i.test(`${s.device_name || ''} ${s.user_agent || ''}`)) deviceIcon = 'bi-phone';
             const deviceIdShort = escapeHtml((s.device_id || '').slice(0, 10));
 
-            const sessionState = s.is_revoked ? 'Đã thu hồi' : s.is_expired ? 'Hết hạn' : s.is_online ? 'Đang hoạt động' : 'Không hoạt động';
-            const actionButtons = (s.is_revoked || s.is_expired)
-                ? `<span class="badge bg-secondary">${sessionState}</span>` : s.is_current
-                ? `<span class="badge bg-dark-subtle text-muted border px-2 py-1"><i class="bi bi-shield-check me-1"></i>Đang sử dụng</span>`
-                : `<div class="btn-group btn-group-sm">
+            let sessionState = 'Không hoạt động';
+            if (s.is_online) sessionState = 'Đang hoạt động';
+            if (s.is_expired) sessionState = 'Hết hạn';
+            if (s.is_revoked) sessionState = 'Đã thu hồi';
+            let actionButtons;
+            if (s.is_revoked || s.is_expired) actionButtons = `<span class="badge bg-secondary">${sessionState}</span>`;
+            else if (s.is_current) actionButtons = `<span class="badge bg-dark-subtle text-muted border px-2 py-1"><i class="bi bi-shield-check me-1"></i>Đang sử dụng</span>`;
+            else actionButtons = `<div class="btn-group btn-group-sm">
                     <button class="btn btn-sm btn-outline-warning revoke-session-btn" 
                             data-session-id="${escapeHtml(s.session_id)}" 
                             data-username="${escapeHtml(s.username)}"
@@ -537,7 +545,9 @@ document.addEventListener('DOMContentLoaded', async () => {
             return;
         }
         suspiciousIPs.forEach(item => {
-            const alertLevel = item.score >= 50 ? 'danger' : item.score >= 30 ? 'warning' : 'info';
+            let alertLevel = 'info';
+            if (item.score >= 50) alertLevel = 'danger';
+            else if (item.score >= 30) alertLevel = 'warning';
             const div = document.createElement('div');
             div.className = `alert alert-${alertLevel} d-flex justify-content-between align-items-center mb-2`;
             div.innerHTML = `

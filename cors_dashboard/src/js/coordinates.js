@@ -42,14 +42,20 @@
     function labels(side) {
         if (format(side) === 'geocentric') return ['X địa tâm (m)', 'Y địa tâm (m)', 'Z địa tâm (m)'];
         const height = $(side + '-height').value === 'orthometric' ? 'Cao độ H (m)' : 'Độ cao h (m)';
-        const angularUnit = side === 'source' && angleMode !== 'dd' ? angleMode === 'dms' ? 'DMS' : 'ddmmss.s' : '°';
+        let angularUnit = '°';
+        if (side === 'source' && angleMode !== 'dd') angularUnit = angleMode === 'dms' ? 'DMS' : 'ddmmss.s';
         return format(side) === 'geographic' ? [`Kinh độ (${angularUnit})`, `Vĩ độ (${angularUnit})`, height] : ['X / Bắc (m)', 'Y / Đông (m)', height];
     }
     function crs(side) {
         const vn = $(side + '-datum').value === 'VN2000';
         if (format(side) === 'geocentric') return vn ? 'VN2000:ECEF' : 'EPSG:4978';
         if (format(side) === 'geographic') return vn ? 'EPSG:4756' : 'EPSG:4326';
-        if ($(side + '-width').value === '6') return 'EPSG:' + (vn ? ($(side + '-zone').value === '48' ? 3405 : 3406) : ($(side + '-zone').value === '48' ? 32648 : 32649));
+        if ($(side + '-width').value === '6') {
+            const isZone48 = $(side + '-zone').value === '48';
+            let epsgCode = isZone48 ? 32648 : 32649;
+            if (vn) epsgCode = isZone48 ? 3405 : 3406;
+            return 'EPSG:' + epsgCode;
+        }
         return catalog.systems.find(s => s.projection?.zone_width === 3 && s.projection.central_meridian === Number($(side + '-meridian').value))?.id || '';
     }
     function getAnglePlaceholder(column) {
@@ -225,7 +231,11 @@
         ['first-heading', 'second-heading', 'third-heading'].forEach((id, i) => { $(id).textContent = names[i]; });
         exportedRows = data.points.map(point => {
             const display = geographic ? [point[1], point[0], ...point.slice(2)] : point;
-            return names.map((_, i) => display[i] == null ? '' : display[i].toFixed(geographic && i < 2 ? 9 : 4));
+            return names.map((_, i) => {
+                if (display[i] == null) return '';
+                const precision = geographic && i < 2 ? 9 : 4;
+                return display[i].toFixed(precision);
+            });
         });
         $('result-body').replaceChildren(...exportedRows.map((values, index) => {
             const row = document.createElement('tr');
@@ -299,9 +309,11 @@
     });
     $('edition').addEventListener('change', () => { provinces(); invalidate(); });
     function setAngleMode(next) {
-        const changes = [...$('point-rows').children].flatMap(row => [...row.querySelectorAll('input')].slice(0, 2).map((input, column) => ({
-            input, value: input.value.trim() ? angles.format(angles.parse(input.value, column === 0 ? 'lon' : 'lat', angleMode), column === 0 ? 'lon' : 'lat', next) : ''
-        })));
+        const changes = [...$('point-rows').children].flatMap(row => [...row.querySelectorAll('input')].slice(0, 2).map((input, column) => {
+            const axis = column === 0 ? 'lon' : 'lat';
+            const value = input.value.trim() ? angles.format(angles.parse(input.value, axis, angleMode), axis, next) : '';
+            return {input, value};
+        }));
         angleMode = next; $('angle-format').value = next; pointLabels();
         changes.forEach(({input, value}) => { input.value = value; });
         update('source'); invalidate();

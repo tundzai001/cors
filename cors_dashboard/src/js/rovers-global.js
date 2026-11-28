@@ -1024,9 +1024,9 @@ function getRoverServerBadges(infos, targetHosts) {
         const enabled = fixedPoints ? rover.auto_save_fixed_points === true : rover.auto_save_sessions !== false;
         const label = fixedPoints ? 'điểm vị trí' : 'phiên Rover';
         const stateLabel = enabled ? 'bật' : 'tắt';
-        const icon = fixedPoints
-            ? enabled ? 'bi-geo-alt-fill text-success' : 'bi-geo-alt text-muted opacity-50'
-            : `bi-clock-history ${enabled ? 'text-success' : 'text-muted opacity-50'}`;
+        let icon;
+        if (fixedPoints) icon = enabled ? 'bi-geo-alt-fill text-success' : 'bi-geo-alt text-muted opacity-50';
+        else icon = `bi-clock-history ${enabled ? 'text-success' : 'text-muted opacity-50'}`;
         const titleState = enabled ? 'BẬT' : 'TẮT';
         return `<span role="img" aria-label="Tự lưu ${label} đang ${stateLabel}" title="Tự lưu ${label} đang ${titleState}"><i class="bi ${icon}" aria-hidden="true"></i></span>`;
     }
@@ -1043,9 +1043,8 @@ function getRoverServerBadges(infos, targetHosts) {
 function getRoverConnectionLimit(r, infos) {
     const liveMaxClients = infos.map(info => Number(info?.maxclient)).filter(value => Number.isFinite(value) && value >= 0);
     const dbMaxConnections = Number(r.max_connections);
-    const maxConn = liveMaxClients.length
-        ? liveMaxClients[0]
-        : Number.isFinite(dbMaxConnections) && dbMaxConnections >= 0 ? dbMaxConnections : 1;
+    const storedMaxConnections = Number.isFinite(dbMaxConnections) && dbMaxConnections >= 0 ? dbMaxConnections : 1;
+    const maxConn = liveMaxClients.length ? liveMaxClients[0] : storedMaxConnections;
     return maxConn === 0
         ? '<div class="text-muted mt-1" style="font-size:0.7rem" title="Không giới hạn số lượng kết nối đồng thời"><i class="bi bi-infinity me-1 text-info"></i>Không giới hạn</div>'
         : `<div class="text-muted mt-1" style="font-size:0.7rem" title="Số lượng kết nối đồng thời tối đa"><i class="bi bi-people me-1"></i>Tối đa: ${maxConn}</div>`;
@@ -1321,9 +1320,9 @@ function createRoverRowElement(r) {
         const yesterday = localDateValue(yesterdayDate);
         container.innerHTML = roverActivityDaily.slice().reverse().map(item => {
             const dateValue = escapeHtml(item.date);
-            const label = item.date === today ? 'Hôm nay'
-                : item.date === yesterday ? 'Hôm qua'
-                    : activityDateLabel(item.date);
+            let label = activityDateLabel(item.date);
+            if (item.date === today) label = 'Hôm nay';
+            else if (item.date === yesterday) label = 'Hôm qua';
             return `<button type="button" class="rover-activity-day-button ${item.date === roverActivitySelectedDate ? 'is-selected' : ''}" data-activity-date="${dateValue}" aria-pressed="${item.date === roverActivitySelectedDate}">
                 <span><strong>${label}</strong><br>${dateValue}</span>
                 <strong>${Number(item.machine_count) || 0} máy</strong>
@@ -1482,12 +1481,16 @@ function createRoverRowElement(r) {
         const accounts = roverActivityAccountNames();
         const query = showAll ? '' : normalizeUsername(input.value);
         const matches = accounts.filter(username => normalizeUsername(username).includes(query));
-        options.innerHTML = matches.length
+        const accountOptions = matches.length
             ? matches.map((username, index) => {
                 const selected = normalizeUsername(username) === normalizeUsername(input.value);
                 return `<button type="button" id="rover-activity-account-option-${index}" class="rover-activity-account-option ${selected ? 'is-selected' : ''}" role="option" aria-selected="${selected}" tabindex="-1" data-rover-activity-account="${escapeHtml(username)}">${escapeHtml(username)}</button>`;
-            }).join('')
-            : `<div class="rover-activity-account-options-empty" role="option" aria-disabled="true">${accounts.length ? 'Không tìm thấy tài khoản khớp.' : 'Chưa có tài khoản Rover để chọn.'}</div>`;
+            }).join('') : '';
+        if (accountOptions) options.innerHTML = accountOptions;
+        else {
+            const emptyMessage = accounts.length ? 'Không tìm thấy tài khoản khớp.' : 'Chưa có tài khoản Rover để chọn.';
+            options.innerHTML = `<div class="rover-activity-account-options-empty" role="option" aria-disabled="true">${emptyMessage}</div>`;
+        }
         options.hidden = false;
         input.setAttribute('aria-expanded', 'true');
         input.removeAttribute('aria-activedescendant');
@@ -1655,7 +1658,9 @@ function createRoverRowElement(r) {
         const isStart = index === 0;
         const isEnd = index === route.pointCount - 1;
         mapCoordinates.push(coordinate);
-        const color = isStart ? '#34d399' : isEnd ? '#fb7185' : route.color;
+        let color = route.color;
+        if (isStart) color = '#34d399';
+        else if (isEnd) color = '#fb7185';
         leaflet.circleMarker(coordinate, {
             radius: isStart || isEnd ? 6 : 3,
             color,
@@ -1788,9 +1793,9 @@ function createRoverRowElement(r) {
             const count = accountOptions?.querySelectorAll('[data-rover-activity-account]').length || 0;
             if (!count) return;
             event.preventDefault();
-            setRoverActivityAccountOptionActive(roverActivityAccountOptionIndex < 0
-                ? (direction > 0 ? 0 : count - 1)
-                : roverActivityAccountOptionIndex + direction);
+            let nextIndex = roverActivityAccountOptionIndex + direction;
+            if (roverActivityAccountOptionIndex < 0) nextIndex = direction > 0 ? 0 : count - 1;
+            setRoverActivityAccountOptionActive(nextIndex);
             return;
         }
         if (event.key !== 'Enter' || !accountOptions || accountOptions.hidden) return;
@@ -1874,10 +1879,19 @@ function createRoverRowElement(r) {
             coordinates.forEach((coordinate, index) => {
                 const { point, index: originalIndex } = validPoints[index];
                 const isEndpoint = index === 0 || index === validPoints.length - 1;
+                let pointColor = '#e0f2fe';
+                let pointFillColor = '#0ea5e9';
+                if (index === 0) {
+                    pointColor = '#34d399';
+                    pointFillColor = '#34d399';
+                } else if (index === validPoints.length - 1) {
+                    pointColor = '#fb7185';
+                    pointFillColor = '#fb7185';
+                }
                 leaflet.circleMarker(coordinate, {
                     radius: isEndpoint ? 7 : 5,
-                    color: index === 0 ? '#34d399' : index === validPoints.length - 1 ? '#fb7185' : '#e0f2fe',
-                    fillColor: index === 0 ? '#34d399' : index === validPoints.length - 1 ? '#fb7185' : '#0ea5e9',
+                    color: pointColor,
+                    fillColor: pointFillColor,
                     fillOpacity: 0.95,
                     weight: 1
                 }).addTo(map).bindPopup(`<strong>Điểm ${originalIndex + 1}</strong><br>${formatDateTime(point.recorded_at)}<br>${Number(point.lat).toFixed(7)}, ${Number(point.lon).toFixed(7)}<br>${escapeHtml(roverFixQualityLabel(point.fix_quality))} · ${point.satellites == null ? 'Không rõ số vệ tinh' : `${escapeHtml(point.satellites)} vệ tinh`}`);
@@ -2151,9 +2165,10 @@ function createRoverRowElement(r) {
             : '<div class="rover-history-empty"><i class="bi bi-clock-history" aria-hidden="true"></i><span>Chưa có phiên nào được ghi nhận.</span></div>';
         const eventHistoryHtml = events.length ? events.map(item => {
             const level = String(item.severity || item.type || '').toLowerCase();
-            const tone = ['critical', 'error', 'danger'].includes(level) ? 'danger'
-                : level === 'warning' ? 'warning'
-                : level === 'success' ? 'success' : 'info';
+            let tone = 'info';
+            if (['critical', 'error', 'danger'].includes(level)) tone = 'danger';
+            else if (level === 'warning') tone = 'warning';
+            else if (level === 'success') tone = 'success';
             const labels = { critical: 'Khẩn cấp', error: 'Lỗi', danger: 'Lỗi', warning: 'Cảnh báo', success: 'Thành công', info: 'Thông tin' };
             return `<article class="rover-history-event is-${tone}">
                 <span class="rover-history-event-time"><i class="bi bi-clock" aria-hidden="true"></i>${formatDateTime(item.timestamp)}</span>
@@ -2550,9 +2565,9 @@ function createRoverRowElement(r) {
 
     function getEditExpiryOptionText(rover) {
         const liveExpiry = getCasterInfosForUsername(rover.username).find(info => Number.isFinite(Number(info?.status)));
-        const remainingSeconds = liveExpiry
-            ? Number(liveExpiry.status)
-            : rover.expires_at ? rover.expires_at - Date.now() / 1000 : null;
+        let remainingSeconds = null;
+        if (liveExpiry) remainingSeconds = Number(liveExpiry.status);
+        else if (rover.expires_at) remainingSeconds = rover.expires_at - Date.now() / 1000;
         if (remainingSeconds === null) return '--- Giữ nguyên (Vĩnh viễn) ---';
         const remainingDays = Math.ceil(remainingSeconds / 86400);
         if (remainingDays >= 3650) return '--- Giữ nguyên (Vĩnh viễn) ---';
@@ -2581,9 +2596,8 @@ function createRoverRowElement(r) {
         const liveMaxClients = getCasterInfosForUsername(rover.username)
             .map(info => Number(info?.maxclient)).filter(value => Number.isFinite(value) && value >= 0);
         const roverMaxConnections = Number(rover.max_connections);
-        document.getElementById('edit-max-connections').value = liveMaxClients.length
-            ? liveMaxClients[0]
-            : Number.isFinite(roverMaxConnections) && roverMaxConnections >= 0 ? roverMaxConnections : 1;
+        const storedMaxConnections = Number.isFinite(roverMaxConnections) && roverMaxConnections >= 0 ? roverMaxConnections : 1;
+        document.getElementById('edit-max-connections').value = liveMaxClients.length ? liveMaxClients[0] : storedMaxConnections;
 
         const sharedToggle = document.getElementById('edit-is-shared');
         const autoSaveSessionsToggle = document.getElementById('edit-auto-save-sessions');
