@@ -360,80 +360,88 @@
             const satLib = window.satellite;
             const Math3D = window.Globe3DMath;
             if (!satLib || !Math3D || this.satelliteMeshes.size === 0) return;
-
             const now = new Date();
             const gmst = satLib.gstime(now);
+            if (state?.selectedStation) this.selectedStation = state.selectedStation;
+            this.updateSatelliteOrbits(satLib, Math3D, now, gmst);
+            this.refreshStationCardIfNeeded();
+            this.updateOverlayStatus(now);
+            this.globe.lastRenderAt = null;
+        }
 
-            if (state?.selectedStation) {
-                this.selectedStation = state.selectedStation;
+        updateSatelliteOrbits(satLib, Math3D, now, gmst) {
+            this.satelliteMeshes.forEach((record, key) => this.updateSatelliteOrbit(record, key, satLib, Math3D, now, gmst));
+        }
+
+        updateSatelliteOrbit({ mesh, satItem }, key, satLib, Math3D, now, gmst) {
+            if (this.globe.filters[satItem.constellationKey] === false) {
+                mesh.visible = false;
+                return;
             }
-
-            this.satelliteMeshes.forEach(({ mesh, sprite, satItem }, key) => {
-                const isEnabled = this.globe.filters[satItem.constellationKey] !== false;
-                if (!isEnabled) {
+            try {
+                const orbit = this.calculateSatelliteOrbit(satItem, satLib, Math3D, now, gmst);
+                if (!orbit) {
                     mesh.visible = false;
                     return;
                 }
-
-                try {
-                    const posVel = satLib.propagate(satItem.satrec, now);
-                    if (!posVel || !posVel.position) {
-                        mesh.visible = false;
-                        return;
-                    }
-
-                    const gd = satLib.eciToGeodetic(posVel.position, gmst);
-                    const lat = satLib.degreesLat(gd.latitude);
-                    const lon = satLib.degreesLong(gd.longitude);
-                    const altKm = gd.height;
-                    if (![lat, lon, altKm].every(Number.isFinite)) {
-                        mesh.visible = false;
-                        return;
-                    }
-                    const velocity = posVel.velocity;
-                    const speedKms = velocity ? Math.hypot(velocity.x, velocity.y, velocity.z) : Number.NaN;
-
-                    const pos3D = Math3D.latLonAltToVector3(lat, lon, altKm);
-                    mesh.position.copy(pos3D);
-                    mesh.visible = true;
-
-                    mesh.userData.lastCalculated = { lat, lon, altKm, speedKms, timestamp: now };
-
-                    // Update live satellite card and floating label if currently selected
-                    if (this.selectedSatellite?.key === key) {
-                        if (this.detailCardEl?.style.display === 'block') {
-                            const latEl = document.getElementById('card-sat-lat');
-                            const lonEl = document.getElementById('card-sat-lon');
-                            const altEl = document.getElementById('card-sat-alt');
-                            if (latEl && Number.isFinite(lat)) latEl.innerText = `${lat.toFixed(4)}°`;
-                            if (lonEl && Number.isFinite(lon)) lonEl.innerText = `${lon.toFixed(4)}°`;
-                            if (altEl && Number.isFinite(altKm)) altEl.innerText = `${Math.round(altKm).toLocaleString()} km`;
-                            const speedEl = this.detailCardEl.querySelector('#card-sat-speed');
-                            if (speedEl) speedEl.textContent = Number.isFinite(speedKms) ? `${speedKms.toFixed(2)} km/s` : '--';
-                            const regionEl = this.detailCardEl.querySelector('#card-sat-region');
-                            if (regionEl) regionEl.textContent = Math3D.groundRegion(this.globe.countryFeatures, lat, lon);
-                            const timeEl = this.detailCardEl.querySelector('#card-sat-time');
-                            if (timeEl) timeEl.textContent = `${formatVietnamTime(now)} ICT (UTC+7)`;
-                        }
-                    }
-                } catch (e) {
-                    // ignore calculation error
-                }
-            });
-            if (this.stationCardMode === 'station' && this.stationCard && this.detailCardEl?.style.display === 'block') {
-                const liveIds = window.GnssSatelliteOverlay?.getLiveRtcmSatellites(this.stationCard.item.device || {})
-                    .map(sat => sat.id || `${sat.system}:${sat.prn}`).sort((a, b) => String(a).localeCompare(String(b))) || [];
-                const signature = liveIds.join('|');
-                if (signature !== this.stationCardRtcmSignature) {
-                    this.stationCardRtcmSignature = signature;
-                    this.openStationCard(this.stationCard.item, this.stationCard.coords);
-                }
+                mesh.position.copy(orbit.position);
+                mesh.visible = true;
+                mesh.userData.lastCalculated = {
+                    lat: orbit.lat, lon: orbit.lon, altKm: orbit.altKm, speedKms: orbit.speedKms, timestamp: now,
+                };
+                this.updateSelectedSatelliteCard(key, orbit, now, Math3D);
+            } catch (error) {
+                // Ignore transient orbit calculation errors and retain the previous card values.
             }
+        }
+
+        calculateSatelliteOrbit(satItem, satLib, Math3D, now, gmst) {
+            const posVel = satLib.propagate(satItem.satrec, now);
+            if (!posVel?.position) return null;
+            const geodetic = satLib.eciToGeodetic(posVel.position, gmst);
+            const lat = satLib.degreesLat(geodetic.latitude);
+            const lon = satLib.degreesLong(geodetic.longitude);
+            const altKm = geodetic.height;
+            if (![lat, lon, altKm].every(Number.isFinite)) return null;
+            const velocity = posVel.velocity;
+            const speedKms = velocity ? Math.hypot(velocity.x, velocity.y, velocity.z) : Number.NaN;
+            return {lat, lon, altKm, speedKms, position: Math3D.latLonAltToVector3(lat, lon, altKm)};
+        }
+
+        updateSelectedSatelliteCard(key, orbit, now, Math3D) {
+            if (this.selectedSatellite?.key !== key) return;
+            const card = this.detailCardEl;
+            if (card?.style.display !== 'block') return;
+            const latEl = document.getElementById('card-sat-lat');
+            const lonEl = document.getElementById('card-sat-lon');
+            const altEl = document.getElementById('card-sat-alt');
+            if (latEl && Number.isFinite(orbit.lat)) latEl.innerText = `${orbit.lat.toFixed(4)}°`;
+            if (lonEl && Number.isFinite(orbit.lon)) lonEl.innerText = `${orbit.lon.toFixed(4)}°`;
+            if (altEl && Number.isFinite(orbit.altKm)) altEl.innerText = `${Math.round(orbit.altKm).toLocaleString()} km`;
+            const speedEl = card.querySelector('#card-sat-speed');
+            if (speedEl) speedEl.textContent = Number.isFinite(orbit.speedKms) ? `${orbit.speedKms.toFixed(2)} km/s` : '--';
+            const regionEl = card.querySelector('#card-sat-region');
+            if (regionEl) regionEl.textContent = Math3D.groundRegion(this.globe.countryFeatures, orbit.lat, orbit.lon);
+            const timeEl = card.querySelector('#card-sat-time');
+            if (timeEl) timeEl.textContent = `${formatVietnamTime(now)} ICT (UTC+7)`;
+        }
+
+        refreshStationCardIfNeeded() {
+            if (this.stationCardMode !== 'station' || !this.stationCard || this.detailCardEl?.style.display !== 'block') return;
+            const liveIds = window.GnssSatelliteOverlay?.getLiveRtcmSatellites(this.stationCard.item.device || {})
+                .map(sat => sat.id || `${sat.system}:${sat.prn}`).sort((a, b) => String(a).localeCompare(String(b))) || [];
+            const signature = liveIds.join('|');
+            if (signature === this.stationCardRtcmSignature) return;
+            this.stationCardRtcmSignature = signature;
+            this.openStationCard(this.stationCard.item, this.stationCard.coords);
+        }
+
+        updateOverlayStatus(now) {
             const count = [...this.satelliteMeshes.values()].filter(record => record.mesh.visible).length;
             const stale = window.GnssSatelliteOverlay?.tleInfo?.is_stale ? ' · Dữ liệu quỹ đạo cũ' : '';
             const rtcmCount = window.GnssSatelliteOverlay?.getLiveRtcmSatellites(this.selectedStation).length || 0;
-            this.statusEl.textContent = `${count} vệ tinh · ${rtcmCount ? `${rtcmCount} RTCM đang nhận · ` : ''}SGP4 1Hz · ${formatVietnamTime(now)} ICT (UTC+7)${stale}`;
-            this.globe.lastRenderAt = null;
+            const rtcmLabel = rtcmCount ? `${rtcmCount} RTCM đang nhận · ` : '';
+            this.statusEl.textContent = `${count} vệ tinh · ${rtcmLabel}SGP4 1Hz · ${formatVietnamTime(now)} ICT (UTC+7)${stale}`;
         }
 
         // Render CORS Stations as sleek, crisp IGS Network pin dots
