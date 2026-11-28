@@ -177,6 +177,215 @@ def _rover_history_position(client: dict) -> tuple[float, float] | None:
     return latitude, longitude
 
 
+def _rover_snapshot_usernames(clients):
+    return {
+        str(client.get("username") or "").strip().lower()
+        for client in clients
+        if isinstance(client, dict) and str(client.get("username") or "").strip()
+    }
+
+
+async def _rover_save_settings(db, client_usernames):
+    if not client_usernames:
+        return {}
+    result = await db.execute(
+        select(
+            func.lower(models.RoverAccount.username),
+            models.RoverAccount.auto_save_sessions,
+            models.RoverAccount.auto_save_fixed_points,
+            models.RoverAccount.base_serial,
+        ).where(func.lower(models.RoverAccount.username).in_(client_usernames))
+    )
+    return {
+        username: (bool(save_sessions), bool(save_points), base_serial)
+        for username, save_sessions, save_points, base_serial in result.all()
+    }
+
+
+def _rover_base_lookup_scope(rover_settings, client_usernames):
+    base_serials = set()
+    lookup_all_stations = bool(client_usernames - rover_settings.keys())
+    for save_sessions, _, raw_serials in rover_settings.values():
+        if not save_sessions:
+            continue
+        serial_values = str(raw_serials or "").replace(";", ",").split(",")
+        if not str(raw_serials or "").strip():
+            lookup_all_stations = True
+        for serial in serial_values:
+            if serial.strip():
+                base_serials.add(serial.strip().upper())
+    return base_serials, lookup_all_stations
+
+
+def _add_station_mountpoints(station, names_by_serial_mountpoint, names_by_mountpoint):
+    serial = str(station.serial or "").strip().upper()
+    base_name = str(station.name or station.serial or "").strip()
+    if not serial or not base_name:
+        return
+    service_config = crud.normalize_service_config(station.service_config)
+    for index in (1, 2):
+        mountpoint = str(service_config.get(f"mountpoint{index}") or "").strip().casefold()
+        if mountpoint:
+            names_by_serial_mountpoint[(serial, mountpoint)] = base_name
+            names_by_mountpoint.setdefault(mountpoint, set()).add(base_name)
+
+
+async def _rover_base_name_maps(host, base_serials, lookup_all_stations):
+    names_by_serial_mountpoint = {}
+    names_by_mountpoint = {}
+    if not base_serials and not lookup_all_stations:
+        return names_by_serial_mountpoint, names_by_mountpoint
+    try:
+        async with device_session_scope() as devices_db:
+            base_query = select(models.Device)
+            if base_serials and not lookup_all_stations:
+                base_query = base_query.where(func.upper(models.Device.serial).in_(base_serials))
+            result = await devices_db.execute(base_query)
+            for station in result.scalars().all():
+                _add_station_mountpoints(station, names_by_serial_mountpoint, names_by_mountpoint)
+    except Exception as error:
+        logger.warning("[CASTER HISTORY] Could not resolve Base names for %s: %s", host, error)
+    return names_by_serial_mountpoint, names_by_mountpoint
+
+
+def _rover_snapshot_base_name(mountpoint, raw_base_serials, names_by_serial_mountpoint, names_by_mountpoint):
+    normalized_mountpoint = mountpoint.casefold()
+    account_serials = [
+        serial.strip().upper()
+        for serial in str(raw_base_serials or "").replace(";", ",").split(",")
+        if serial.strip()
+    ]
+    matching_names = {
+        names_by_serial_mountpoint[(serial, normalized_mountpoint)]
+        for serial in account_serials
+        if (serial, normalized_mountpoint) in names_by_serial_mountpoint
+    }
+    base_name = next(iter(matching_names)) if len(matching_names) == 1 else None
+    if base_name is None and not account_serials:
+        matching_names = names_by_mountpoint.get(normalized_mountpoint, set())
+        base_name = next(iter(matching_names)) if len(matching_names) == 1 else None
+    return base_name
+
+
+def _rover_snapshot_metrics(client):
+    try:
+        raw_uptime = client.get("uptime")
+        uptime_seconds = max(0, int(raw_uptime)) if raw_uptime is not None else None
+    except (TypeError, ValueError):
+        uptime_seconds = None
+    try:
+        latest_fix_quality = int(client.get("status")) if client.get("status") is not None else None
+    except (TypeError, ValueError):
+        latest_fix_quality = None
+    try:
+        satellite_count = max(0, int(client.get("nsv", client.get("satellites"))))
+    except (TypeError, ValueError):
+        satellite_count = None
+    return uptime_seconds, latest_fix_quality, satellite_count
+
+
+def _upsert_rover_snapshot_row(
+    db, active_by_key, session_key, username, host, mountpoint, base_name,
+    client_id, receiver_id, observed_at, uptime_seconds, latest_fix_quality, satellite_count,
+):
+    row = active_by_key.pop(session_key, None)
+    if (
+        row is not None
+        and uptime_seconds is not None
+        and row.uptime_seconds is not None
+        and uptime_seconds + 10 < row.uptime_seconds
+    ):
+        row.ended_at = observed_at
+        row = None
+    if row is None:
+        row = models.RoverSessionHistory(
+            username=username,
+            server=host,
+            mountpoint=mountpoint,
+            base_name=base_name,
+            client_id=client_id,
+            receiver_id=receiver_id,
+            started_at=observed_at - uptime_seconds if uptime_seconds else observed_at,
+            last_seen_at=observed_at,
+            uptime_seconds=uptime_seconds,
+            latest_fix_quality=latest_fix_quality,
+            satellite_count=satellite_count,
+        )
+        db.add(row)
+        return row
+    row.username = username
+    row.mountpoint = mountpoint
+    if base_name and not row.base_name:
+        row.base_name = base_name
+    row.client_id = client_id
+    row.receiver_id = receiver_id
+    row.last_seen_at = observed_at
+    row.latest_fix_quality = latest_fix_quality
+    row.satellite_count = satellite_count
+    if uptime_seconds is not None:
+        if row.uptime_seconds is None or row.started_at is None:
+            row.started_at = observed_at - uptime_seconds
+        row.uptime_seconds = uptime_seconds
+    return row
+
+
+async def _save_rover_snapshot_position(
+    db, row, client, latest_points_by_session, observed_at, latest_fix_quality, satellite_count, save_fixed_points,
+):
+    position = _rover_history_position(client)
+    if position is None:
+        return
+    row.latitude, row.longitude = position
+    row.position_fix_quality = latest_fix_quality
+    row.position_updated_at = observed_at
+    row.position_satellite_count = satellite_count
+    if not save_fixed_points:
+        return
+    last_point_at = latest_points_by_session.get(row.id)
+    if last_point_at is not None and observed_at - last_point_at < ROVER_FIXED_POINT_INTERVAL_SECONDS:
+        return
+    if row.id is None:
+        await db.flush()
+    db.add(models.RoverFixedPoint(
+        session_id=row.id,
+        label="Vị trí tự động",
+        latitude=position[0],
+        longitude=position[1],
+        fix_quality=latest_fix_quality or 0,
+        satellite_count=satellite_count,
+        recorded_at=observed_at,
+        saved_at=observed_at,
+        created_by="Tự động",
+    ))
+    latest_points_by_session[row.id] = observed_at
+
+
+async def _record_rover_snapshot_client(
+    db, host, client, username, save_fixed_points, raw_base_serials,
+    names_by_serial_mountpoint, names_by_mountpoint, active_by_key, observed_keys,
+    latest_points_by_session, observed_at,
+):
+    mountpoint = str(client.get("mountpoint") or "").strip()
+    base_name = _rover_snapshot_base_name(
+        mountpoint, raw_base_serials, names_by_serial_mountpoint, names_by_mountpoint
+    )
+    client_id = str(client.get("client_id") or "").strip()
+    receiver_id = str(client.get("receiver_id") or "").strip()
+    session_key = _rover_history_session_key(host, username, mountpoint, client_id, receiver_id)
+    if session_key in observed_keys:
+        return
+    observed_keys.add(session_key)
+    uptime_seconds, latest_fix_quality, satellite_count = _rover_snapshot_metrics(client)
+    row = _upsert_rover_snapshot_row(
+        db, active_by_key, session_key, username, host, mountpoint, base_name,
+        client_id, receiver_id, observed_at, uptime_seconds, latest_fix_quality, satellite_count,
+    )
+    await _save_rover_snapshot_position(
+        db, row, client, latest_points_by_session, observed_at,
+        latest_fix_quality, satellite_count, save_fixed_points,
+    )
+
+
 async def _record_rover_session_snapshots(host: str, clients: list[dict], observed_at: int) -> None:
     """Keep one history row per observed caster connection session."""
     async with auth_session_scope() as db:
@@ -193,60 +402,14 @@ async def _record_rover_session_snapshots(host: str, clients: list[dict], observ
             ): row
             for row in active_rows
         }
-        client_usernames = {
-            str(client.get("username") or "").strip().lower()
-            for client in clients
-            if isinstance(client, dict) and str(client.get("username") or "").strip()
-        }
-        rover_save_settings_by_username = {}
-        base_names_by_serial_mountpoint: dict[tuple[str, str], str] = {}
-        if client_usernames:
-            auto_save_result = await db.execute(
-                select(
-                    func.lower(models.RoverAccount.username),
-                    models.RoverAccount.auto_save_sessions,
-                    models.RoverAccount.auto_save_fixed_points,
-                    models.RoverAccount.base_serial,
-                ).where(func.lower(models.RoverAccount.username).in_(client_usernames))
-            )
-            rover_save_settings_by_username = {
-                username: (bool(save_sessions), bool(save_points), base_serial)
-                for username, save_sessions, save_points, base_serial in auto_save_result.all()
-            }
-            base_serials = {
-                serial.strip().upper()
-                for save_sessions, _, raw_serials in rover_save_settings_by_username.values()
-                if save_sessions
-                for serial in str(raw_serials or "").replace(";", ",").split(",")
-                if serial.strip()
-            }
-            lookup_all_stations = any(
-                save_sessions and not str(raw_serials or "").strip()
-                for save_sessions, _, raw_serials in rover_save_settings_by_username.values()
-            ) or bool(client_usernames - rover_save_settings_by_username.keys())
-            base_names_by_mountpoint: dict[str, set[str]] = {}
-            if base_serials or lookup_all_stations:
-                try:
-                    async with device_session_scope() as devices_db:
-                        base_query = select(models.Device)
-                        if base_serials and not lookup_all_stations:
-                            base_query = base_query.where(func.upper(models.Device.serial).in_(base_serials))
-                        base_result = await devices_db.execute(base_query)
-                        for station in base_result.scalars().all():
-                            serial = str(station.serial or "").strip().upper()
-                            base_name = str(station.name or station.serial or "").strip()
-                            if not serial or not base_name:
-                                continue
-                            service_config = crud.normalize_service_config(station.service_config)
-                            for index in (1, 2):
-                                mountpoint = str(service_config.get(f"mountpoint{index}") or "").strip().casefold()
-                                if mountpoint:
-                                    base_names_by_serial_mountpoint[(serial, mountpoint)] = base_name
-                                    base_names_by_mountpoint.setdefault(mountpoint, set()).add(base_name)
-                except Exception as base_lookup_error:
-                    logger.warning("[CASTER HISTORY] Could not resolve Base names for %s: %s", host, base_lookup_error)
-        latest_points_by_session = {}
+        client_usernames = _rover_snapshot_usernames(clients)
+        rover_settings = await _rover_save_settings(db, client_usernames)
+        base_serials, lookup_all_stations = _rover_base_lookup_scope(rover_settings, client_usernames)
+        names_by_serial_mountpoint, names_by_mountpoint = await _rover_base_name_maps(
+            host, base_serials, lookup_all_stations
+        )
         active_session_ids = [row.id for row in active_rows if row.id is not None]
+        latest_points_by_session = {}
         if active_session_ids:
             point_result = await db.execute(
                 select(
@@ -258,122 +421,23 @@ async def _record_rover_session_snapshots(host: str, clients: list[dict], observ
             )
             latest_points_by_session = dict(point_result.all())
         observed_keys = set()
-
         for client in clients:
             if not isinstance(client, dict):
                 continue
             username = str(client.get("username") or "").strip()
             if not username:
                 continue
-            save_sessions, save_fixed_points, raw_base_serials = rover_save_settings_by_username.get(username.lower(), (True, False, None))
+            save_sessions, save_fixed_points, raw_base_serials = rover_settings.get(
+                username.lower(), (True, False, None)
+            )
             if not save_sessions:
                 continue
-            mountpoint = str(client.get("mountpoint") or "").strip()
-            account_base_serials = [
-                serial.strip().upper()
-                for serial in str(raw_base_serials or "").replace(";", ",").split(",")
-                if serial.strip()
-            ]
-            matching_base_names = {
-                base_names_by_serial_mountpoint[(serial, mountpoint.casefold())]
-                for serial in account_base_serials
-                if (serial, mountpoint.casefold()) in base_names_by_serial_mountpoint
-            }
-            base_name = next(iter(matching_base_names)) if len(matching_base_names) == 1 else None
-            if base_name is None and not account_base_serials:
-                matching_base_names = base_names_by_mountpoint.get(mountpoint.casefold(), set())
-                base_name = next(iter(matching_base_names)) if len(matching_base_names) == 1 else None
-            client_id = str(client.get("client_id") or "").strip()
-            receiver_id = str(client.get("receiver_id") or "").strip()
-            session_key = _rover_history_session_key(host, username, mountpoint, client_id, receiver_id)
-            if session_key in observed_keys:
-                continue
-            observed_keys.add(session_key)
-
-            raw_uptime = client.get("uptime")
-            try:
-                uptime_seconds = max(0, int(raw_uptime)) if raw_uptime is not None else None
-            except (TypeError, ValueError):
-                uptime_seconds = None
-            try:
-                latest_fix_quality = int(client.get("status")) if client.get("status") is not None else None
-            except (TypeError, ValueError):
-                latest_fix_quality = None
-            try:
-                satellite_count = max(0, int(client.get("nsv", client.get("satellites"))))
-            except (TypeError, ValueError):
-                satellite_count = None
-
-            row = active_by_key.pop(session_key, None)
-            if (
-                row is not None
-                and uptime_seconds is not None
-                and row.uptime_seconds is not None
-                and uptime_seconds + 10 < row.uptime_seconds
-            ):
-                # The caster reused a client identifier after a reconnect.
-                row.ended_at = observed_at
-                row = None
-
-            if row is None:
-                row = models.RoverSessionHistory(
-                    username=username,
-                    server=host,
-                    mountpoint=mountpoint,
-                    base_name=base_name,
-                    client_id=client_id,
-                    receiver_id=receiver_id,
-                    started_at=observed_at - uptime_seconds if uptime_seconds else observed_at,
-                    last_seen_at=observed_at,
-                    uptime_seconds=uptime_seconds,
-                    latest_fix_quality=latest_fix_quality,
-                    satellite_count=satellite_count,
-                )
-                db.add(row)
-            else:
-                row.username = username
-                row.mountpoint = mountpoint
-                if base_name and not row.base_name:
-                    row.base_name = base_name
-                row.client_id = client_id
-                row.receiver_id = receiver_id
-                row.last_seen_at = observed_at
-                row.latest_fix_quality = latest_fix_quality
-                row.satellite_count = satellite_count
-                if uptime_seconds is not None:
-                    if row.uptime_seconds is None or row.started_at is None:
-                        row.started_at = observed_at - uptime_seconds
-                    row.uptime_seconds = uptime_seconds
-
-            position = _rover_history_position(client)
-            if position is not None:
-                row.latitude, row.longitude = position
-                row.position_fix_quality = latest_fix_quality
-                row.position_updated_at = observed_at
-                row.position_satellite_count = satellite_count
-                if save_fixed_points:
-                    last_point_at = latest_points_by_session.get(row.id)
-                    if (
-                        last_point_at is None
-                        or observed_at - last_point_at >= ROVER_FIXED_POINT_INTERVAL_SECONDS
-                    ):
-                        if row.id is None:
-                            await db.flush()
-                        db.add(models.RoverFixedPoint(
-                            session_id=row.id,
-                            label="Vị trí tự động",
-                            latitude=position[0],
-                            longitude=position[1],
-                            fix_quality=latest_fix_quality or 0,
-                            satellite_count=satellite_count,
-                            recorded_at=observed_at,
-                            saved_at=observed_at,
-                            created_by="Tự động",
-                        ))
-                        latest_points_by_session[row.id] = observed_at
-
+            await _record_rover_snapshot_client(
+                db, host, client, username, save_fixed_points, raw_base_serials,
+                names_by_serial_mountpoint, names_by_mountpoint, active_by_key,
+                observed_keys, latest_points_by_session, observed_at,
+            )
         for row in active_by_key.values():
             row.ended_at = observed_at
-
         await db.commit()
 
