@@ -2772,14 +2772,7 @@ class MqttSourceWorker(threading.Thread):
             return "offline"
         return "online"
 
-    def publish_status(self):
-        now = time.time()
-        mqtt_data_age = None if self.last_mqtt_data_ts <= 0 else int(now - self.last_mqtt_data_ts)
-        mqtt_data_active = mqtt_data_age is not None and mqtt_data_age <= self.data_timeout
-        server1_connected = "server1" in self._target_socks
-        server2_connected = "server2" in self._target_socks
-        server1_bps = self.current_bps_by_server.get("server1", 0)
-        server2_bps = self.current_bps_by_server.get("server2", 0)
+    def _active_nmea_snapshot(self, now, mqtt_data_active):
         if not mqtt_data_active:
             self.latest_gga = None
             self.latest_gsa = None
@@ -2790,6 +2783,9 @@ class MqttSourceWorker(threading.Thread):
             if mqtt_data_active and now - float(sat.get("last_seen", 0)) <= 30
         }
         self.satellites = satellites
+        return latest_gga, latest_gsa, satellites
+
+    def _base_status_config(self, latest_gga, mqtt_data_active):
         configured_coords = {
             "lat": self.cfg.get("lat"),
             "lon": self.cfg.get("lon"),
@@ -2814,7 +2810,10 @@ class MqttSourceWorker(threading.Thread):
             # Older configurations retain the receiver's existing geoid semantics.
             base_config["altitude_reference"] = self.cfg.get("altitude_reference") or "LEGACY"
         base_config["gnss_options"] = normalize_lte_gnss_options(self.cfg.get("gnss_options"))
-        service_config = {
+        return base_coords, live_coords, rtk_fix_status, base_config
+
+    def _status_service_config(self):
+        return {
             "ncomport": self.cfg.get("ncomport") or "",
             "reconnectioninterval": int(self.cfg.get("reconnectioninterval", 10) or 10),
             "stream_on_demand": bool(self.cfg.get("stream_on_demand", self.cfg.get("server1_stream_on_demand", True))),
@@ -2850,9 +2849,8 @@ class MqttSourceWorker(threading.Thread):
             "rtcmusername1": self.cfg.get("rtcmusername1") or "",
             "rtcmpassword1": self.cfg.get("rtcmpassword1") or "",
         }
-        status_value = self._derive_status(mqtt_data_active)
-        rtcm_input_bps = self.current_mqtt_bps if mqtt_data_active else 0
-        satellite_count = len([sat for sat in satellites.values() if sat.get("snr", 0) > 0]) or (latest_gga.get("satellites", 0) if latest_gga else 0)
+
+    def _update_antenna_health(self, mqtt_data_active, rtcm_input_bps, satellite_count, latest_gga, now):
         if mqtt_data_active:
             antenna_state, antenna_message = None, None
             if 0 < rtcm_input_bps < 100:
@@ -2866,6 +2864,35 @@ class MqttSourceWorker(threading.Thread):
                 antenna_message = "Không bắt được vệ tinh nào (0 Sats). Kiểm tra ăng-ten và nguồn cấp."
             if antenna_state:
                 self.last_antenna_status = {"state": antenna_state, "message": antenna_message, "timestamp": now}
+
+    def _publish_status_payload(self, status):
+        if self.last_antenna_status:
+            status["antenna_status"] = self.last_antenna_status
+        status["service_config"] = _status_safe_config(status.get("service_config"))
+        try:
+            if self.mqtt_status_client and self.mqtt_status_client.is_connected():
+                self.mqtt_status_client.publish(self.topic_status, json.dumps(status), qos=0, retain=True)
+            status_mgr.update_worker_status(self.serial, status)
+        except Exception:
+            pass
+
+    def publish_status(self):
+        now = time.time()
+        mqtt_data_age = None if self.last_mqtt_data_ts <= 0 else int(now - self.last_mqtt_data_ts)
+        mqtt_data_active = mqtt_data_age is not None and mqtt_data_age <= self.data_timeout
+        latest_gga, latest_gsa, satellites = self._active_nmea_snapshot(now, mqtt_data_active)
+        base_coords, live_coords, rtk_fix_status, base_config = self._base_status_config(
+            latest_gga, mqtt_data_active
+        )
+        service_config = self._status_service_config()
+        server1_connected = "server1" in self._target_socks
+        server2_connected = "server2" in self._target_socks
+        server1_bps = self.current_bps_by_server.get("server1", 0)
+        server2_bps = self.current_bps_by_server.get("server2", 0)
+        status_value = self._derive_status(mqtt_data_active)
+        rtcm_input_bps = self.current_mqtt_bps if mqtt_data_active else 0
+        satellite_count = len([sat for sat in satellites.values() if sat.get("snr", 0) > 0]) or (latest_gga.get("satellites", 0) if latest_gga else 0)
+        self._update_antenna_health(mqtt_data_active, rtcm_input_bps, satellite_count, latest_gga, now)
         status = {
             "serial": self.serial,
             "rtcm_stats": globals().get("rtcm_signal_decoder").get_stats(self.serial) if globals().get("rtcm_signal_decoder") else {},
@@ -2915,15 +2942,7 @@ class MqttSourceWorker(threading.Thread):
             "is_provisioned": has_license(self.serial),
             "config_status": getattr(self, "config_status", None)
         }
-        if self.last_antenna_status:
-            status["antenna_status"] = self.last_antenna_status
-        status["service_config"] = _status_safe_config(status.get("service_config"))
-        try:
-            if self.mqtt_status_client and self.mqtt_status_client.is_connected():
-                self.mqtt_status_client.publish(self.topic_status, json.dumps(status), qos=0, retain=True)
-            status_mgr.update_worker_status(self.serial, status)
-        except Exception:
-            pass
+        self._publish_status_payload(status)
 
     def _connect_target(self, server_id=1):
         target_cfg = self._server_target_config(server_id)
@@ -3138,20 +3157,7 @@ class MqttSourceWorker(threading.Thread):
             self.log("WARNING", "Could not find MQTT source in geotek_config.json for provision save")
         self.publish_status()
 
-    def _persist_remote_config(self, original_config):
-        if not isinstance(original_config, dict):
-            return
-
-        runtime = status_mgr.get_runtime_config(self.serial)
-        before_target = (
-            self.cfg.get("target_host"),
-            str(self.cfg.get("target_port")),
-            self.cfg.get("target_pass"),
-            self.cfg.get("target_mp"),
-        )
-        runtime["last_applied_config"] = original_config
-        runtime["last_config_update"] = datetime.now(timezone.utc).isoformat()
-
+    def _remote_config_parts(self, original_config):
         payload = original_config.get("payload", original_config)
         params = payload.get("params", {}) if isinstance(payload.get("params"), dict) else {}
         method = str(
@@ -3163,9 +3169,9 @@ class MqttSourceWorker(threading.Thread):
         if not params:
             params = payload
         service_config = payload.get("service_config", {}) if isinstance(payload.get("service_config"), dict) else {}
-        if service_config:
-            runtime.update(_mqtt_source_persistable_config(service_config))
+        return payload, params, method, service_config
 
+    def _apply_remote_setup_config(self, runtime, method, params):
         if "gnss_options" in params:
             runtime["gnss_options"] = normalize_lte_gnss_options(params["gnss_options"])
 
@@ -3180,61 +3186,97 @@ class MqttSourceWorker(threading.Thread):
             if "survey_in_accuracy" in params:
                 runtime["survey_in_accuracy"] = params["survey_in_accuracy"]
         if method == "FIXED_LLA":
-            coords = params.get("coords", {}) if isinstance(params.get("coords"), dict) else params
-            runtime["altitude_reference"] = params.get("altitude_reference", "LEGACY")
-            for key in ("lat", "lon", "alt"):
-                if key in coords:
-                    runtime[key] = coords[key]
-            if "accuracy" in params:
-                runtime["accuracy"] = params["accuracy"]
+            self._apply_fixed_remote_setup(runtime, params)
 
-        target_sources = (payload, params, service_config)
+    @staticmethod
+    def _apply_fixed_remote_setup(runtime, params):
+        coords = params.get("coords", {}) if isinstance(params.get("coords"), dict) else params
+        runtime["altitude_reference"] = params.get("altitude_reference", "LEGACY")
+        for key in ("lat", "lon", "alt"):
+            if key in coords:
+                runtime[key] = coords[key]
+        if "accuracy" in params:
+            runtime["accuracy"] = params["accuracy"]
+
+    @staticmethod
+    def _first_remote_target_value(sources, aliases):
+        for source in sources:
+            if not isinstance(source, dict):
+                continue
+            for alias in aliases:
+                value = source.get(alias)
+                if value not in (None, ""):
+                    return value
+        return None
+
+    def _apply_remote_target_config(self, runtime, payload, params, service_config):
         target_aliases = {
             "target_host": ("target_host", "serverhost1", "host", "caster_host"),
             "target_port": ("target_port", "serverport1", "port1", "port", "caster_port"),
             "target_pass": ("target_pass", "password1", "password", "pass", "caster_password"),
             "target_mp": ("target_mp", "mountpoint", "mountpoint1", "active_mountpoint"),
         }
+        sources = (payload, params, service_config)
         for target_key, aliases in target_aliases.items():
-            updated = False
-            for source in target_sources:
-                for alias in aliases:
-                    value = source.get(alias) if isinstance(source, dict) else None
-                    if value not in (None, ""):
-                        runtime[target_key] = value
-                        updated = True
-                        break
-                if updated:
-                    break
+            value = self._first_remote_target_value(sources, aliases)
+            if value is not None:
+                runtime[target_key] = value
 
+    def _save_remote_runtime(self, runtime):
         self.runtime_config = runtime
         self.cfg.update(runtime)
         status_mgr.update_runtime_config(self.serial, runtime)
         hard_config = _mqtt_source_persistable_config(runtime)
-        if hard_config:
-            if config_mgr.update_mqtt_source_config(self.serial, hard_config):
-                self.log("INFO", "Saved remote config into geotek_config.json")
-            else:
-                self.log("WARNING", "Could not find MQTT source in geotek_config.json for hard save")
+        if not hard_config:
+            return
+        if config_mgr.update_mqtt_source_config(self.serial, hard_config):
+            self.log("INFO", "Saved remote config into geotek_config.json")
+        else:
+            self.log("WARNING", "Could not find MQTT source in geotek_config.json for hard save")
 
+    def _reconnect_if_target_changed(self, before_target):
         after_target = (
             self.cfg.get("target_host"),
             str(self.cfg.get("target_port")),
             self.cfg.get("target_pass"),
             self.cfg.get("target_mp"),
         )
-        if after_target != before_target:
-            with self.socket_lock:
-                for sock in list(self._target_socks.values()):
-                    try: sock.shutdown(socket.SHUT_RDWR)
-                    except Exception: pass
-                    try: sock.close()
-                    except Exception: pass
-                self._target_socks.clear()
-                self._target_sock = None
-            self.is_connected = False
-            self.log("INFO", "Runtime target changed; reconnecting SOURCE socket")
+        if after_target == before_target:
+            return
+        with self.socket_lock:
+            for sock in list(self._target_socks.values()):
+                try:
+                    sock.shutdown(socket.SHUT_RDWR)
+                except Exception:
+                    pass
+                try:
+                    sock.close()
+                except Exception:
+                    pass
+            self._target_socks.clear()
+            self._target_sock = None
+        self.is_connected = False
+        self.log("INFO", "Runtime target changed; reconnecting SOURCE socket")
 
+    def _persist_remote_config(self, original_config):
+        if not isinstance(original_config, dict):
+            return
+        runtime = status_mgr.get_runtime_config(self.serial)
+        before_target = (
+            self.cfg.get("target_host"),
+            str(self.cfg.get("target_port")),
+            self.cfg.get("target_pass"),
+            self.cfg.get("target_mp"),
+        )
+        runtime["last_applied_config"] = original_config
+        runtime["last_config_update"] = datetime.now(timezone.utc).isoformat()
+        payload, params, method, service_config = self._remote_config_parts(original_config)
+        if service_config:
+            runtime.update(_mqtt_source_persistable_config(service_config))
+        self._apply_remote_setup_config(runtime, method, params)
+        self._apply_remote_target_config(runtime, payload, params, service_config)
+        self._save_remote_runtime(runtime)
+        self._reconnect_if_target_changed(before_target)
         self.log("INFO", "Saved remote config into geotek_db.json")
 
     def execute_commands(self, commands_b64, original_config=None):
