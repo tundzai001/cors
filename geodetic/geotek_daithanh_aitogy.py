@@ -3717,14 +3717,7 @@ def _worker_mountpoint(worker):
     return str(worker.cfg.get("target_mp") or worker.cfg.get("mountpoint", "")).strip()
 
 
-def _close_worker_connections(worker, stop_worker=False):
-    """Close transports without discarding the worker's runtime state."""
-    if stop_worker:
-        worker.stop_event.set()
-    wakeup = getattr(worker, "wakeup_event", None)
-    if wakeup:
-        wakeup.set()
-
+def _stop_worker_mqtt(worker):
     mqtt_data_client = getattr(worker, "mqtt_data_client", None)
     if mqtt_data_client:
         try:
@@ -3736,28 +3729,45 @@ def _close_worker_connections(worker, stop_worker=False):
         except Exception:
             pass
 
+
+def _take_worker_sockets(worker):
+    sockets = []
+    for attr in ("_sock", "_source_sock", "_target_sock"):
+        sock = getattr(worker, attr, None)
+        if sock:
+            sockets.append(sock)
+            setattr(worker, attr, None)
+    target_socks = getattr(worker, "_target_socks", None)
+    if isinstance(target_socks, dict):
+        sockets.extend(target_socks.values())
+        target_socks.clear()
+    return sockets
+
+
+def _close_worker_socket(sock):
+    try:
+        sock.shutdown(socket.SHUT_RDWR)
+    except Exception:
+        pass
+    try:
+        sock.close()
+    except Exception:
+        pass
+
+
+def _close_worker_connections(worker, stop_worker=False):
+    """Close transports without discarding the worker's runtime state."""
+    if stop_worker:
+        worker.stop_event.set()
+    wakeup = getattr(worker, "wakeup_event", None)
+    if wakeup:
+        wakeup.set()
+    _stop_worker_mqtt(worker)
     socket_lock = getattr(worker, "socket_lock", None)
     acquired = socket_lock.acquire(timeout=2) if socket_lock is not None else False
     try:
-        sockets = []
-        for attr in ("_sock", "_source_sock", "_target_sock"):
-            sock = getattr(worker, attr, None)
-            if sock:
-                sockets.append(sock)
-                setattr(worker, attr, None)
-        target_socks = getattr(worker, "_target_socks", None)
-        if isinstance(target_socks, dict):
-            sockets.extend(target_socks.values())
-            target_socks.clear()
-        for sock in sockets:
-            try:
-                sock.shutdown(socket.SHUT_RDWR)
-            except Exception:
-                pass
-            try:
-                sock.close()
-            except Exception:
-                pass
+        for sock in _take_worker_sockets(worker):
+            _close_worker_socket(sock)
     finally:
         if acquired:
             socket_lock.release()

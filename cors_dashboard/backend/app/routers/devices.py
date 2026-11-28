@@ -214,6 +214,27 @@ async def _load_generic_command_device(serial, command, db, current_user):
     return device, name
 
 
+def _build_gnss_verification_payload(serial, command, device, capabilities):
+    embedded = capabilities.get("gnss_verification_uart1") is True
+    if device.detected_chip_type == "Ublox":
+        telemetry = mqtt_handler.device_telemetry_cache.get(serial) or {}
+        profile = command_builder.select_ublox_profile(telemetry, capabilities)
+        return command_builder.build_ublox_verification_payload(
+            device.base_config or {}, route_to_uart1=embedded, receiver_profile=profile
+        )
+
+    expected = command_builder.build_unicore_verification_payload(
+        device.base_config or {}, current_port=embedded
+    )
+    selected_port = command.payload.get("port")
+    if selected_port is not None:
+        allowed_port = embedded and selected_port in ("COM1", "COM2", "COM3")
+        if not allowed_port:
+            raise ValueError("Cổng đối chiếu phải là COM1, COM2 hoặc COM3 trên ESP32.")
+        expected["port"] = selected_port
+    return expected
+
+
 async def _send_gnss_verification(serial, command, db, device, current_user):
     live_info = (mqtt_handler.device_telemetry_cache.get(serial) or {}).get("system_info")
     capabilities = live_info if isinstance(live_info, dict) else device.system_info or {}
@@ -221,23 +242,7 @@ async def _send_gnss_verification(serial, command, db, device, current_user):
     if not supported_chip or capabilities.get("gnss_verification_supported") is not True:
         raise HTTPException(status_code=409, detail="Cập nhật agent để xác minh cấu hình GNSS.")
     try:
-        embedded = capabilities.get("gnss_verification_uart1") is True
-        if device.detected_chip_type == "Ublox":
-            telemetry = mqtt_handler.device_telemetry_cache.get(serial) or {}
-            profile = command_builder.select_ublox_profile(telemetry, capabilities)
-            expected = command_builder.build_ublox_verification_payload(
-                device.base_config or {}, route_to_uart1=embedded, receiver_profile=profile
-            )
-        else:
-            expected = command_builder.build_unicore_verification_payload(
-                device.base_config or {}, current_port=embedded
-            )
-            selected_port = command.payload.get("port")
-            if selected_port is not None:
-                allowed_port = embedded and selected_port in ("COM1", "COM2", "COM3")
-                if not allowed_port:
-                    raise ValueError("Cổng đối chiếu phải là COM1, COM2 hoặc COM3 trên ESP32.")
-                expected["port"] = selected_port
+        expected = _build_gnss_verification_payload(serial, command, device, capabilities)
     except (ValueError, TypeError) as error:
         raise HTTPException(status_code=400, detail=str(error)) from error
     command_id = secrets.token_urlsafe(18)
