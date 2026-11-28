@@ -12,47 +12,43 @@ MQTT_TOPIC = "device/860549070087338/upload"
 last_msg_time = None
 msg_count = 0
 
+def _parse_nmea_sentence(payload, start):
+    end = payload.find(b'\r\n', start)
+    sentence_end = end if end != -1 else len(payload)
+    sentence = payload[start:sentence_end].decode('ascii', errors='ignore')
+    return f"NMEA ({sentence.split(',')[0]})", end + 2 if end != -1 else len(payload), end != -1
+
+
+def _parse_rtcm_message(payload, start):
+    if start + 4 >= len(payload):
+        return None, start, False
+    length = ((payload[start + 1] & 0x03) << 8) | payload[start + 2]
+    msg_type = (payload[start + 3] << 4) | (payload[start + 4] >> 4)
+    packet_len = length + 6
+    result = f"RTCM3 (Type: {msg_type})"
+    if start + packet_len <= len(payload):
+        return [result], start + packet_len, True
+    return [result, f"RTCM3 (Type: {msg_type} - Bị phân mảnh)"], len(payload), False
+
+
 def parse_payload(payload):
     results = []
     i = 0
     while i < len(payload):
-        # Kiểm tra chuẩn NMEA (bắt đầu bằng ký tự '$' - 0x24)
         if payload[i] == 0x24:
-            end = payload.find(b'\r\n', i)
-            if end != -1:
-                nmea_str = payload[i:end].decode('ascii', errors='ignore')
-                nmea_type = nmea_str.split(',')[0]
-                results.append(f"NMEA ({nmea_type})")
-                i = end + 2
+            result, i, continue_parsing = _parse_nmea_sentence(payload, i)
+            results.append(result)
+            if continue_parsing:
                 continue
-            else:
-                nmea_str = payload[i:].decode('ascii', errors='ignore')
-                nmea_type = nmea_str.split(',')[0]
-                results.append(f"NMEA ({nmea_type})")
+            break
+        if payload[i] == 0xD3:
+            messages, i, continue_parsing = _parse_rtcm_message(payload, i)
+            if messages is None:
                 break
-        
-        # Kiểm tra chuẩn RTCM3 (bắt đầu bằng byte 0xD3 - 211)
-        elif payload[i] == 0xD3:
-            if i + 4 < len(payload):
-                # 2 bits cuối của byte 1 và 8 bits của byte 2 chứa Chiều dài payload (10 bits)
-                length = ((payload[i+1] & 0x03) << 8) | payload[i+2]
-                
-                # Byte 3 và 4 chứa Message Type (12 bits)
-                msg_type = (payload[i+3] << 4) | (payload[i+4] >> 4)
-                
-                results.append(f"RTCM3 (Type: {msg_type})")
-                
-                # Bước nhảy tới frame tiếp theo: Preamble(1) + Header(2) + Payload(length) + CRC(3) = length + 6
-                packet_len = length + 6
-                if i + packet_len <= len(payload):
-                    i += packet_len
-                    continue
-                else:
-                    results.append(f"RTCM3 (Type: {msg_type} - Bị phân mảnh)")
-                    break
-            else:
-                break
-        
+            results.extend(messages)
+            if continue_parsing:
+                continue
+            break
         # Bỏ qua byte rác, tiếp tục dò byte tiếp theo
         i += 1
     

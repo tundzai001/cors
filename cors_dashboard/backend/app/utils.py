@@ -224,33 +224,41 @@ class NMEAParser:
             pass
         return self._flush_stale_gsv_buffer()
 
+    @staticmethod
+    def _gst_float(parts: list, index: int, strip_checksum: bool = False):
+        if index >= len(parts) or not parts[index]:
+            return None
+        value = parts[index].split('*')[0] if strip_checksum else parts[index]
+        return float(value)
+
+    @staticmethod
+    def _gst_horizontal_accuracy(lat_sigma, lon_sigma):
+        if lat_sigma is None or lon_sigma is None:
+            return None, None
+        hacc = (lat_sigma ** 2 + lon_sigma ** 2) ** 0.5
+        if hacc <= 0:
+            return None, None
+        return hacc, "gst_lat_lon_sigma"
+
     def _parse_gst(self, parts: list) -> dict | None:
         """Parse GST - GNSS pseudorange error statistics."""
         if len(parts) < 8:
             return None
 
         try:
-            semi_major = float(parts[3]) if len(parts) > 3 and parts[3] else None
-            semi_minor = float(parts[4]) if len(parts) > 4 and parts[4] else None
-            lat_sigma = float(parts[6]) if parts[6] else None
-            lon_sigma = float(parts[7].split('*')[0]) if parts[7] else None
-            alt_sigma = float(parts[8].split('*')[0]) if len(parts) > 8 and parts[8] else None
-            hacc = None
-            hacc_source = None
-            if lat_sigma is not None and lon_sigma is not None:
-                hacc = (lat_sigma ** 2 + lon_sigma ** 2) ** 0.5
-                hacc_source = "gst_lat_lon_sigma"
-            if hacc is not None and hacc <= 0:
-                hacc = None
-                hacc_source = None
-
+            semi_major = self._gst_float(parts, 3)
+            semi_minor = self._gst_float(parts, 4)
+            lat_sigma = self._gst_float(parts, 6)
+            lon_sigma = self._gst_float(parts, 7, strip_checksum=True)
+            alt_sigma = self._gst_float(parts, 8, strip_checksum=True)
+            hacc, hacc_source = self._gst_horizontal_accuracy(lat_sigma, lon_sigma)
             return {
                 "type": "GST",
                 "timestamp_utc": parts[1],
-                "rms": float(parts[2]) if len(parts) > 2 and parts[2] else None,
+                "rms": self._gst_float(parts, 2),
                 "semi_major_sigma": semi_major,
                 "semi_minor_sigma": semi_minor,
-                "orientation": float(parts[5]) if len(parts) > 5 and parts[5] else None,
+                "orientation": self._gst_float(parts, 5),
                 "lat_sigma": lat_sigma,
                 "lon_sigma": lon_sigma,
                 "alt_sigma": alt_sigma,

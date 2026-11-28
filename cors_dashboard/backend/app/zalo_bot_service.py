@@ -255,18 +255,25 @@ class ZaloBotService(
     @staticmethod
     def _first_nested_value(data: Any, wanted_keys: Set[str]) -> Any:
         if isinstance(data, dict):
-            for key, value in data.items():
-                if str(key).lower() in wanted_keys and value not in (None, "", [], {}):
-                    return value
-            for value in data.values():
-                found = ZaloBotService._first_nested_value(value, wanted_keys)
-                if found not in (None, "", [], {}):
-                    return found
+            found = ZaloBotService._first_nested_mapping_value(data, wanted_keys)
+            if found not in (None, "", [], {}):
+                return found
+            values = data.values()
         elif isinstance(data, list):
-            for value in data:
-                found = ZaloBotService._first_nested_value(value, wanted_keys)
-                if found not in (None, "", [], {}):
-                    return found
+            values = data
+        else:
+            return None
+        for value in values:
+            found = ZaloBotService._first_nested_value(value, wanted_keys)
+            if found not in (None, "", [], {}):
+                return found
+        return None
+
+    @staticmethod
+    def _first_nested_mapping_value(data: dict, wanted_keys: Set[str]) -> Any:
+        for key, value in data.items():
+            if str(key).lower() in wanted_keys and value not in (None, "", [], {}):
+                return value
         return None
 
     def _summarize_payload(self, payload: Dict[str, Any]) -> Dict[str, Any]:
@@ -847,6 +854,33 @@ class ZaloBotService(
         finally:
             self._active_trace_id.reset(context_token)
 
+    async def _cancel_owned_tasks(self, owned_tasks):
+        for task in owned_tasks:
+            task.cancel()
+        if owned_tasks:
+            await asyncio.gather(*owned_tasks, return_exceptions=True)
+
+    async def _shutdown_bot_application(self):
+        if not self.app:
+            return
+        if hasattr(self.app, 'stop'):
+            if asyncio.iscoroutinefunction(self.app.stop):
+                await self.app.stop()
+            else:
+                self.app.stop()
+        if hasattr(self.app, 'shutdown'):
+            await self._maybe_await(self.app.shutdown())
+        elif self._bot_mode() == "webhook" and getattr(self.app, "bot", None):
+            await self.app.bot.shutdown()
+
+    def _clear_bot_application_state(self):
+        self._task = None
+        self._polling_task = None
+        self._webhook_setup_task = None
+        self._cors_status_task = None
+        self.dispatcher = None
+        self.app = None
+
     async def stop(self):
         owned_tasks = [
             task for task in (self._task, self._polling_task, self._webhook_setup_task, self._cors_status_task)
@@ -854,30 +888,13 @@ class ZaloBotService(
         ]
         if self.app or owned_tasks:
             logger.info("Stopping Zalo Bot Service...")
-            for task in owned_tasks:
-                task.cancel()
-            if owned_tasks:
-                await asyncio.gather(*owned_tasks, return_exceptions=True)
+            await self._cancel_owned_tasks(owned_tasks)
         try:
-            if self.app:
-                if hasattr(self.app, 'stop'):
-                    if asyncio.iscoroutinefunction(self.app.stop):
-                        await self.app.stop()
-                    else:
-                        self.app.stop()
-                if hasattr(self.app, 'shutdown'):
-                    await self._maybe_await(self.app.shutdown())
-                elif self._bot_mode() == "webhook" and getattr(self.app, "bot", None):
-                    await self.app.bot.shutdown()
+            await self._shutdown_bot_application()
         except Exception as e:
             logger.exception(f"Error stopping Zalo Bot: {e}")
         finally:
-            self._task = None
-            self._polling_task = None
-            self._webhook_setup_task = None
-            self._cors_status_task = None
-            self.dispatcher = None
-            self.app = None
+            self._clear_bot_application_state()
 
     def _get_chat_id(self, update: Update) -> str:
         return scoped_chat_id(self.bot_key, self._get_raw_chat_id(update))
