@@ -300,51 +300,29 @@ async def _cors_only_report(health, question, intent):
     return f'{heading}{headline}\n{magnetic}\n{atmosphere}\n\n{advice}{scope}'
 
 
-async def report_text(health, question='', previous_intent='status', delivery_mode='standard'):
-    words = _plain(question)
-    intent = cors_intent(words, previous_intent)
-    if intent in STATIC_INTENTS:
-        if delivery_mode == 'cors_only' and intent in {'greeting', 'help'}:
-            return 'Mình theo dõi CORS Cục, điện ly và địa từ. Anh có thể hỏi “tình trạng Bà Rịa - Vũng Tàu”, “đo địa hình Hà Nội hôm nay” hoặc “điện ly chi tiết”.'
-        return static_reply(intent)
-    options = region_options(question)
-    if len(options) > 1:
-        names = ' hay '.join(option[0] for option in options)
-        return f'Anh muốn kiểm tra {names}? Mình cần xác định đúng khu vực trước nhé.'
-    if intent == 'fix_possible':
-        return await _fix_possible_report(health, question)
-    if delivery_mode == 'cors_only':
-        return await _cors_only_report(health, question, intent)
-    name = region_for_question(question)[0]
-    heading = f'📍 {name}\n' if name != VIETNAM_REGION_NAME else ''
-    status = health.get('status')
-    headline = {
-        'online': 'CORS Cục đang hoạt động.',
-        'offline': 'CORS Cục đang gián đoạn.',
-    }.get(status, 'Chưa xác định được trạng thái CORS Cục.')
-
-    # Source availability is not evidence of local RTCM delivery or receiver FIX.
-    # Ordinary questions need no NOAA request and no atmospheric data dump.
+def _status_report_reply(intent, previous_intent, status, name, heading, headline):
     if intent == 'summary' and previous_intent in DIAGNOSTIC_INTENTS:
         return (f'{heading}{headline} Nếu máy vẫn FLOAT, xem RTCM và tuổi hiệu chỉnh trước; '
                 'dữ liệu vẫn đều thì kiểm tra che khuất và khoảng cách trạm.')
-    if intent in {'status', 'stability', 'summary'}:
-        if status == 'offline':
-            return f'{heading}{headline} Nếu anh đang dùng nguồn này, chuyển sang nguồn dự phòng đã kiểm tra.'
-        if status != 'online':
-            return f'{heading}{headline} Anh đang dùng trạm hoặc mountpoint nào để mình khoanh vùng tiếp?'
-        if name == VIETNAM_REGION_NAME:
-            return f'{headline} Anh muốn kiểm tra khu vực hoặc trạm nào?'
-        return (f'{heading}{headline} Nhưng mình chưa có số liệu RTCM/FIX tại khu vực này '
-                'để xác nhận độ ổn định.\nAnh đang dùng trạm hoặc mountpoint nào?')
+    if intent not in {'status', 'stability', 'summary'}:
+        return None
+    if status == 'offline':
+        return f'{heading}{headline} Nếu anh đang dùng nguồn này, chuyển sang nguồn dự phòng đã kiểm tra.'
+    if status != 'online':
+        return f'{heading}{headline} Anh đang dùng trạm hoặc mountpoint nào để mình khoanh vùng tiếp?'
+    if name == VIETNAM_REGION_NAME:
+        return f'{headline} Anh muốn kiểm tra khu vực hoặc trạm nào?'
+    return (f'{heading}{headline} Nhưng mình chưa có số liệu RTCM/FIX tại khu vực này '
+            'để xác nhận độ ổn định.\nAnh đang dùng trạm hoặc mountpoint nào?')
 
+
+def _diagnostic_prompt_reply(intent, heading, headline, words):
     if intent == 'diagnostic_steps':
         return (f'{heading}{headline}\n'
                 '1. Xem số byte RTCM có tăng và tuổi hiệu chỉnh có cập nhật không.\n'
                 '2. Nếu mất dữ liệu, kiểm tra mạng, tài khoản và đúng mountpoint.\n'
                 '3. Nếu dữ liệu vẫn đều mà chưa FIX, kiểm tra che khuất và khoảng cách tới trạm.\n'
                 'Anh gửi tuổi hiệu chỉnh hiện tại để mình khoanh vùng bước tiếp nhé.')
-
     if intent == 'diagnostic_age':
         age = re.search(r'\b(\d{1,3})\s*(?:s|giay)\b', words)
         age_text = f"{int(age[1])} giây" if age else 'một thời điểm'
@@ -358,33 +336,74 @@ async def report_text(health, question='', previous_intent='status', delivery_mo
         return (f'{heading}{headline}\nTuổi hiệu chỉnh cập nhật đều là một tín hiệu, chưa bảo đảm máy sẽ FIX. '
                 'Nếu vẫn FLOAT, kiểm tra che khuất, khoảng cách tới trạm và đối chiếu máy khác cùng khu vực. '
                 'Anh đang cách trạm khoảng bao nhiêu km?')
+    return None
 
-    async def fetch_ionosphere():
-        if intent not in {'detail', 'detail_brief', 'forecast'}:
-            return {}
-        return await _latest_ionosphere()
 
-    data, kp = await asyncio.gather(fetch_ionosphere(), geomagnetic_observation())
-    value = kp['value'] if kp else None
-    magnetic = (f"Địa từ Kp {value:.2f} · " +
-                ('bão từ mạnh, nguy cơ gián đoạn định vị tăng.' if value >= 7 else
-                 'đang có bão từ; cần theo dõi chất lượng định vị.' if value >= 5 else
-                 'đang nhiễu động.' if value >= 4 else 'mức yên tĩnh.') +
-                f" NOAA SWPC · {kp['stamp']}." if kp else
-                'Chỉ số địa từ đang tạm mất cập nhật.')
+async def _primary_report_reply(health, question, words, intent, previous_intent, delivery_mode):
+    if intent in STATIC_INTENTS:
+        if delivery_mode == 'cors_only' and intent in {'greeting', 'help'}:
+            return 'Mình theo dõi CORS Cục, điện ly và địa từ. Anh có thể hỏi “tình trạng Bà Rịa - Vũng Tàu”, “đo địa hình Hà Nội hôm nay” hoặc “điện ly chi tiết”.'
+        return static_reply(intent)
+    options = region_options(question)
+    if len(options) > 1:
+        names = ' hay '.join(option[0] for option in options)
+        return f'Anh muốn kiểm tra {names}? Mình cần xác định đúng khu vực trước nhé.'
+    if intent == 'fix_possible':
+        return await _fix_possible_report(health, question)
+    if delivery_mode == 'cors_only':
+        return await _cors_only_report(health, question, intent)
 
-    if intent == 'diagnostic':
-        if status == 'offline':
-            action = 'Xử lý nguồn hiệu chỉnh trước vì nguồn Cục đang gián đoạn. Chưa cần đổi thiết lập vệ tinh.'
-        elif value is not None and value >= 5:
-            action = ('Hiện có nhiễu động địa từ, nhưng chưa đủ để kết luận nguyên nhân mất FIX. '
-                      'Anh gửi tuổi hiệu chỉnh và mountpoint đang dùng để mình khoanh vùng tiếp nhé.')
-        else:
-            action = ('Anh kiểm tra tuổi hiệu chỉnh trước nhé: nếu tuổi tăng liên tục hoặc mất RTCM, '
-                      'kiểm tra mạng và mountpoint. Nếu hiệu chỉnh vẫn đều, kiểm tra khoảng cách trạm và che khuất. '
-                      'Tuổi hiệu chỉnh hiện bao nhiêu giây?')
-        return f'{heading}{headline}\n{action}' + (f'\n{magnetic}' if value is not None and value >= 4 else '')
+    name = region_for_question(question)[0]
+    heading = f'📍 {name}\n' if name != VIETNAM_REGION_NAME else ''
+    status = health.get('status')
+    headline = {
+        'online': 'CORS Cục đang hoạt động.',
+        'offline': 'CORS Cục đang gián đoạn.',
+    }.get(status, 'Chưa xác định được trạng thái CORS Cục.')
+    status_reply = _status_report_reply(
+        intent, previous_intent, status, name, heading, headline
+    )
+    if status_reply is not None:
+        return status_reply
+    return _diagnostic_prompt_reply(intent, heading, headline, words)
 
+
+async def _report_ionosphere(intent):
+    if intent not in {'detail', 'detail_brief', 'forecast'}:
+        return {}
+    return await _latest_ionosphere()
+
+
+async def _report_environment(intent):
+    return await asyncio.gather(_report_ionosphere(intent), geomagnetic_observation())
+
+
+def _magnetic_report(value, kp):
+    if not kp:
+        return 'Chỉ số địa từ đang tạm mất cập nhật.'
+    state = (
+        'bão từ mạnh, nguy cơ gián đoạn định vị tăng.' if value >= 7 else
+        'đang có bão từ; cần theo dõi chất lượng định vị.' if value >= 5 else
+        'đang nhiễu động.' if value >= 4 else 'mức yên tĩnh.'
+    )
+    return f"Địa từ Kp {value:.2f} · {state} NOAA SWPC · {kp['stamp']}."
+
+
+def _diagnostic_health_reply(status, value, magnetic, heading, headline):
+    if status == 'offline':
+        action = 'Xử lý nguồn hiệu chỉnh trước vì nguồn Cục đang gián đoạn. Chưa cần đổi thiết lập vệ tinh.'
+    elif value is not None and value >= 5:
+        action = ('Hiện có nhiễu động địa từ, nhưng chưa đủ để kết luận nguyên nhân mất FIX. '
+                  'Anh gửi tuổi hiệu chỉnh và mountpoint đang dùng để mình khoanh vùng tiếp nhé.')
+    else:
+        action = ('Anh kiểm tra tuổi hiệu chỉnh trước nhé: nếu tuổi tăng liên tục hoặc mất RTCM, '
+                  'kiểm tra mạng và mountpoint. Nếu hiệu chỉnh vẫn đều, kiểm tra khoảng cách trạm và che khuất. '
+                  'Tuổi hiệu chỉnh hiện bao nhiêu giây?')
+    magnetic_line = f'\n{magnetic}' if value is not None and value >= 4 else ''
+    return f'{heading}{headline}\n{action}{magnetic_line}'
+
+
+def _environment_detail_reply(intent, data, question, heading, headline, magnetic):
     atmosphere = ionosphere_text(data, question)
     if intent == 'forecast':
         return (f'{heading}Mình chỉ có tình hình hiện tại, chưa phải dự báo cho ca đo anh hỏi.\n'
@@ -399,7 +418,10 @@ async def report_text(health, question='', previous_intent='status', delivery_mo
     if intent == 'detail':
         return (f'{heading}{headline}\n\n{atmosphere}\n{magnetic}\n'
                 'TEC là ước tính điện ly khu vực, không phải sai số đo hay chất lượng FIX của máy.')
+    return None
 
+
+def _field_measurement_reply(status, value, words, name, heading, headline):
     if status == 'offline':
         decision = 'Cục đang gián đoạn, ca đo dùng nguồn này cần chuyển sang nguồn dự phòng hoặc chờ kết nối lại.'
     elif status != 'online':
@@ -409,7 +431,7 @@ async def report_text(health, question='', previous_intent='status', delivery_mo
     elif value is not None and value >= 4:
         decision = 'CORS Cục đang hoạt động, nhưng địa từ đang nhiễu động. Ca đo chính xác cao cần thận trọng.'
     else:
-        decision = (f'{headline} Chưa có số liệu RTCM/FIX tại điểm đo để xác nhận ca đo ổn định.')
+        decision = f'{headline} Chưa có số liệu RTCM/FIX tại điểm đo để xác nhận ca đo ổn định.'
     advice = field_advice(status, value, words)
     if name == VIETNAM_REGION_NAME and advice == 'Anh đang dùng trạm hoặc mountpoint nào?':
         advice = 'Anh đang đo ở tỉnh nào?'
@@ -417,3 +439,37 @@ async def report_text(health, question='', previous_intent='status', delivery_mo
         advice += '\nChỉ số địa từ đang tạm mất cập nhật.'
     scope = '\nAnh đang đo ở tỉnh nào?' if name == VIETNAM_REGION_NAME and '?' not in advice else ''
     return f'{heading}{decision}\n{advice}{scope}'
+
+
+async def _detailed_report(health, question, words, intent, name, heading, status, headline):
+    data, kp = await _report_environment(intent)
+    value = kp['value'] if kp else None
+    magnetic = _magnetic_report(value, kp)
+    if intent == 'diagnostic':
+        return _diagnostic_health_reply(status, value, magnetic, heading, headline)
+    detail_reply = _environment_detail_reply(
+        intent, data, question, heading, headline, magnetic
+    )
+    if detail_reply is not None:
+        return detail_reply
+    return _field_measurement_reply(status, value, words, name, heading, headline)
+
+
+async def report_text(health, question='', previous_intent='status', delivery_mode='standard'):
+    words = _plain(question)
+    intent = cors_intent(words, previous_intent)
+    primary_reply = await _primary_report_reply(
+        health, question, words, intent, previous_intent, delivery_mode
+    )
+    if primary_reply is not None:
+        return primary_reply
+    name = region_for_question(question)[0]
+    heading = f'📍 {name}\n' if name != VIETNAM_REGION_NAME else ''
+    status = health.get('status')
+    headline = {
+        'online': 'CORS Cục đang hoạt động.',
+        'offline': 'CORS Cục đang gián đoạn.',
+    }.get(status, 'Chưa xác định được trạng thái CORS Cục.')
+    return await _detailed_report(
+        health, question, words, intent, name, heading, status, headline
+    )
