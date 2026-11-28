@@ -215,39 +215,39 @@ class StatusReconciler:
         self._record_retired_boot(serial, previous, fields["boot_id"])
         return None
 
-    def _accept_status_locked(self, fields):
-        serial = fields["serial"]
-        previous = self._states.get(serial)
+    def _stale_retained_status(self, fields) -> bool:
         retained_online = fields["retained"] and fields["status"] not in {"offline", "locked"}
-        stale_retained = (
+        return (
             retained_online
             and (
                 not fields["agent_timestamp"]
                 or fields["now"] - fields["agent_timestamp"] > self.retained_online_max_age
             )
         )
-        if stale_retained:
-            return self._reject("stale_retained_online", previous.revision if previous else 0)
-        rejection = self._prior_status_rejection(serial, previous, fields)
-        if rejection:
-            return rejection
 
-        revision = previous.revision + 1 if previous else 1
+    @staticmethod
+    def _accepted_status_payload(fields, revision):
         normalized = dict(fields["payload"])
         normalized.update(
-            serial=serial,
+            serial=fields["serial"],
             timestamp=int(fields["now"]),
             server_received_at=fields["now"],
             status_revision=revision,
             status_source=fields["source_name"],
             agent_timestamp=fields["agent_timestamp"],
         )
+        return normalized
+
+    @staticmethod
+    def _accepted_status_sequence(fields, previous):
         stored_sequence = fields["sequence"]
         if previous and fields["boot_id"] == previous.boot_id and fields["event"] in {"lwt", "cleanup"}:
             stored_sequence = previous.sequence
         if previous and fields["source_name"] in {"heartbeat", "disconnect"}:
             stored_sequence = previous.sequence
+        return stored_sequence
 
+    def _store_accepted_status(self, serial, fields, previous, revision, stored_sequence):
         self._states[serial] = StatusState(
             boot_id=fields["boot_id"] or (previous.boot_id if previous else None),
             sequence=stored_sequence,
@@ -263,6 +263,20 @@ class StatusReconciler:
             evicted_serial, _ = self._states.popitem(last=False)
             self._retired_boot_ids.pop(evicted_serial, None)
         self._accepted_count += 1
+
+    def _accept_status_locked(self, fields):
+        serial = fields["serial"]
+        previous = self._states.get(serial)
+        if self._stale_retained_status(fields):
+            return self._reject("stale_retained_online", previous.revision if previous else 0)
+        rejection = self._prior_status_rejection(serial, previous, fields)
+        if rejection:
+            return rejection
+
+        revision = previous.revision + 1 if previous else 1
+        normalized = self._accepted_status_payload(fields, revision)
+        stored_sequence = self._accepted_status_sequence(fields, previous)
+        self._store_accepted_status(serial, fields, previous, revision, stored_sequence)
         return StatusDecision(True, normalized, "accepted", revision)
 
     async def accept(
