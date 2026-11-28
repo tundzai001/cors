@@ -1,5 +1,7 @@
+import { createDefaultServiceFormState, getCasterIds, toBool, useHydrateServiceForm } from './service-form-state.js';
+
 (() => {
-const { useState, useEffect, memo, useRef } = React;
+const { useState, memo, useRef } = React;
 
 const getCasterNoDataReason = (sleeping, startup, runningAutoBase, device) => {
     if (sleeping) return 'Đang chờ yêu cầu phát từ rover.';
@@ -123,45 +125,8 @@ function removeUnchangedServiceFields(payload, formState, hydratedConfig, server
 }
 
 const ServiceConfigForm = memo(function ServiceConfigForm({ device, currentUser = {}, onConfigureService, disabled }) {
-    const [formState, setFormState] = useState({
-        ncomport: '',
-        reconnectioninterval: 10,
-        stream_on_demand: true,
-        stream_active: false,
-        server1_enabled: false,
-        server1_stream_on_demand: true,
-        server1_stream_active: false,
-        ntrip_version1: 1,
-        username1: '',
-        serverhost1: '',
-        port1: '',
-        mountpoint1: '',
-        password1: '',
-        server2_enabled: false,
-        server2_stream_on_demand: true,
-        server2_stream_active: false,
-        ntrip_version2: 1,
-        serverhost2: '',
-        port2: '',
-        mountpoint2: '',
-        password2: '',
-        rtcm_enabled: false,
-        rtcmntripversion1: 1,
-        rtcmserver1: '',
-        rtcmport1: '',
-        rtcmmountpoint1: '',
-        rtcmusername1: '',
-        rtcmpassword1: '',
-        command_host: '',
-        command_port: '',
-        command_pass: '',
-        command_mp: ''
-    });
-    const casterIds = config => [...new Set([1, 2, ...Object.keys(config).map(key => {
-        const match = key.match(/^server(\d+)_enabled$|^serverhost(\d+)$/);
-        return match ? Number(match[1] || match[2]) : 0;
-    }).filter(id => Number.isSafeInteger(id) && id > 0)])].sort((a, b) => a - b);
-    const serverIds = casterIds(formState);
+    const [formState, setFormState] = useState(createDefaultServiceFormState);
+    const serverIds = getCasterIds(formState);
     const [removedServers, setRemovedServers] = useState([]);
     const addCaster = () => {
         const sid = Math.max(...serverIds, ...removedServers) + 1;
@@ -202,105 +167,14 @@ const ServiceConfigForm = memo(function ServiceConfigForm({ device, currentUser 
         setIsFormDirty(true);
     };
 
-    const toBool = (value, defaultValue = false) => {
-        if (value === null || value === undefined) return defaultValue;
-        if (typeof value === 'boolean') return value;
-        if (typeof value === 'number') return value !== 0;
-        if (typeof value === 'string') {
-            const v = value.trim().toLowerCase();
-            if (['true', '1', 'yes', 'on'].includes(v)) return true;
-            if (['false', '0', 'no', 'off'].includes(v)) return false;
-        }
-        return Boolean(value);
-    };
-
     // Common section should only show stream toggles for servers that are currently enabled.
     const showS1StreamToggle = toBool(formState.server1_enabled, false);
     const showS2StreamToggle = toBool(formState.server2_enabled, false);
 
-    useEffect(() => {
-        const isSerialChanged = lastHydratedSerialRef.current !== device.serial;
-        if (isSerialChanged) {
-            setVisiblePasswords({});
-            setRemovedServers([]);
-        }
-
-        // Hydrate only when the source config changes. Clearing dirty after save
-        // must not reload the pre-save props and flip the mode back.
-        if (!isSerialChanged && isFormDirty) {
-            return;
-        }
-
-        // Reset về trạng thái mặc định
-        const defaultState = {
-            ncomport: '',
-            reconnectioninterval: 10,
-            stream_on_demand: true,
-            stream_active: false,
-            server1_enabled: false,
-            server1_stream_on_demand: true,
-            server1_stream_active: false,
-            ntrip_version1: 1,
-            username1: '',
-            serverhost1: '',
-            port1: '',
-            mountpoint1: '',
-            password1: '',
-            server2_enabled: false,
-            server2_stream_on_demand: true,
-            server2_stream_active: false,
-            ntrip_version2: 1,
-            username2: '',
-            serverhost2: '',
-            port2: '',
-            mountpoint2: '',
-            password2: '',
-            rtcm_enabled: false,
-            rtcmntripversion1: 1,
-            rtcmserver1: '',
-            rtcmport1: '',
-            rtcmmountpoint1: '',
-            rtcmusername1: '',
-            rtcmpassword1: '',
-            command_host: '',
-            command_port: '',
-            command_pass: '',
-            command_mp: ''
-        };
-
-        if (device.service_config) {
-            const merged = {
-                ...defaultState,
-                ...device.service_config,
-                password1: isAdmin ? (device.service_config.password1 ?? (isSerialChanged ? '' : hydratedConfigRef.current.password1) ?? '') : '',
-                password2: isAdmin ? (device.service_config.password2 ?? (isSerialChanged ? '' : hydratedConfigRef.current.password2) ?? '') : '',
-                rtcmpassword1: isAdmin ? (device.service_config.rtcmpassword1 ?? (isSerialChanged ? '' : hydratedConfigRef.current.rtcmpassword1) ?? '') : '',
-                command_pass: isAdmin ? (device.service_config.command_pass ?? (isSerialChanged ? '' : hydratedConfigRef.current.command_pass) ?? '') : ''
-            };
-
-            // Read legacy fallbacks from the received config, before defaults.
-            for (const server of casterIds(merged)) {
-                const key = `server${server}`;
-                merged[`password${server}`] = isAdmin ? (device.service_config[`password${server}`] ?? (isSerialChanged ? '' : hydratedConfigRef.current[`password${server}`]) ?? '') : '';
-
-                merged[`${key}_enabled`] = toBool(device.service_config[`${key}_enabled`], false);
-                merged[`${key}_stream_on_demand`] = toBool(device.service_config[`${key}_stream_on_demand`], toBool(device.service_config.stream_on_demand, true));
-                merged[`${key}_stream_active`] = toBool(device.service_config[`${key}_stream_active`], toBool(device.service_config.stream_active, false));
-                if (!merged[`${key}_stream_on_demand`]) merged[`${key}_stream_active`] = true;
-            }
-
-            Object.assign(merged, Object.fromEntries(Object.entries(hostPolicy).filter(([key]) => key !== "locked_servers")));
-            hydratedConfigRef.current = merged;
-            setFormState(merged);
-            setIsFormDirty(false);
-            lastHydratedSerialRef.current = device.serial;
-        } else {
-            hydratedConfigRef.current = defaultState;
-            setFormState(defaultState);
-            setIsFormDirty(false);
-            lastHydratedSerialRef.current = device.serial;
-        }
-    }, [device.serial, device.service_config, device.server_config_lock, isAdmin]);
+    useHydrateServiceForm({
+        device, isAdmin, isFormDirty, hostPolicy, lastHydratedSerialRef, hydratedConfigRef,
+        setVisiblePasswords, setRemovedServers, setFormState, setIsFormDirty,
+    });
 
     const renderCasterStatus = (serverId) => {
         const key = `server${serverId}`;
