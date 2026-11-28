@@ -145,6 +145,41 @@ def on_disconnect(client, userdata, *args, **kwargs):
     logging.warning(f"[MQTT] Mất kết nối khỏi broker{rc_str}. Đang tự động thử lại...")
     stats["mqtt"]["connected"] = False
 
+def _log_mqtt_nmea(payload, now):
+    if not payload.startswith(b'$'):
+        return
+    try:
+        nmea_str = payload.decode('utf-8', errors='ignore').strip()
+        timestamp = time.strftime('%H:%M:%S', time.localtime(now)) + f".{int((now % 1) * 1000):03d}"
+        previous = last_seen["mqtt"].get("NMEA", 0)
+        delta = f"{now - previous:.1f}s" if previous > 0 else FIRST_SAMPLE_LABEL
+        last_seen["mqtt"]["NMEA"] = now
+        logging.info(f"[{timestamp}] [MQTT NMEA] (cách {delta}) | {nmea_str[:80]}")
+    except Exception:
+        pass
+
+
+def _log_mqtt_rtcm(frames, now, rtcm_len):
+    if not HAS_PYRTCM:
+        return
+    try:
+        identifiers = []
+        for frame in frames:
+            reader = RTCMReader(BytesIO(frame), quitonerror=False)
+            for _, parsed_data in reader:
+                if parsed_data:
+                    message_type = str(parsed_data.identity)
+                    previous = last_seen["mqtt"].get(message_type, 0)
+                    delta = f"{now - previous:.1f}s" if previous > 0 else FIRST_SAMPLE_LABEL
+                    last_seen["mqtt"][message_type] = now
+                    identifiers.append(f"{message_type} (cách {delta})")
+        if identifiers:
+            timestamp = time.strftime('%H:%M:%S', time.localtime(now)) + f".{int((now % 1) * 1000):03d}"
+            logging.info(f"[{timestamp}] [MQTT RTCM] Nhận: {', '.join(identifiers)} | Tổng: {rtcm_len} bytes")
+    except Exception:
+        pass
+
+
 def on_message(client, userdata, msg, *args, **kwargs):
     global mqtt_buffer
     now = time.time()
@@ -155,17 +190,7 @@ def on_message(client, userdata, msg, *args, **kwargs):
     stats["mqtt"]["last_recv_time"] = now
     stats["mqtt"]["history"].append((now, payload_len))
 
-    # Log NMEA text nếu có
-    if payload.startswith(b'$'):
-        try:
-            nmea_str = payload.decode('utf-8', errors='ignore').strip()
-            t_str = time.strftime('%H:%M:%S', time.localtime(now)) + f".{int((now % 1) * 1000):03d}"
-            prev_nmea = last_seen["mqtt"].get("NMEA", 0)
-            dt_str = f"{now - prev_nmea:.1f}s" if prev_nmea > 0 else FIRST_SAMPLE_LABEL
-            last_seen["mqtt"]["NMEA"] = now
-            logging.info(f"[{t_str}] [MQTT NMEA] (cách {dt_str}) | {nmea_str[:80]}")
-        except Exception:
-            pass
+    _log_mqtt_nmea(payload, now)
 
     # Đưa vào buffer để trích xuất RTCM3
     mqtt_buffer.extend(payload)
@@ -175,25 +200,7 @@ def on_message(client, userdata, msg, *args, **kwargs):
         stats["mqtt"]["rtcm_bytes"] += rtcm_len
         stats["mqtt"]["rtcm_history"].append((now, rtcm_len))
         
-        # Nếu có pyrtcm, parse để log loại bản tin
-        if HAS_PYRTCM:
-            try:
-                idents = []
-                for f in frames:
-                    stream = BytesIO(f)
-                    rtr = RTCMReader(stream, quitonerror=False)
-                    for _, parsed_data in rtr:
-                        if parsed_data:
-                            msg_type = str(parsed_data.identity)
-                            prev = last_seen["mqtt"].get(msg_type, 0)
-                            dt_str = f"{now - prev:.1f}s" if prev > 0 else FIRST_SAMPLE_LABEL
-                            last_seen["mqtt"][msg_type] = now
-                            idents.append(f"{msg_type} (cách {dt_str})")
-                if idents:
-                    t_str = time.strftime('%H:%M:%S', time.localtime(now)) + f".{int((now % 1) * 1000):03d}"
-                    logging.info(f"[{t_str}] [MQTT RTCM] Nhận: {', '.join(idents)} | Tổng: {rtcm_len} bytes")
-            except Exception:
-                pass
+        _log_mqtt_rtcm(frames, now, rtcm_len)
 
 # --- NTRIP CLIENT MONITOR ---
 async def _read_ntrip_response_header(reader):

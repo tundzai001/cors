@@ -314,109 +314,122 @@ class SatelliteService:
         except Exception as e:
             logger.debug("Failed to save disk cache for satellites: %s", e)
 
+    def _fresh_memory_cache(self, now, force_refresh):
+        if not force_refresh and self._cached_payload:
+            if now - self._last_fetch_monotonic < CACHE_TTL_SECONDS:
+                return self._normalize_codes(self._cached_payload)
+        return None
+
+    async def _fresh_disk_cache(self, now, force_refresh):
+        if self._cached_payload or force_refresh:
+            return None
+        disk_data = await asyncio.to_thread(self._load_disk_cache)
+        constellations = disk_data.get("constellations") if isinstance(disk_data, dict) else None
+        if not isinstance(constellations, dict) or not set(CONSTELLATIONS_CONFIG).issubset(constellations):
+            return None
+        self._cached_payload = disk_data
+        try:
+            age = (datetime.now(timezone.utc) - datetime.fromisoformat(disk_data["updated_at_utc"])).total_seconds()
+        except (KeyError, ValueError, TypeError):
+            age = CACHE_TTL_SECONDS
+        if 0 <= age < CACHE_TTL_SECONDS:
+            self._last_fetch_monotonic = now - age
+            return self._normalize_codes(disk_data)
+        return None
+
+    async def _refresh_igs_identifiers(self, client):
+        try:
+            metadata = await client.get(IGS_METADATA_URL)
+            metadata.raise_for_status()
+            identifiers = self._parse_identifiers(metadata.text)
+            if identifiers:
+                self._identifiers = identifiers
+                self._identifier_text = metadata.text
+                try:
+                    await asyncio.to_thread(
+                        Path(self._identifiers_cache_file).write_text,
+                        json.dumps({"sinex": metadata.text}),
+                        encoding="utf-8",
+                    )
+                except OSError as exc:
+                    logger.debug("Could not cache IGS identifiers: %s", exc)
+        except Exception as exc:
+            logger.warning("IGS identifiers unavailable, using bundled/previous assignments: %s", exc)
+
+    async def _fetch_constellation_data(self, client):
+        data = {}
+        total_count = 0
+        for key, config in CONSTELLATIONS_CONFIG.items():
+            url = f"{CELESTRAK_BASE_URL}?GROUP={config['group']}&FORMAT=TLE"
+            response = await client.get(url, headers={"User-Agent": "Aitogy-CORS-System/1.0"})
+            if response.status_code == 200:
+                data[key] = self._parse_tle_text(response.text, key)
+                total_count += len(data[key])
+            else:
+                logger.warning("CelesTrak returned %s for group %s", response.status_code, config['group'])
+                data[key] = []
+        return data, total_count
+
+    async def _refresh_payload(self, now):
+        async with httpx.AsyncClient(timeout=12.0) as client:
+            await self._refresh_igs_identifiers(client)
+            await self._refresh_independent_status(client)
+            constellations, total_count = await self._fetch_constellation_data(client)
+        if not total_count:
+            return None
+        payload = {
+            "status": "OK",
+            "is_stale": False,
+            "updated_at_utc": datetime.now(timezone.utc).isoformat(),
+            "total_satellites": total_count,
+            "counts": {key: len(value) for key, value in constellations.items()},
+            "constellations": constellations,
+        }
+        payload = self._normalize_codes(payload)
+        self._cached_payload = payload
+        self._last_fetch_monotonic = now
+        await asyncio.to_thread(self._save_disk_cache, payload)
+        return payload
+
+    def _fallback_payload(self):
+        if self._cached_payload:
+            stale_payload = dict(self._cached_payload)
+            stale_payload["is_stale"] = True
+            stale_payload["warning"] = "CelesTrak update temporarily unreachable, using cached TLEs"
+            return self._normalize_codes(stale_payload)
+        disk_data = self._load_disk_cache()
+        if disk_data:
+            disk_data["is_stale"] = True
+            constellations = disk_data.setdefault("constellations", {})
+            for key in CONSTELLATIONS_CONFIG:
+                constellations.setdefault(key, [])
+            counts = disk_data.get("counts")
+            if not isinstance(counts, dict):
+                counts = {}
+                disk_data["counts"] = counts
+            counts.update({key: len(constellations[key]) for key in CONSTELLATIONS_CONFIG})
+            return self._normalize_codes(disk_data)
+        return {
+            "status": "UNAVAILABLE", "is_stale": True, "total_satellites": 0,
+            "counts": {}, "constellations": {key: [] for key in CONSTELLATIONS_CONFIG},
+        }
+
     async def get_satellites_tle(self, force_refresh: bool = False) -> dict[str, Any]:
         async with self._lock:
             now = time.monotonic()
-            if not force_refresh and self._cached_payload:
-                age = now - self._last_fetch_monotonic
-                if age < CACHE_TTL_SECONDS:
-                    return self._normalize_codes(self._cached_payload)
-
-            # Try to load disk cache on cold boot
-            if not self._cached_payload and not force_refresh:
-                disk_data = await asyncio.to_thread(self._load_disk_cache)
-                cached_constellations = disk_data.get("constellations") if isinstance(disk_data, dict) else None
-                if isinstance(cached_constellations, dict) and set(CONSTELLATIONS_CONFIG).issubset(cached_constellations):
-                    self._cached_payload = disk_data
-                    try:
-                        age = (datetime.now(timezone.utc) - datetime.fromisoformat(disk_data["updated_at_utc"])).total_seconds()
-                    except (KeyError, ValueError, TypeError):
-                        age = CACHE_TTL_SECONDS
-                    if 0 <= age < CACHE_TTL_SECONDS:
-                        self._last_fetch_monotonic = now - age
-                        return self._normalize_codes(disk_data)
-
-            # Fetch fresh from CelesTrak
+            cached = self._fresh_memory_cache(now, force_refresh)
+            if cached is not None:
+                return cached
+            cached = await self._fresh_disk_cache(now, force_refresh)
+            if cached is not None:
+                return cached
             try:
-                constellations_data: dict[str, list[dict[str, Any]]] = {}
-                total_count = 0
-
-                async with httpx.AsyncClient(timeout=12.0) as client:
-                    try:
-                        metadata = await client.get(IGS_METADATA_URL)
-                        metadata.raise_for_status()
-                        identifiers = self._parse_identifiers(metadata.text)
-                        if identifiers:
-                            self._identifiers = identifiers
-                            self._identifier_text = metadata.text
-                            try:
-                                await asyncio.to_thread(
-                                    Path(self._identifiers_cache_file).write_text,
-                                    json.dumps({"sinex": metadata.text}),
-                                    encoding="utf-8",
-                                )
-                            except OSError as exc:
-                                logger.debug("Could not cache IGS identifiers: %s", exc)
-                    except Exception as exc:
-                        logger.warning("IGS identifiers unavailable, using bundled/previous assignments: %s", exc)
-                    await self._refresh_independent_status(client)
-                    for key, cfg in CONSTELLATIONS_CONFIG.items():
-                        url = f"{CELESTRAK_BASE_URL}?GROUP={cfg['group']}&FORMAT=TLE"
-                        resp = await client.get(url, headers={"User-Agent": "Aitogy-CORS-System/1.0"})
-                        if resp.status_code == 200:
-                            sats = self._parse_tle_text(resp.text, key)
-                            constellations_data[key] = sats
-                            total_count += len(sats)
-                        else:
-                            logger.warning("CelesTrak returned %s for group %s", resp.status_code, cfg['group'])
-                            constellations_data[key] = []
-
-                if total_count > 0:
-                    payload = {
-                        "status": "OK",
-                        "is_stale": False,
-                        "updated_at_utc": datetime.now(timezone.utc).isoformat(),
-                        "total_satellites": total_count,
-                        "counts": {k: len(v) for k, v in constellations_data.items()},
-                        "constellations": constellations_data,
-                    }
-                    payload = self._normalize_codes(payload)
-                    self._cached_payload = payload
-                    self._last_fetch_monotonic = now
-                    await asyncio.to_thread(self._save_disk_cache, payload)
+                payload = await self._refresh_payload(now)
+                if payload is not None:
                     return payload
-
             except Exception as exc:
                 logger.warning("Failed to refresh CelesTrak TLE data: %s", exc)
-
-            # Fallback to existing cache if network failed
-            if self._cached_payload:
-                stale_payload = dict(self._cached_payload)
-                stale_payload["is_stale"] = True
-                stale_payload["warning"] = "CelesTrak update temporarily unreachable, using cached TLEs"
-                return self._normalize_codes(stale_payload)
-
-            # Fallback to disk cache if available
-            disk_data = self._load_disk_cache()
-            if disk_data:
-                disk_data["is_stale"] = True
-                constellations = disk_data.setdefault("constellations", {})
-                for key in CONSTELLATIONS_CONFIG:
-                    constellations.setdefault(key, [])
-                counts = disk_data.get("counts")
-                if not isinstance(counts, dict):
-                    counts = {}
-                    disk_data["counts"] = counts
-                counts.update({key: len(constellations[key]) for key in CONSTELLATIONS_CONFIG})
-                return self._normalize_codes(disk_data)
-
-            return {
-                "status": "UNAVAILABLE",
-                "is_stale": True,
-                "total_satellites": 0,
-                "counts": {},
-                "constellations": {k: [] for k in CONSTELLATIONS_CONFIG},
-            }
+            return self._fallback_payload()
 
     async def get_summary(self) -> dict[str, Any]:
         data = await self.get_satellites_tle()

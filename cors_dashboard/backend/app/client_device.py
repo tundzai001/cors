@@ -1,38 +1,44 @@
 """Display-only device labels; never use User-Agent as authentication evidence."""
 
 
+def _device_os_name(ua, fallback):
+    if 'iphone' in ua or 'ipod' in ua:
+        return 'iPhone · iOS' if 'iphone' in ua else 'iPod · iOS'
+    if 'ipad' in ua:
+        return 'iPad · iPadOS'
+    if 'android' in ua:
+        return 'Android'
+    if 'windows nt 10.0' in ua or 'windows nt 11.0' in ua:
+        return 'Windows 10/11'
+    if 'windows' in ua:
+        return 'Windows'
+    if 'macintosh' in ua or 'mac os x' in ua:
+        # iPad desktop UA can be identical to Mac; preserve the client's touch hint.
+        return 'iPad · iPadOS' if (fallback or '').startswith('iPad') else 'macOS'
+    if 'linux' in ua:
+        return 'Linux'
+    return None
+
+
+def _device_browser_name(ua, fallback):
+    if any(token in ua for token in ('edg/', 'edgios/', 'edga/')):
+        return 'Edge'
+    if any(token in ua for token in ('opr/', 'opera/', 'opios/')):
+        return 'Opera'
+    if 'brave/' in ua or (('chrome/' in ua or 'crios/' in ua) and (fallback or '').endswith(' · Brave')):
+        return 'Brave'
+    if 'crios/' in ua or 'chrome/' in ua:
+        return 'Chrome'
+    if 'fxios/' in ua or 'firefox/' in ua:
+        return 'Firefox'
+    if 'safari/' in ua:
+        return 'Safari'
+    return 'Trình duyệt'
+
+
 def client_device_name(user_agent: str, fallback: str = '') -> str:
     ua = (user_agent or '').lower()
-    if 'iphone' in ua or 'ipod' in ua:
-        os_name = 'iPhone · iOS' if 'iphone' in ua else 'iPod · iOS'
-    elif 'ipad' in ua:
-        os_name = 'iPad · iPadOS'
-    elif 'android' in ua:
-        os_name = 'Android'
-    elif 'windows nt 10.0' in ua or 'windows nt 11.0' in ua:
-        os_name = 'Windows 10/11'
-    elif 'windows' in ua:
-        os_name = 'Windows'
-    elif 'macintosh' in ua or 'mac os x' in ua:
-        # iPad desktop UA can be identical to Mac; preserve the client's touch hint.
-        os_name = 'iPad · iPadOS' if (fallback or '').startswith('iPad') else 'macOS'
-    elif 'linux' in ua:
-        os_name = 'Linux'
-    else:
+    os_name = _device_os_name(ua, fallback)
+    if not os_name:
         return fallback or 'Thiết bị'
-
-    if any(token in ua for token in ('edg/', 'edgios/', 'edga/')):
-        browser = 'Edge'
-    elif any(token in ua for token in ('opr/', 'opera/', 'opios/')):
-        browser = 'Opera'
-    elif 'brave/' in ua or (('chrome/' in ua or 'crios/' in ua) and (fallback or '').endswith(' · Brave')):
-        browser = 'Brave'
-    elif 'crios/' in ua or 'chrome/' in ua:
-        browser = 'Chrome'
-    elif 'fxios/' in ua or 'firefox/' in ua:
-        browser = 'Firefox'
-    elif 'safari/' in ua:
-        browser = 'Safari'
-    else:
-        browser = 'Trình duyệt'
-    return f'{os_name} · {browser}'
+    return f'{os_name} · {_device_browser_name(ua, fallback)}'

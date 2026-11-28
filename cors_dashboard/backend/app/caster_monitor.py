@@ -19,59 +19,55 @@ logger = logging.getLogger("app.main")
 router = APIRouter()
 
 
+def _add_caster_host_values(unique_hosts, raw_value):
+    if not raw_value:
+        return
+    for host in str(raw_value).split(','):
+        host = host.strip()
+        if host:
+            unique_hosts.add(host)
+
+
+async def _add_session_caster_hosts(db, unique_hosts):
+    try:
+        sessions = await db.execute(select(models.RTCMStreamSession.caster_host).distinct())
+        for row in sessions.all():
+            if row[0]:
+                unique_hosts.add(str(row[0]).strip())
+    except Exception:
+        pass
+
+
+async def _sync_configured_casters(db):
+    env_hosts, env_cfg = _read_caster_config_from_env()
+    system_settings = {}
+    try:
+        system_settings = await crud.get_system_settings(db)
+    except Exception:
+        pass
+    unique_hosts = set(env_hosts)
+    for raw_value in (getattr(settings, "CASTER_HOST", ""), system_settings.get('caster_host', '')):
+        _add_caster_host_values(unique_hosts, raw_value)
+    await _add_session_caster_hosts(db, unique_hosts)
+
+    port = int(getattr(settings, "CASTER_PORT", 2101) or system_settings.get('caster_port', 2101))
+    tasks = [
+        _sync_single_caster(host, port, env_cfg.get("user"), env_cfg.get("pass"))
+        for host in unique_hosts
+    ]
+    if tasks:
+        await asyncio.gather(*tasks)
+
+
 async def caster_monitor_task():
     """Background task to periodically sync data from all configured casters."""
     logger.info("[CASTER MONITOR] Starting background sync task")
     while True:
         try:
             async with auth_session_scope() as db:
-                # 1. Get all hosts to scan
-                env_hosts, env_cfg = _read_caster_config_from_env()
-                settings_host = getattr(settings, "CASTER_HOST", "")
-                system_settings = {}
-                try:
-                    system_settings = await crud.get_system_settings(db)
-                except Exception:
-                    pass
-                db_host = system_settings.get('caster_host', '')
-
-                unique_hosts = set()
-                # Add hosts from .env list
-                for h in env_hosts:
-                    unique_hosts.add(h)
-
-                # Add hosts from settings and DB (might be CSV)
-                for raw_str in [settings_host, db_host]:
-                    if raw_str:
-                        for h in str(raw_str).split(','):
-                            h = h.strip()
-                            if h: unique_hosts.add(h)
-
-                # Also discover hosts from active sessions
-                try:
-                    sessions_rs = await db.execute(select(models.RTCMStreamSession.caster_host).distinct())
-                    for row in sessions_rs.all():
-                        if row[0]:
-                            unique_hosts.add(str(row[0]).strip())
-                except Exception:
-                    pass
-
-                port = int(getattr(settings, "CASTER_PORT", 2101) or system_settings.get('caster_port', 2101))
-                user = env_cfg.get("user")
-                password = env_cfg.get("pass")
-
-                # 2. Scan each host
-                tasks = []
-                for host in unique_hosts:
-                    tasks.append(_sync_single_caster(host, port, user, password))
-
-                if tasks:
-                    await asyncio.gather(*tasks)
-
-        except Exception as e:
-            logger.exception(f"[CASTER MONITOR] Sync loop error: {e}")
-
-        # Nới lỏng thời gian quét tránh bão request tới Caster
+                await _sync_configured_casters(db)
+        except Exception as error:
+            logger.exception(f"[CASTER MONITOR] Sync loop error: {error}")
         monitor_interval = float(os.getenv("CASTER_MONITOR_INTERVAL", "30"))
         await asyncio.sleep(monitor_interval)
 
