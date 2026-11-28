@@ -229,6 +229,21 @@ async def _sync_esp_rover_caster(
     return True
 
 
+async def _sync_esp_rover_casters(
+    device, mountpoint, current, previous, password, saved_mounts, saved_hosts, now, casters
+):
+    successful_hosts = []
+    for caster_config in casters:
+        host, _, _, _ = caster_config
+        synced = await _sync_esp_rover_caster(
+            device, mountpoint, current, previous, password,
+            saved_mounts, saved_hosts, now, caster_config,
+        )
+        if synced:
+            successful_hosts.append(host)
+    return successful_hosts
+
+
 def _new_esp_rover_account(device, mountpoint, password, previous, now):
     return models.RoverAccount(
         username=mountpoint, password=password, base_serial=device.serial,
@@ -258,15 +273,10 @@ async def auto_provision_esp_rover_account(device: models.Device, mountpoint: st
         saved_hosts = [host for host in (current.target_casters or "").split(";") if host] if current else []
         saved_mounts = [mp for mp in (current.mountpoints or "").split(";") if mp] if current else []
         merged = list(dict.fromkeys([mountpoint, *saved_mounts]))
-        successful_hosts = []
-        for caster_config in casters:
-            host, _, _, _ = caster_config
-            synced = await _sync_esp_rover_caster(
-                device, mountpoint, current, previous, password,
-                saved_mounts, saved_hosts, now, caster_config,
-            )
-            if synced:
-                successful_hosts.append(host)
+        successful_hosts = await _sync_esp_rover_casters(
+            device, mountpoint, current, previous, password,
+            saved_mounts, saved_hosts, now, casters,
+        )
         if not successful_hosts:
             return False
         if current is None:
@@ -421,33 +431,43 @@ def _should_provision_esp_rover(device):
 async def _sync_esp_rover_identity(device, existing_rovers, rover_map, source_active, mountpoint):
     serial = device.serial
     try:
-        username = esp_rover_name(device)
-        collision = rover_map.get(username.casefold())
-        if collision and (collision.base_serial != serial or collision.created_by_user_id is not None):
-            raise ValueError(f"Tài khoản {username} đang thuộc trạm khác hoặc được quản lý thủ công.")
-        if await sync_esp_mountpoint(device, username):
-            return
-        if not source_active or mountpoint != username:
-            return
-        if not await auto_provision_esp_rover_account(device, mountpoint):
-            rover_state = _esp_setup_status.get(serial, {}).get("rover", {}).get("state")
-            if rover_state != "partial":
-                _set_esp_setup_status(serial, "rover", "retrying", username=username)
-            return
-        for old in existing_rovers:
-            should_remove = (
-                old.base_serial == serial
-                and old.created_by_user_id is None
-                and old.username.casefold() != username.casefold()
-            )
-            if should_remove:
-                await auto_deprovision_esp_rover_account(serial, old.username)
+        await _ensure_esp_rover_identity(device, existing_rovers, rover_map, source_active, mountpoint)
     except Exception as exc:
         source_state = _esp_setup_status.get(serial, {}).get("source", {}).get("state")
         failed_stage = "rover" if source_state == "ready" else "source"
         detail = str(exc) if isinstance(exc, ValueError) else "Chưa đồng bộ được với caster."
         _set_esp_setup_status(serial, failed_stage, "retrying", detail=detail)
         logger.warning("[ESP ROVER] Không đồng bộ được định danh %s: %s", serial, exc)
+
+
+async def _remove_previous_esp_rovers(serial, username, existing_rovers):
+    for old in existing_rovers:
+        should_remove = (
+            old.base_serial == serial
+            and old.created_by_user_id is None
+            and old.username.casefold() != username.casefold()
+        )
+        if should_remove:
+            await auto_deprovision_esp_rover_account(serial, old.username)
+
+
+async def _ensure_esp_rover_identity(device, existing_rovers, rover_map, source_active, mountpoint):
+    serial = device.serial
+    username = esp_rover_name(device)
+    collision = rover_map.get(username.casefold())
+    if collision and (collision.base_serial != serial or collision.created_by_user_id is not None):
+        raise ValueError(f"Tài khoản {username} đang thuộc trạm khác hoặc được quản lý thủ công.")
+    if await sync_esp_mountpoint(device, username):
+        return
+    if not source_active or mountpoint != username:
+        return
+    synced = await auto_provision_esp_rover_account(device, mountpoint)
+    if not synced:
+        rover_state = _esp_setup_status.get(serial, {}).get("rover", {}).get("state")
+        if rover_state != "partial":
+            _set_esp_setup_status(serial, "rover", "retrying", username=username)
+        return
+    await _remove_previous_esp_rovers(serial, username, existing_rovers)
 
 
 async def _sync_esp_device(device, sources, existing_rovers, rover_map, now):
