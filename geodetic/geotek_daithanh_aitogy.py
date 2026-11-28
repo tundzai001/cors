@@ -941,61 +941,60 @@ class RTCMSignalDecoder:
             return None
         return self.decode_sync(serial, payload)
 
+    def _decode_json_satellite(self, serial, sys_code, sat, now_ms, now_s, base_pos):
+        prn = sat.get("prn")
+        snr = sat.get("snr", 0)
+        if not prn or snr <= 0:
+            return None
+
+        sat_str_id = f"RTCM:{sys_code}:{prn}"
+        elevation = 0.0
+        azimuth = 0.0
+        cached = self._azel_cache[serial].get(sat_str_id)
+        if cached and now_s - cached[0] < 120.0:
+            azimuth, elevation = cached[1], cached[2]
+        elif base_pos:
+            sat_pos = self._satpos(sys_code, prn, now_ms)
+            if sat_pos:
+                azimuth, elevation = self._satazel(sat_pos, base_pos)
+                self._azel_cache[serial][sat_str_id] = (now_s, azimuth, elevation)
+
+        return {
+            "id": sat_str_id,
+            "prn": prn,
+            "system": sys_code,
+            "snr": snr,
+            "cnr": float(snr),
+            "signalId": 1,
+            "messageType": 9999,
+            "isTracking": True,
+            "elevation": elevation,
+            "azimuth": azimuth,
+            "lastSeen": now_ms,
+        }
+
     def decode_json(self, serial: str, data: dict) -> dict[str, Any] | None:
         nav_system = data.get("navSystem")
         sats_in = data.get("satellites", [])
         if not nav_system or not sats_in:
             return None
-        
+
         system_map = {"GPS": "G", "GLONASS": "R", "Galileo": "E", "BeiDou": "C"}
         sys_code = system_map.get(nav_system)
         if not sys_code:
             return None
-            
+
         now_ms = int(time.time() * 1000)
         now_s = now_ms / 1000.0
-        satellites_out = []
         base_pos = self._base_positions.get(serial)
-        
         if serial not in self._azel_cache:
             self._azel_cache[serial] = {}
-            
+        satellites_out = []
         for sat in sats_in:
-            prn = sat.get("prn")
-            snr = sat.get("snr", 0)
-            if not prn or snr <= 0:
-                continue
-                
-            sat_str_id = f"RTCM:{sys_code}:{prn}"
-            elevation = 0.0
-            azimuth = 0.0
-            
-            cached = self._azel_cache[serial].get(sat_str_id)
-            if cached and now_s - cached[0] < 120.0:
-                azimuth, elevation = cached[1], cached[2]
-            else:
-                if base_pos:
-                    sat_pos = self._satpos(sys_code, prn, now_ms)
-                    if sat_pos:
-                        az, el = self._satazel(sat_pos, base_pos)
-                        azimuth = az
-                        elevation = el
-                        self._azel_cache[serial][sat_str_id] = (now_s, azimuth, elevation)
-            
-            satellites_out.append({
-                "id": sat_str_id,
-                "prn": prn,
-                "system": sys_code,
-                "snr": snr,
-                "cnr": float(snr),
-                "signalId": 1,
-                "messageType": 9999,
-                "isTracking": True,
-                "elevation": elevation,
-                "azimuth": azimuth,
-                "lastSeen": now_ms,
-            })
-            
+            decoded = self._decode_json_satellite(serial, sys_code, sat, now_ms, now_s, base_pos)
+            if decoded is not None:
+                satellites_out.append(decoded)
+
         return {
             "navSystem": nav_system,
             "msmLevel": "JSON",

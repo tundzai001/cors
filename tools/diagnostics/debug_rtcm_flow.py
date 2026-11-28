@@ -59,39 +59,47 @@ def crc24q(data):
                 crc ^= 0x1864CFB
     return crc & 0xFFFFFF
 
+def _next_rtcm3_frame(buffer):
+    start = buffer.find(b"\xd3")
+    if start < 0:
+        buffer.clear()
+        return None, True
+    if start > 0:
+        del buffer[:start]
+    if len(buffer) < 6:
+        return None, True
+    if buffer[1] & 0xFC:
+        del buffer[0]
+        return None, False
+
+    payload_len = ((buffer[1] & 0x03) << 8) | buffer[2]
+    total_len = 3 + payload_len + 3
+    if payload_len > 1023:
+        del buffer[0]
+        return None, False
+    if len(buffer) < total_len:
+        # Keep enough bytes to complete this frame, while bounding malformed input.
+        if len(buffer) > 8192:
+            del buffer[:-total_len]
+        return None, True
+
+    frame = bytes(buffer[:total_len])
+    expected_crc = int.from_bytes(frame[-3:], "big")
+    if crc24q(frame[:-3]) == expected_crc:
+        del buffer[:total_len]
+        return frame, False
+    del buffer[0]
+    return None, False
+
+
 def extract_rtcm3_frames(buffer):
     frames = []
     while True:
-        start = buffer.find(b"\xd3")
-        if start < 0:
-            buffer.clear()
+        frame, finished = _next_rtcm3_frame(buffer)
+        if finished:
             return frames
-        if start > 0:
-            del buffer[:start]
-        if len(buffer) < 6:
-            return frames
-        if buffer[1] & 0xFC:
-            del buffer[0]
-            continue
-
-        payload_len = ((buffer[1] & 0x03) << 8) | buffer[2]
-        total_len = 3 + payload_len + 3
-        if payload_len > 1023:
-            del buffer[0]
-            continue
-        if len(buffer) < total_len:
-            # Đề phòng buffer quá lớn
-            if len(buffer) > 8192:
-                del buffer[:-total_len]
-            return frames
-
-        frame = bytes(buffer[:total_len])
-        expected_crc = int.from_bytes(frame[-3:], "big")
-        if crc24q(frame[:-3]) == expected_crc:
+        if frame is not None:
             frames.append(frame)
-            del buffer[:total_len]
-        else:
-            del buffer[0]
 
 # Biến toàn cục theo dõi dữ liệu
 stats = {

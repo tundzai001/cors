@@ -201,25 +201,13 @@ class IonosphereService:
         except Exception:
             return True
 
-    def _parse_glotec_payload(self, raw_geojson: dict[str, Any], url: str) -> tuple[dict[str, Any], dict[str, Any]]:
-        time_tag = raw_geojson.get("time_tag") or ""
-        features = raw_geojson.get("features", [])
-
-        obs_time_vn = self._format_vietnam_time(time_tag)
-        is_stale = self._check_is_stale(time_tag)
-        status = "STALE" if is_stale else "ACTIVE"
-
-        # Organize 72x72 grid:
-        # Rows: from North (+88.75) down to South (-88.75) so canvas top is North
-        # Cols: from West (-177.5) to East (+177.5) so canvas left is West
+    def _collect_glotec_features(self, features):
         lats_set = set()
         lons_set = set()
         data_map: dict[tuple[float, float], tuple[float, float, float, int]] = {}
         tecs: list[float] = []
         anomalies: list[float] = []
-
         geojson_features = []
-
         for f in features:
             coords = f.get("geometry", {}).get("coordinates", [])
             if len(coords) < 2:
@@ -248,16 +236,16 @@ class IonosphereService:
                     "hmF2": round(hm_f2, 1),
                 }
             })
+        return lats_set, lons_set, data_map, tecs, anomalies, geojson_features
 
+    def _glotec_grid_coordinates(self, lats_set, lons_set):
         sorted_lats_asc = sorted(list(lats_set)) if lats_set else [round(LAT_MIN + i * LAT_STEP, 2) for i in range(GRID_LATS)]
         sorted_lons_asc = sorted(list(lons_set)) if lons_set else [round(LON_MIN + j * LON_STEP, 2) for j in range(GRID_LONS)]
+        return list(reversed(sorted_lats_asc)), sorted_lons_asc
 
-        # North-to-South row ordering for direct canvas raster drawing
-        sorted_lats_desc = list(reversed(sorted_lats_asc))
-
+    def _glotec_grids(self, sorted_lats_desc, sorted_lons_asc, data_map):
         tec_grid: list[list[float]] = []
         anomaly_grid: list[list[float]] = []
-
         for lat in sorted_lats_desc:
             t_row = []
             a_row = []
@@ -271,13 +259,34 @@ class IonosphereService:
                     a_row.append(0.0)
             tec_grid.append(t_row)
             anomaly_grid.append(a_row)
+        return tec_grid, anomaly_grid
 
+    def _glotec_statistics(self, tecs, anomalies):
         min_tec = round(min(tecs), 1) if tecs else 0.0
         max_tec = round(max(tecs), 1) if tecs else 0.0
         avg_tec = round(sum(tecs) / len(tecs), 1) if tecs else 0.0
-
         min_anom = round(min(anomalies), 2) if anomalies else 0.0
         max_anom = round(max(anomalies), 2) if anomalies else 0.0
+        return {
+            "min_tec": min_tec,
+            "max_tec": max_tec,
+            "avg_tec": avg_tec,
+            "min_anomaly": min_anom,
+            "max_anomaly": max_anom,
+        }
+
+    def _parse_glotec_payload(self, raw_geojson: dict[str, Any], url: str) -> tuple[dict[str, Any], dict[str, Any]]:
+        time_tag = raw_geojson.get("time_tag") or ""
+        obs_time_vn = self._format_vietnam_time(time_tag)
+        is_stale = self._check_is_stale(time_tag)
+        status = "STALE" if is_stale else "ACTIVE"
+        lats_set, lons_set, data_map, tecs, anomalies, geojson_features = self._collect_glotec_features(
+            raw_geojson.get("features", [])
+        )
+        # North-to-South rows and West-to-East columns support direct canvas raster drawing.
+        sorted_lats_desc, sorted_lons_asc = self._glotec_grid_coordinates(lats_set, lons_set)
+        tec_grid, anomaly_grid = self._glotec_grids(sorted_lats_desc, sorted_lons_asc, data_map)
+        stats = self._glotec_statistics(tecs, anomalies)
 
         compact_payload = {
             "status": status,
@@ -299,13 +308,7 @@ class IonosphereService:
                 "row_order": "north_to_south",
                 "col_order": "west_to_east",
             },
-            "stats": {
-                "min_tec": min_tec,
-                "max_tec": max_tec,
-                "avg_tec": avg_tec,
-                "min_anomaly": min_anom,
-                "max_anomaly": max_anom,
-            },
+            "stats": stats,
             "lats": sorted_lats_desc,
             "lons": sorted_lons_asc,
             "tec_grid": tec_grid,
@@ -319,7 +322,7 @@ class IonosphereService:
                 "is_stale": is_stale,
                 "time_tag": time_tag,
                 "observation_time_vn": obs_time_vn,
-                "stats": compact_payload["stats"],
+                "stats": stats,
             },
             "features": geojson_features,
         }
