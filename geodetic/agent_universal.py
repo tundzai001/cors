@@ -5514,59 +5514,57 @@ class AgentManager:
             self.save_config()
             return True
         return False
-    
-    def update_service_config(self, cfg: dict):
-        # Missing/redacted credentials mean keep the locally saved password.
-        current = self.config.get('services') or {}
-        cfg = {**current, **cfg}
+
+    @staticmethod
+    def _remove_deleted_service_servers(cfg):
         removed_servers = set(cfg.pop('removed_servers', []))
         for key in list(cfg):
             match = re.fullmatch(r'server(\d+)_\w+|(?:ntrip_version|username|serverhost|port|mountpoint|password)(\d+)', key)
-            if match and int(match.group(1) or match.group(2)) >= 3 and int(match.group(1) or match.group(2)) in removed_servers:
+            server_id = int(match.group(1) or match.group(2)) if match else None
+            if server_id is not None and server_id >= 3 and server_id in removed_servers:
                 cfg.pop(key)
+        return cfg
+
+    @staticmethod
+    def _preserve_service_credentials(cfg, current):
         for key in [*(f'password{sid}' for sid in _get_ntrip_server_ids(cfg)), 'rtcmpassword1', 'command_pass']:
             if cfg.get(key) in (None, ''):
                 if current.get(key) not in (None, ''):
                     cfg[key] = current[key]
                 else:
                     cfg.pop(key, None)
-        # Respect user settings from dashboard deployment
-        
-        # Core logic: derive stream_active from stream_on_demand
+        return cfg
+
+    @staticmethod
+    def _apply_service_stream_modes(cfg):
         stream_on_demand = bool(cfg.get('stream_on_demand', False))
-        
         if not stream_on_demand:
-            # Always-On mode: force stream_active = True
             cfg['stream_active'] = True
         else:
-            # On-Demand mode: Force stream_active = False so it starts in Sleep mode
-            # if not explicitly set (None or missing)
             if cfg.get('stream_active') is None:
                 cfg['stream_active'] = False
-
-        # Per-server stream controls with backward-compatible fallback to global flags.
         for server_id in _get_ntrip_server_ids(cfg):
             on_demand_key = f'server{server_id}_stream_on_demand'
             active_key = f'server{server_id}_stream_active'
-
             if cfg.get(on_demand_key) is None:
                 cfg[on_demand_key] = stream_on_demand
-
             if _to_bool(cfg.get(on_demand_key), stream_on_demand):
                 if cfg.get(active_key) is None:
                     cfg[active_key] = bool(cfg.get('stream_active', False))
             else:
-                # Always-on for this server.
                 cfg[active_key] = True
-        
+        return cfg
+
+    def update_service_config(self, cfg: dict):
+        # Missing/redacted credentials mean keep the locally saved password.
+        current = self.config.get('services') or {}
+        cfg = self._remove_deleted_service_servers({**current, **cfg})
+        cfg = self._preserve_service_credentials(cfg, current)
+        cfg = self._apply_service_stream_modes(cfg)
         self.config['services'] = cfg
-        
-        # Sync current engine state
         self.rtcm_stream_active = _compute_any_server_can_push(cfg, apply_fail_open=True)
-        
         global rtcm_stream_active_flag
         rtcm_stream_active_flag = self.rtcm_stream_active
-        
         self.save_config()
 
     @staticmethod

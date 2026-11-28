@@ -257,32 +257,39 @@ async def _fix_possible_report(health, question):
             'Hãy thử ở điểm thoáng và kiểm tra trên mốc đã biết; giữ FIX và kiểm tra đạt rồi mới triển khai.')
 
 
-async def _cors_only_report(health, question, intent):
-    """A public-source/atmosphere assessment, not a private station diagnosis."""
-    words = _plain(question)
-    name = region_for_question(question)[0]
-    heading = f'📍 {name}\n' if name != VIETNAM_REGION_NAME else ''
-    data, kp = await asyncio.gather(_latest_ionosphere(), geomagnetic_observation())
-    observation = ionosphere_observation(data, question)
-    value = kp['value'] if kp else None
-    status = health.get('status')
-    headline = {'online': 'CORS Cục đang hoạt động.',
-                'offline': 'CORS Cục đang gián đoạn.'}.get(status, 'Chưa xác định được trạng thái CORS Cục.')
-    if kp:
-        state = ('bão từ mạnh' if value >= 7 else 'bão từ' if value >= 5 else
-                 'địa từ nhiễu động' if value >= 4 else 'địa từ yên tĩnh')
-        magnetic = f"Kp {value:.2f} · {state} ({kp['stamp']})."
-    else:
-        magnetic = 'Địa từ đang thiếu bản tin cập nhật.'
-    if intent == 'detail':
-        atmosphere = ionosphere_text(data, question)
-    elif observation:
-        delay = f", trễ {observation['age_minutes']} phút" if observation['delayed'] else ''
-        atmosphere = (f"Điện ly khu vực: TEC {observation['tec']} TECU (ước tính). "
-                      f"NOAA {observation['stamp']}{delay}.")
-    else:
-        atmosphere = 'Điện ly khu vực chưa có dữ liệu cập nhật để đánh giá.'
+def _cors_status_headline(status):
+    return {
+        'online': 'CORS Cục đang hoạt động.',
+        'offline': 'CORS Cục đang gián đoạn.',
+    }.get(status, 'Chưa xác định được trạng thái CORS Cục.')
 
+
+def _geomagnetic_summary(kp):
+    if not kp:
+        return 'Địa từ đang thiếu bản tin cập nhật.'
+    value = kp['value']
+    if value >= 7:
+        state = 'bão từ mạnh'
+    elif value >= 5:
+        state = 'bão từ'
+    elif value >= 4:
+        state = 'địa từ nhiễu động'
+    else:
+        state = 'địa từ yên tĩnh'
+    return f"Kp {value:.2f} · {state} ({kp['stamp']})."
+
+
+def _ionosphere_summary(intent, data, question, observation):
+    if intent == 'detail':
+        return ionosphere_text(data, question)
+    if observation:
+        delay = f", trễ {observation['age_minutes']} phút" if observation['delayed'] else ''
+        return (f"Điện ly khu vực: TEC {observation['tec']} TECU (ước tính). "
+                f"NOAA {observation['stamp']}{delay}.")
+    return 'Điện ly khu vực chưa có dữ liệu cập nhật để đánh giá.'
+
+
+def _cors_field_advice(status, value, words, intent, observation):
     if status != 'online' or (value is not None and value >= 4):
         advice = field_advice(status, value, words)
     elif re.search(r'\b(khong che|bo tri|ranh|moc|dia chinh|dia hinh|binh do|do chi tiet)\b', words):
@@ -294,6 +301,22 @@ async def _cors_only_report(health, question, intent):
         advice += ' Nếu máy vẫn FLOAT, kiểm tra điều kiện thu và dữ liệu hiệu chỉnh tại máy; bản tin điện ly không xác định được nguyên nhân riêng của máy.'
     if not observation or value is None:
         advice += ' Phần bản tin còn thiếu chưa đủ để nhận định điều kiện đo hiện tại.'
+    return advice
+
+
+async def _cors_only_report(health, question, intent):
+    """A public-source/atmosphere assessment, not a private station diagnosis."""
+    words = _plain(question)
+    name = region_for_question(question)[0]
+    heading = f'📍 {name}\n' if name != VIETNAM_REGION_NAME else ''
+    data, kp = await asyncio.gather(_latest_ionosphere(), geomagnetic_observation())
+    observation = ionosphere_observation(data, question)
+    value = kp['value'] if kp else None
+    status = health.get('status')
+    headline = _cors_status_headline(status)
+    magnetic = _geomagnetic_summary(kp)
+    atmosphere = _ionosphere_summary(intent, data, question, observation)
+    advice = _cors_field_advice(status, value, words, intent, observation)
     if intent == 'forecast':
         headline += ' Đây là tình hình hiện tại, chưa phải dự báo cho ca đo anh hỏi.'
     scope = '\nAnh muốn xem điện ly ở tỉnh nào?' if name == VIETNAM_REGION_NAME else ''
