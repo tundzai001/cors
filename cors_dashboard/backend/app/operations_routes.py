@@ -379,59 +379,77 @@ async def _build_ops_alerts(
         alerts.extend(_device_stream_alerts(device, now_ts))
 
     for rover in rovers:
-        if rover.expires_at:
-            exp = int(rover.expires_at)
-            if exp <= now_ts:
-                severity, alert_type, title = "critical", "rover_expired", "Rover expired"
-            elif exp <= now_ts + 14 * 86400:
-                severity, alert_type, title = "warning", "rover_expiring", "Rover expiring"
-            else:
-                continue
-            alerts.append({
-                "id": f"{alert_type}-{rover.username}",
-                "severity": severity,
-                "type": alert_type,
-                "title": title,
-                "message": f"{rover.username} expires at {time.strftime('%Y-%m-%d %H:%M', time.localtime(exp))}",
-                "rover_username": rover.username,
-                "created_at": now_ts,
-            })
+        alert = _rover_expiration_alert(rover, now_ts)
+        if alert:
+            alerts.append(alert)
 
     if current_user.role == auth.Role.ADMIN:
-        blocklist_rs = await auth_db.execute(select(models.RoverBlocklist).order_by(models.RoverBlocklist.blocked_at.desc()).limit(50))
-        for item in blocklist_rs.scalars().all():
-            alerts.append({
-                "id": f"rover-blocked-{item.id}",
-                "severity": "warning",
-                "type": "rover_blocked",
-                "title": "Rover blocked",
-                "message": f"{item.username} blocked on {item.mountpoint or 'all mountpoints'}",
-                "rover_username": item.username,
-                "mountpoint": item.mountpoint,
-                "created_at": item.blocked_at,
-            })
-
-    if current_user.role == auth.Role.ADMIN:
-        async with global_caster_cache_lock:
-            for cache_data in (await _get_all_caster_cache()).values():
-                last_update = int(cache_data.get("last_update") or 0)
-                has_error = bool(cache_data.get("error"))
-                stale = last_update and now_ts - last_update > 180
-                if has_error or stale:
-                    alerts.append({
-                        "id": f"caster-{cache_data.get('host', 'unknown')}",
-                        "severity": "critical" if has_error else "warning",
-                        "type": "caster_error" if has_error else "caster_stale",
-                        "title": "Caster needs attention",
-                        "message": cache_data.get("error") or f"Caster cache stale for {(now_ts - last_update) // 60} minutes",
-                        "caster_host": cache_data.get("host", "unknown"),
-                        "created_at": last_update or now_ts,
-                    })
+        alerts.extend(await _admin_rover_block_alerts(auth_db))
+        alerts.extend(await _admin_caster_alerts(now_ts))
 
     states = await _ops_alert_states(auth_db)
     alerts = _apply_ops_alert_states(alerts, states)
     severity_rank = {"critical": 0, "warning": 1, "info": 2}
     return sorted(alerts, key=lambda a: (severity_rank.get(a.get("severity"), 3), -int(a.get("created_at") or 0)))
+
+
+def _rover_expiration_alert(rover, now_ts):
+    if not rover.expires_at:
+        return None
+    expires_at = int(rover.expires_at)
+    if expires_at <= now_ts:
+        severity, alert_type, title = "critical", "rover_expired", "Rover expired"
+    elif expires_at <= now_ts + 14 * 86400:
+        severity, alert_type, title = "warning", "rover_expiring", "Rover expiring"
+    else:
+        return None
+    return {
+        "id": f"{alert_type}-{rover.username}",
+        "severity": severity,
+        "type": alert_type,
+        "title": title,
+        "message": f"{rover.username} expires at {time.strftime('%Y-%m-%d %H:%M', time.localtime(expires_at))}",
+        "rover_username": rover.username,
+        "created_at": now_ts,
+    }
+
+
+async def _admin_rover_block_alerts(auth_db: AsyncSession) -> list[dict]:
+    result = await auth_db.execute(
+        select(models.RoverBlocklist).order_by(models.RoverBlocklist.blocked_at.desc()).limit(50)
+    )
+    return [{
+        "id": f"rover-blocked-{item.id}",
+        "severity": "warning",
+        "type": "rover_blocked",
+        "title": "Rover blocked",
+        "message": f"{item.username} blocked on {item.mountpoint or 'all mountpoints'}",
+        "rover_username": item.username,
+        "mountpoint": item.mountpoint,
+        "created_at": item.blocked_at,
+    } for item in result.scalars().all()]
+
+
+async def _admin_caster_alerts(now_ts: int) -> list[dict]:
+    alerts = []
+    async with global_caster_cache_lock:
+        cache_data_by_host = await _get_all_caster_cache()
+        for cache_data in cache_data_by_host.values():
+            last_update = int(cache_data.get("last_update") or 0)
+            has_error = bool(cache_data.get("error"))
+            stale = last_update and now_ts - last_update > 180
+            if not (has_error or stale):
+                continue
+            alerts.append({
+                "id": f"caster-{cache_data.get('host', 'unknown')}",
+                "severity": "critical" if has_error else "warning",
+                "type": "caster_error" if has_error else "caster_stale",
+                "title": "Caster needs attention",
+                "message": cache_data.get("error") or f"Caster cache stale for {(now_ts - last_update) // 60} minutes",
+                "caster_host": cache_data.get("host", "unknown"),
+                "created_at": last_update or now_ts,
+            })
+    return alerts
 
 
 @router.get("/api/ops/alerts")

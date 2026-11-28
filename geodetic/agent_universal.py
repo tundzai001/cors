@@ -987,53 +987,60 @@ def _delay_marker_seconds(command_bytes: bytes) -> float | None:
         return None
 
 
+def _record_nmea_type(nmea_type):
+    counts = globals().setdefault("LAST_NMEA_TYPE_COUNTS", {})
+    counts[nmea_type] = int(counts.get(nmea_type, 0)) + 1
+    globals()["LAST_VALID_NMEA_TS"] = time.time()
+    if len(counts) > 16:
+        for key in list(counts.keys())[:-16]:
+            counts.pop(key, None)
+
+
+def _record_gst_quality(parts):
+    semi_major = float(parts[3]) if len(parts) > 3 and parts[3] else None
+    semi_minor = float(parts[4]) if len(parts) > 4 and parts[4] else None
+    globals()["LAST_GST_SEMI_MAJOR_M"] = semi_major
+    globals()["LAST_GST_SEMI_MINOR_M"] = semi_minor
+    lat_sigma = float(parts[6]) if parts[6] else None
+    lon_sigma = float(parts[7]) if parts[7] else None
+    if lat_sigma is not None and lon_sigma is not None:
+        hacc = (lat_sigma ** 2 + lon_sigma ** 2) ** 0.5
+        if hacc > 0:
+            globals()["LAST_GST_HACC_M"] = hacc
+            globals()["LAST_GST_HACC_SOURCE"] = "gst_lat_lon_sigma"
+    globals()["LAST_GST_TS"] = time.time()
+
+
+def _record_gsv_quality(parts):
+    snrs = []
+    fields = parts[4:]
+    for index in range(0, len(fields), 4):
+        if len(fields[index:index + 4]) < 4:
+            continue
+        try:
+            snr = int(fields[index + 3]) if fields[index + 3] else 0
+        except ValueError:
+            snr = 0
+        if snr > 0:
+            snrs.append(snr)
+    if snrs:
+        globals()["LAST_GSV_AVG_SNR"] = sum(snrs) / len(snrs)
+        globals()["LAST_GSV_SNR_SAMPLES"] = len(snrs)
+    globals()["LAST_GSV_TS"] = time.time()
+
+
 def _update_local_nmea_health(sentence: str) -> None:
     if not sentence or not sentence.startswith("$") or len(sentence) < 6:
         return
     try:
         head = sentence.split(",", 1)[0]
         nmea_type = head[-3:]
-        counts = globals().setdefault("LAST_NMEA_TYPE_COUNTS", {})
-        counts[nmea_type] = int(counts.get(nmea_type, 0)) + 1
-        globals()["LAST_VALID_NMEA_TS"] = time.time()
-        
-        if len(counts) > 16:
-            for key in list(counts.keys())[:-16]:
-                counts.pop(key, None)
-
+        _record_nmea_type(nmea_type)
         parts = sentence.split("*", 1)[0].split(",")
         if nmea_type == "GST" and len(parts) > 7:
-            semi_major = float(parts[3]) if len(parts) > 3 and parts[3] else None
-            semi_minor = float(parts[4]) if len(parts) > 4 and parts[4] else None
-            globals()["LAST_GST_SEMI_MAJOR_M"] = semi_major
-            globals()["LAST_GST_SEMI_MINOR_M"] = semi_minor
-            lat_sigma = float(parts[6]) if parts[6] else None
-            lon_sigma = float(parts[7]) if parts[7] else None
-            hacc = None
-            hacc_source = None
-            if lat_sigma is not None and lon_sigma is not None:
-                hacc = (lat_sigma ** 2 + lon_sigma ** 2) ** 0.5
-                hacc_source = "gst_lat_lon_sigma"
-            if hacc is not None and hacc > 0:
-                globals()["LAST_GST_HACC_M"] = hacc
-                globals()["LAST_GST_HACC_SOURCE"] = hacc_source
-            globals()["LAST_GST_TS"] = time.time()
+            _record_gst_quality(parts)
         elif nmea_type == "GSV" and len(parts) > 7:
-            snrs = []
-            fields = parts[4:]
-            for i in range(0, len(fields), 4):
-                if len(fields[i:i + 4]) < 4:
-                    continue
-                try:
-                    snr = int(fields[i + 3]) if fields[i + 3] else 0
-                except ValueError:
-                    snr = 0
-                if snr > 0:
-                    snrs.append(snr)
-            if snrs:
-                globals()["LAST_GSV_AVG_SNR"] = sum(snrs) / len(snrs)
-                globals()["LAST_GSV_SNR_SAMPLES"] = len(snrs)
-            globals()["LAST_GSV_TS"] = time.time()
+            _record_gsv_quality(parts)
     except Exception:
         return
 

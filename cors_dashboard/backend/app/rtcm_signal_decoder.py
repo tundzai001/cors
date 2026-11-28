@@ -658,6 +658,65 @@ class RTCMSignalDecoder:
         with self._lock:
             return self._decode_sync_unlocked(serial, payload)
 
+    @staticmethod
+    def _next_rtcm_packet(buffer: bytes):
+        start = buffer.find(b"\xD3")
+        if start < 0:
+            return b"", None, "stop"
+        if start > 0:
+            buffer = buffer[start:]
+        if len(buffer) < 3:
+            return buffer, None, "stop"
+        message_length = ((buffer[1] & 0x03) << 8) | buffer[2]
+        packet_length = 3 + message_length + 3
+        if len(buffer) < packet_length:
+            return buffer, None, "stop"
+        packet = buffer[:packet_length]
+        buffer = buffer[packet_length:]
+        expected_crc = int.from_bytes(packet[-3:], "big")
+        if crc24q(packet[:-3]) != expected_crc:
+            return buffer, None, "invalid"
+        return buffer, packet, "packet"
+
+    def _decode_rtcm_packet(self, packet: bytes, serial: str):
+        payload_bytes = packet[3:-3]
+        message_type = (payload_bytes[0] << 4) | (payload_bytes[1] >> 4) if len(payload_bytes) >= 2 else -1
+        decoders = {
+            1005: self._decode_1005,
+            1006: self._decode_1005,
+            1019: self._decode_1019,
+            1020: self._decode_1020,
+            1042: self._decode_1042,
+            1044: self._decode_1044,
+            1045: self._decode_1045,
+        }
+        try:
+            decoder = decoders.get(message_type)
+            if decoder:
+                decoder(payload_bytes, serial)
+                decoded = None
+            else:
+                decoded = self._decode_msm_payload(message_type, payload_bytes, serial)
+        except (IndexError, ValueError):
+            return message_type, None, 1
+        return message_type, decoded, 0
+
+    @staticmethod
+    def _collect_decoded_packet(message_type, decoded, packets, satellites_by_id):
+        if not decoded:
+            packets.append({"messageType": message_type, "satelliteCount": 0})
+            return
+        packets.append({
+            "messageType": message_type,
+            "navSystem": decoded["navSystem"],
+            "msmLevel": decoded["msmLevel"],
+            "satelliteCount": len(decoded["satellites"]),
+        })
+        for satellite in decoded["satellites"]:
+            if len(satellites_by_id) >= MAX_SATELLITES_PER_DECODE:
+                break
+            satellites_by_id[satellite["id"]] = satellite
+
     def _decode_sync_unlocked(self, serial: str, payload: bytes) -> dict[str, Any] | None:
         serial = self._touch_serial(serial)
         if serial is None:
@@ -673,69 +732,15 @@ class RTCMSignalDecoder:
         errors = 0
 
         while len(buffer) >= 3 and len(packets) < MAX_PACKETS_PER_DECODE and len(satellites_by_id) < MAX_SATELLITES_PER_DECODE:
-            start = buffer.find(b"\xD3")
-            if start < 0:
-                buffer = b""
+            buffer, packet, outcome = self._next_rtcm_packet(buffer)
+            if outcome == "stop":
                 break
-            if start > 0:
-                buffer = buffer[start:]
-            if len(buffer) < 3:
-                break
-
-            message_length = ((buffer[1] & 0x03) << 8) | buffer[2]
-            packet_length = 3 + message_length + 3
-            if len(buffer) < packet_length:
-                break
-
-            packet = buffer[:packet_length]
-            buffer = buffer[packet_length:]
-
-            expected_crc = int.from_bytes(packet[-3:], "big")
-            if crc24q(packet[:-3]) != expected_crc:
+            if outcome == "invalid":
                 errors += 1
                 continue
-
-            payload_bytes = packet[3:-3]
-            message_type = (payload_bytes[0] << 4) | (payload_bytes[1] >> 4) if len(payload_bytes) >= 2 else -1
-            try:
-                if message_type in (1005, 1006):
-                    self._decode_1005(payload_bytes, serial)
-                    decoded = None
-                elif message_type == 1019:
-                    self._decode_1019(payload_bytes, serial)
-                    decoded = None
-                elif message_type == 1020:
-                    self._decode_1020(payload_bytes, serial)
-                    decoded = None
-                elif message_type == 1042:
-                    self._decode_1042(payload_bytes, serial)
-                    decoded = None
-                elif message_type == 1044:
-                    self._decode_1044(payload_bytes, serial)
-                    decoded = None
-                elif message_type == 1045:
-                    self._decode_1045(payload_bytes, serial)
-                    decoded = None
-                else:
-                    decoded = self._decode_msm_payload(message_type, payload_bytes, serial)
-            except (IndexError, ValueError):
-                decoded = None
-                errors += 1
-            if decoded:
-                packets.append(
-                    {
-                        "messageType": message_type,
-                        "navSystem": decoded["navSystem"],
-                        "msmLevel": decoded["msmLevel"],
-                        "satelliteCount": len(decoded["satellites"]),
-                    }
-                )
-                for sat in decoded["satellites"]:
-                    if len(satellites_by_id) >= MAX_SATELLITES_PER_DECODE:
-                        break
-                    satellites_by_id[sat["id"]] = sat
-            else:
-                packets.append({"messageType": message_type, "satelliteCount": 0})
+            message_type, decoded, packet_errors = self._decode_rtcm_packet(packet, serial)
+            errors += packet_errors
+            self._collect_decoded_packet(message_type, decoded, packets, satellites_by_id)
             self._prune_satellite_caches(serial)
 
         if len(buffer) > MAX_BUFFER_BYTES:
@@ -744,7 +749,6 @@ class RTCMSignalDecoder:
 
         if not packets and not satellites_by_id and errors == 0:
             return None
-
         return {
             "type": "rtcm_signal",
             "serial": serial,
