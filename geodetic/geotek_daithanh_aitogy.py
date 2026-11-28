@@ -2830,42 +2830,67 @@ class MqttSourceWorker(threading.Thread):
         base_config["gnss_options"] = normalize_lte_gnss_options(self.cfg.get("gnss_options"))
         return base_coords, live_coords, rtk_fix_status, base_config
 
+    def _status_primary_server_config(self):
+        cfg = self.cfg
+        stream_active = bool(cfg.get("stream_active", cfg.get("server1_stream_active", False)))
+        return {
+            "stream_on_demand": bool(cfg.get("stream_on_demand", cfg.get("server1_stream_on_demand", True))),
+            "stream_active": stream_active,
+            "server1_enabled": bool(cfg.get("server1_enabled", False)),
+            "server1_stream_on_demand": bool(cfg.get("server1_stream_on_demand", cfg.get("stream_on_demand", True))),
+            "server1_stream_active": bool(cfg.get("server1_stream_active", False)),
+            "ntrip_version1": int(cfg.get("ntrip_version1", 1) or 1),
+            "username1": cfg.get("username1") or "source",
+            "serverhost1": cfg.get("target_host"),
+            "port1": cfg.get("target_port"),
+            "mountpoint1": cfg.get("target_mp"),
+            "password1": cfg.get("target_pass"),
+            "active_mountpoint": cfg.get("target_mp") if stream_active else None,
+        }
+
+    def _status_secondary_server_config(self):
+        cfg = self.cfg
+        return {
+            "server2_enabled": bool(cfg.get("server2_enabled", False)),
+            "server2_stream_on_demand": bool(cfg.get("server2_stream_on_demand", True)),
+            "server2_stream_active": bool(cfg.get("server2_stream_active", False)),
+            "ntrip_version2": int(cfg.get("ntrip_version2", 1) or 1),
+            "username2": cfg.get("username2") or "",
+            "serverhost2": cfg.get("serverhost2") or "",
+            "port2": cfg.get("port2"),
+            "mountpoint2": cfg.get("mountpoint2") or "",
+            "password2": cfg.get("password2") or "",
+        }
+
+    def _status_command_config(self):
+        cfg = self.cfg
+        return {
+            "command_host": cfg.get("command_host") or cfg.get("source_host") or "",
+            "command_port": cfg.get("command_port") or cfg.get("source_port"),
+            "command_pass": cfg.get("command_pass") or cfg.get("source_pass") or "",
+            "command_mp": cfg.get("command_mp") or cfg.get("source_mp") or "",
+        }
+
+    def _status_rtcm_config(self):
+        cfg = self.cfg
+        return {
+            "rtcm_enabled": bool(cfg.get("rtcm_enabled", False)),
+            "rtcmntripversion1": int(cfg.get("rtcmntripversion1", 1) or 1),
+            "rtcmserver1": cfg.get("rtcmserver1") or "",
+            "rtcmport1": cfg.get("rtcmport1"),
+            "rtcmmountpoint1": cfg.get("rtcmmountpoint1") or "",
+            "rtcmusername1": cfg.get("rtcmusername1") or "",
+            "rtcmpassword1": cfg.get("rtcmpassword1") or "",
+        }
+
     def _status_service_config(self):
         return {
             "ncomport": self.cfg.get("ncomport") or "",
             "reconnectioninterval": int(self.cfg.get("reconnectioninterval", 10) or 10),
-            "stream_on_demand": bool(self.cfg.get("stream_on_demand", self.cfg.get("server1_stream_on_demand", True))),
-            "stream_active": bool(self.cfg.get("stream_active", self.cfg.get("server1_stream_active", False))),
-            "server1_enabled": bool(self.cfg.get("server1_enabled", False)),
-            "server1_stream_on_demand": bool(self.cfg.get("server1_stream_on_demand", self.cfg.get("stream_on_demand", True))),
-            "server1_stream_active": bool(self.cfg.get("server1_stream_active", False)),
-            "ntrip_version1": int(self.cfg.get("ntrip_version1", 1) or 1),
-            "username1": self.cfg.get("username1") or "source",
-            "serverhost1": self.cfg.get("target_host"),
-            "port1": self.cfg.get("target_port"),
-            "mountpoint1": self.cfg.get("target_mp"),
-            "password1": self.cfg.get("target_pass"),
-            "active_mountpoint": self.cfg.get("target_mp") if bool(self.cfg.get("stream_active", self.cfg.get("server1_stream_active", False))) else None,
-            "server2_enabled": bool(self.cfg.get("server2_enabled", False)),
-            "server2_stream_on_demand": bool(self.cfg.get("server2_stream_on_demand", True)),
-            "server2_stream_active": bool(self.cfg.get("server2_stream_active", False)),
-            "ntrip_version2": int(self.cfg.get("ntrip_version2", 1) or 1),
-            "username2": self.cfg.get("username2") or "",
-            "serverhost2": self.cfg.get("serverhost2") or "",
-            "port2": self.cfg.get("port2"),
-            "mountpoint2": self.cfg.get("mountpoint2") or "",
-            "password2": self.cfg.get("password2") or "",
-            "command_host": self.cfg.get("command_host") or self.cfg.get("source_host") or "",
-            "command_port": self.cfg.get("command_port") or self.cfg.get("source_port"),
-            "command_pass": self.cfg.get("command_pass") or self.cfg.get("source_pass") or "",
-            "command_mp": self.cfg.get("command_mp") or self.cfg.get("source_mp") or "",
-            "rtcm_enabled": bool(self.cfg.get("rtcm_enabled", False)),
-            "rtcmntripversion1": int(self.cfg.get("rtcmntripversion1", 1) or 1),
-            "rtcmserver1": self.cfg.get("rtcmserver1") or "",
-            "rtcmport1": self.cfg.get("rtcmport1"),
-            "rtcmmountpoint1": self.cfg.get("rtcmmountpoint1") or "",
-            "rtcmusername1": self.cfg.get("rtcmusername1") or "",
-            "rtcmpassword1": self.cfg.get("rtcmpassword1") or "",
+            **self._status_primary_server_config(),
+            **self._status_secondary_server_config(),
+            **self._status_command_config(),
+            **self._status_rtcm_config(),
         }
 
     def _update_antenna_health(self, mqtt_data_active, rtcm_input_bps, satellite_count, latest_gga, now):

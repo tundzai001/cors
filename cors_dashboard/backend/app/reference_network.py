@@ -116,6 +116,42 @@ def _has_rtcm(buffer):
     return False
 
 
+def _ntrip_response_result(status):
+    valid_protocols = (b"ICY", b"HTTP/1.0", b"HTTP/1.1")
+    if len(status) >= 2 and status[0] in valid_protocols and status[1] in (b"401", b"403"):
+        return "unknown", "Lỗi xác thực hoặc quyền truy cập NTRIP; chưa xác minh được dữ liệu Cục"
+    if len(status) < 2 or status[0] not in valid_protocols or status[1] != b"200":
+        return "offline", "Nguồn dữ liệu Cục từ chối kết nối NTRIP"
+    return None
+
+
+async def _read_rtcm_after_gga(reader, writer):
+    # Some NTRIP v1 casters send only the ICY line, without a blank line.
+    writer.write(_probe_gga())
+    await writer.drain()
+    buffer = bytearray()
+    received = 0
+    while received < MAX_STREAM_BYTES:
+        chunk = await reader.read(min(4096, MAX_STREAM_BYTES - received))
+        if not chunk:
+            break
+        received += len(chunk)
+        buffer.extend(chunk)
+        if _has_rtcm(buffer):
+            return "online", "Nguồn dữ liệu Cục có RTCM hợp lệ sau khi gửi GGA"
+    return "offline", "Nguồn dữ liệu Cục không trả RTCM hợp lệ sau khi gửi GGA"
+
+
+async def _close_probe_writer(writer):
+    if writer is None:
+        return
+    writer.close()
+    try:
+        await asyncio.wait_for(writer.wait_closed(), timeout=0.5)
+    except (OSError, TimeoutError):
+        pass
+
+
 async def probe_rtcm():
     user = _get_env_preferring_dotenv("CORS_CUC_NTRIP_USER", "")
     password = _get_env_preferring_dotenv("CORS_CUC_NTRIP_PASSWORD", "")
@@ -136,40 +172,18 @@ async def probe_rtcm():
             writer.write((f"GET /{mountpoint} HTTP/1.0\r\nHost: {host}:{port}\r\n"
                           f"User-Agent: NTRIP CORS-Health/1.0\r\nAuthorization: Basic {auth}\r\n\r\n").encode("ascii"))
             await writer.drain()
-            status = (await reader.readline()).strip().split()
-            if (len(status) >= 2 and status[0] in (b"ICY", b"HTTP/1.0", b"HTTP/1.1")
-                    and status[1] in (b"401", b"403")):
-                return "unknown", "Lỗi xác thực hoặc quyền truy cập NTRIP; chưa xác minh được dữ liệu Cục"
-            if len(status) < 2 or status[0] not in (b"ICY", b"HTTP/1.0", b"HTTP/1.1") or status[1] != b"200":
-                return "offline", "Nguồn dữ liệu Cục từ chối kết nối NTRIP"
+            response_result = _ntrip_response_result((await reader.readline()).strip().split())
+            if response_result:
+                return response_result
             accepted = True
-            # Some NTRIP v1 casters send only the ICY line, without a blank line.
-            writer.write(_probe_gga())
-            await writer.drain()
-            buffer = bytearray()
-            received = 0
-            while received < MAX_STREAM_BYTES:
-                chunk = await reader.read(min(4096, MAX_STREAM_BYTES - received))
-                if not chunk:
-                    break
-                received += len(chunk)
-                buffer.extend(chunk)
-                if _has_rtcm(buffer):
-                    # Return through finally immediately; never keep a valid stream open.
-                    return "online", "Nguồn dữ liệu Cục có RTCM hợp lệ sau khi gửi GGA"
-            return "offline", "Nguồn dữ liệu Cục không trả RTCM hợp lệ sau khi gửi GGA"
+            return await _read_rtcm_after_gga(reader, writer)
     except TimeoutError:
         return ("offline", "Nguồn dữ liệu Cục không trả RTCM trong thời gian kiểm tra") if accepted else (
             "unknown", "Không kết nối được nguồn dữ liệu Cục trong thời gian kiểm tra")
     except (OSError, ValueError):
         return "unknown", "Không kiểm tra được nguồn dữ liệu Cục"
     finally:
-        if writer is not None:
-            writer.close()
-            try:
-                await asyncio.wait_for(writer.wait_closed(), timeout=0.5)
-            except (OSError, TimeoutError):
-                pass
+        await _close_probe_writer(writer)
 
 
 async def _probe_website():

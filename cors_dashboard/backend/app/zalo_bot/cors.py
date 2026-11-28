@@ -24,21 +24,42 @@ class CorsMixin:
                     and cors_intent(words, previous[2] if len(previous) > 2 else 'status') != 'status')
 
     async def _cors_cmd(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        policy = await self._active_cors_delivery(update)
+        if policy is None:
+            return
+        from ..reference_network import get_network_status
+        from ..zalo_cors_report import report_text
+        from ..zalo_cors_dialogue import STATIC_INTENTS
+        question = str(getattr(update.message, "text", "") or "")
+        question, previous_intent, intent, options = self._cors_question_context(update, question)
+        # Definitions, small talk and clarification need no external status probe.
+        health = {} if intent in STATIC_INTENTS or len(options) > 1 else await get_network_status()
+        token = self._cors_outbound.set("reply")
+        try:
+            await update.message.reply_text(await report_text(
+                health, question, previous_intent=previous_intent,
+                delivery_mode=policy.get('mode', 'standard'),
+            ))
+        finally:
+            self._cors_outbound.reset(token)
+
+    async def _active_cors_delivery(self, update):
         chat_id = self._get_chat_id(update)
         if chat_id in self._revoked_chat_ids:
-            return
+            return None
         allowed = await zalo_repository.remember_cors_chat(
             chat_id, self._get_chat_type(update), self._get_display_name(update),
         )
         if not allowed:
-            return
+            return None
         policy = await zalo_repository.chat_delivery_policy(chat_id)
         if not policy.get('active', False):
-            return
-        from ..reference_network import get_network_status
-        from ..zalo_cors_report import report_text, region_for_question, region_options, _plain
-        from ..zalo_cors_dialogue import cors_intent, STATIC_INTENTS
-        question = str(getattr(update.message, "text", "") or "")
+            return None
+        return policy
+
+    def _cors_question_context(self, update, question):
+        from ..zalo_cors_report import region_for_question, region_options, _plain
+        from ..zalo_cors_dialogue import cors_intent
         key = self._conversation_key(update)
         now = time.monotonic()
         self._cors_regions = {k: v for k, v in self._cors_regions.items() if now - v[1] < 1200}
@@ -48,6 +69,10 @@ class CorsMixin:
         intent = cors_intent(words, previous_intent)
         options = region_options(question)
         name = region_for_question(question)[0]
+        question = self._update_cors_region_memory(key, question, words, intent, options, name, now)
+        return question, previous_intent, intent, options
+
+    def _update_cors_region_memory(self, key, question, words, intent, options, name, now):
         new_unknown_area = not options and re.search(r"\b(?:o|tai|tinh|khu vuc)\s+(?!do\b|day\b|dau\b)\w+", words)
         if len(options) > 1 or new_unknown_area:
             self._cors_regions.pop(key, None)
@@ -62,16 +87,7 @@ class CorsMixin:
             name = self._cors_regions[key][0]
             question += " " + name
             self._cors_regions[key] = (name, now, intent)
-        # Definitions, small talk and clarification need no external status probe.
-        health = {} if intent in STATIC_INTENTS or len(options) > 1 else await get_network_status()
-        token = self._cors_outbound.set("reply")
-        try:
-            await update.message.reply_text(await report_text(
-                health, question, previous_intent=previous_intent,
-                delivery_mode=policy.get('mode', 'standard'),
-            ))
-        finally:
-            self._cors_outbound.reset(token)
+        return question
 
     async def _notify_cors_changes_once(self):
         from ..reference_network import get_network_status
