@@ -4812,84 +4812,118 @@ def _base_unicore_fields(packet):
     return text, body.split(';', 1)[1].strip().rstrip(',')
 
 
+async def _add_ublox_survey_status(reader, mode, result):
+    svin = _base_ubx_payload(await reader.query_base(_ubx_packet(1, 0x3b), (1, 0x3b)), (1, 0x3b))
+    if svin[36] > 1 or svin[37] > 1:
+        raise ValueError("Invalid NAV-SVIN status flags")
+    ready = bool(svin[36] and not svin[37])
+    result.update(target_seconds=struct.unpack_from('<I', mode, 24)[0],
+                  accuracy_limit_m=struct.unpack_from('<I', mode, 28)[0] * 0.0001,
+                  elapsed_seconds=struct.unpack_from('<I', svin, 8)[0],
+                  observations=struct.unpack_from('<I', svin, 32)[0],
+                  mean_accuracy_m=struct.unpack_from('<I', svin, 28)[0] * 0.0001,
+                  active=bool(svin[37]), valid=bool(svin[36]))
+    if svin[36] or svin[37]:
+        result['bestpos'] = _base_ubx_position(svin, survey=True, ready=ready)
+
+
+async def _read_ublox_base_status(reader, result):
+    result['query'] = 'CFG-TMODE3 / NAV-SVIN'
+    modern = (globals().get('LAST_UBX_RECEIVER_INFO') or {}).get('itfm_supported') is False
+    mode = await _read_ublox_tmode(reader, modern)
+    if modern:
+        result['query'] = 'CFG-VALGET / NAV-SVIN'
+    flags = int.from_bytes(mode[2:4], 'little')
+    kind = flags & 0xff
+    if kind not in (0, 1, 2):
+        raise ValueError("Unsupported u-blox receiver mode")
+    result.update(state='ok', mode_kind=('rover', 'survey_in', 'base')[kind],
+                  mode_raw=('Rover', 'Survey-In', 'Fixed LLA')[kind] + (' (CFG-VALGET)' if modern else ' (CFG-TMODE3)'))
+    if kind == 2:
+        result['bestpos'] = _base_ubx_position(mode, ready=True)
+    elif kind == 1:
+        await _add_ublox_survey_status(reader, mode, result)
+
+
+def _record_unicore_accuracy(fields):
+    if len(fields) < 10:
+        return
+    try:
+        lat_sigma, lon_sigma = map(float, fields[7:9])
+        if not all(math.isfinite(v) and 0 <= v <= 10000000 for v in (lat_sigma, lon_sigma)):
+            raise ValueError('Invalid BESTNAV standard deviations')
+        globals()['LAST_RECEIVER_QUALITY'] = {
+            'source':'unicore_bestnav_sigma', 'hacc_m':math.hypot(lat_sigma, lon_sigma)}
+        globals()['LAST_RECEIVER_QUALITY_TS'] = time.time()
+    except ValueError:
+        pass  # Position remains useful when optional statistics are unavailable.
+
+
+async def _read_unicore_best_position(reader):
+    raw, payload = _base_unicore_fields(await reader.query_base(b'\r\nBESTNAVA\r\n', b'#BESTNAVA'))
+    fields = payload.split(',')
+    if len(fields) < 7 or fields[0] != 'SOL_COMPUTED' or fields[6] != 'WGS84':
+        raise ValueError("Unicore BESTNAV has no computed WGS84 position")
+    lat, lon, height, undulation = map(float, fields[2:6])
+    if not all(math.isfinite(v) for v in (lat, lon, height, undulation)) or abs(lat) > 90 or abs(lon) > 180:
+        raise ValueError("Invalid Unicore BESTNAV coordinates")
+    _record_unicore_accuracy(fields)
+    return {'state':'ok', 'message':'BESTNAV', 'raw':raw,
+            'solution_status':fields[0], 'position_type':fields[1],
+            'latitude':lat, 'longitude':lon, 'height_msl':height}
+
+
+async def _read_unicore_base_status(reader, result):
+    globals()['LAST_RECEIVER_QUALITY'] = None
+    result['query'] = 'MODE / BESTNAVA'
+    _, mode = _base_unicore_fields(await reader.query_base(b'\r\nMODE\r\n', b'#MODE'))
+    mode = mode.upper()
+    if not mode.startswith((UNICORE_BASE_MODE_PREFIX, 'MODE ROVER')):
+        raise ValueError("Unsupported Unicore operating mode")
+    if mode.startswith(f'{UNICORE_BASE_MODE_PREFIX} TIME'):
+        kind = 'survey_in'
+    elif mode.startswith(UNICORE_BASE_MODE_PREFIX):
+        kind = 'base'
+    else:
+        kind = 'rover'
+    result.update(state='ok', mode_kind=kind, mode_raw=mode)
+    if kind == 'survey_in':
+        result['target_seconds'] = int(mode.split()[3])
+    try:
+        result['bestpos'] = await _read_unicore_best_position(reader)
+    except Exception as error:
+        result['bestpos'] = {'state':'unavailable', 'error':str(error)}
+        raise
+
+
+def _save_completed_survey_result(agent, chip, result):
+    position = result.get('bestpos', {})
+    if (result.get('mode_kind') != 'survey_in' or position.get('position_type') != 'FIXEDPOS'
+            or position.get('state') != 'ok'):
+        return
+    saved = {'chip':chip, 'bestpos':position, 'mode_raw':result['mode_raw'], 'recorded_at':int(time.time())}
+    previous_saved = agent.config.get('survey_in_result') or {}
+    previous_position = previous_saved.get('bestpos') or {}
+    if ({k: v for k, v in previous_position.items() if k != 'raw'}
+            != {k: v for k, v in position.items() if k != 'raw'}
+            or previous_saved.get('mode_raw') != saved['mode_raw']):
+        agent.config['survey_in_result'] = saved
+        agent.save_config()
+
+
 async def refresh_receiver_base_status(agent, reader):
     """Read configuration and position without changing mode or enabling NMEA."""
     previous = getattr(agent, 'receiver_base_readback', {})
     chip = agent.detected_chip.get('type')
     result = {'chip':chip, 'revision':int(previous.get('revision', 0)) + 1, 'state':'error',
-                  'mode_kind':'unknown'}
+              'mode_kind':'unknown'}
     try:
         if chip not in ('Ublox', 'Unicorecomm') or reader is None:
             raise RuntimeError("Base readback requires a supported GNSS reader")
         if chip == 'Ublox':
-            result['query'] = 'CFG-TMODE3 / NAV-SVIN'
-            modern = (globals().get('LAST_UBX_RECEIVER_INFO') or {}).get('itfm_supported') is False
-            mode = await _read_ublox_tmode(reader, modern)
-            if modern:
-                result['query'] = 'CFG-VALGET / NAV-SVIN'
-            flags = int.from_bytes(mode[2:4], 'little')
-            kind = flags & 0xff
-            if kind not in (0, 1, 2):
-                raise ValueError("Unsupported u-blox receiver mode")
-            result.update(state='ok', mode_kind=('rover', 'survey_in', 'base')[kind],
-                          mode_raw=('Rover', 'Survey-In', 'Fixed LLA')[kind] + (' (CFG-VALGET)' if modern else ' (CFG-TMODE3)'))
-            if kind == 2:
-                result['bestpos'] = _base_ubx_position(mode, ready=True)
-            elif kind == 1:
-                svin = _base_ubx_payload(await reader.query_base(_ubx_packet(1, 0x3b), (1, 0x3b)), (1, 0x3b))
-                if svin[36] > 1 or svin[37] > 1:
-                    raise ValueError("Invalid NAV-SVIN status flags")
-                ready = bool(svin[36] and not svin[37])
-                result.update(target_seconds=struct.unpack_from('<I', mode, 24)[0],
-                              accuracy_limit_m=struct.unpack_from('<I', mode, 28)[0] * 0.0001,
-                              elapsed_seconds=struct.unpack_from('<I', svin, 8)[0],
-                              observations=struct.unpack_from('<I', svin, 32)[0],
-                              mean_accuracy_m=struct.unpack_from('<I', svin, 28)[0] * 0.0001,
-                              active=bool(svin[37]), valid=bool(svin[36]))
-                if svin[36] or svin[37]:
-                    result['bestpos'] = _base_ubx_position(svin, survey=True, ready=ready)
+            await _read_ublox_base_status(reader, result)
         else:
-            globals()['LAST_RECEIVER_QUALITY'] = None
-            result['query'] = 'MODE / BESTNAVA'
-            _, mode = _base_unicore_fields(await reader.query_base(b'\r\nMODE\r\n', b'#MODE'))
-            mode = mode.upper()
-            if not mode.startswith((UNICORE_BASE_MODE_PREFIX, 'MODE ROVER')):
-                raise ValueError("Unsupported Unicore operating mode")
-            if mode.startswith(f'{UNICORE_BASE_MODE_PREFIX} TIME'):
-                kind = 'survey_in'
-            elif mode.startswith(UNICORE_BASE_MODE_PREFIX):
-                kind = 'base'
-            else:
-                kind = 'rover'
-            result.update(state='ok', mode_kind=kind, mode_raw=mode)
-            if kind == 'survey_in':
-                result['target_seconds'] = int(mode.split()[3])
-            # Keep a successful MODE read visible even if position cannot be read.
-            try:
-                raw, payload = _base_unicore_fields(await reader.query_base(b'\r\nBESTNAVA\r\n', b'#BESTNAVA'))
-                fields = payload.split(',')
-                if len(fields) < 7 or fields[0] != 'SOL_COMPUTED' or fields[6] != 'WGS84':
-                    raise ValueError("Unicore BESTNAV has no computed WGS84 position")
-                lat, lon, height, undulation = map(float, fields[2:6])
-                if not all(math.isfinite(v) for v in (lat, lon, height, undulation)) or abs(lat) > 90 or abs(lon) > 180:
-                    raise ValueError("Invalid Unicore BESTNAV coordinates")
-                # BESTNAV lat/lon standard deviations are metres (N4 manual, table BESTNAV).
-                if len(fields) >= 10:
-                    try:
-                        lat_sigma, lon_sigma = map(float, fields[7:9])
-                        if not all(math.isfinite(v) and 0 <= v <= 10000000 for v in (lat_sigma, lon_sigma)):
-                            raise ValueError('Invalid BESTNAV standard deviations')
-                        globals()['LAST_RECEIVER_QUALITY'] = {
-                            'source':'unicore_bestnav_sigma', 'hacc_m':math.hypot(lat_sigma, lon_sigma)}
-                        globals()['LAST_RECEIVER_QUALITY_TS'] = time.time()
-                    except ValueError:
-                        pass  # Position remains useful when optional statistics are unavailable.
-                result['bestpos'] = {'state':'ok', 'message':'BESTNAV', 'raw':raw,
-                                         'solution_status':fields[0], 'position_type':fields[1],
-                                         'latitude':lat, 'longitude':lon, 'height_msl':height}
-            except Exception as error:
-                result['bestpos'] = {'state':'unavailable', 'error':str(error)}
-                raise
+            await _read_unicore_base_status(reader, result)
     except Exception as error:
         result['error'] = str(error)
         logging.warning('[GNSS][READBACK] %s: %s', chip, error)
@@ -4900,16 +4934,7 @@ async def refresh_receiver_base_status(agent, reader):
     position = result.get('bestpos', {})
     logging.info('[GNSS][READBACK] %s mode=%s position=%s revision=%s', chip,
                  result.get('mode_raw'), position.get('position_type', 'unavailable'), result['revision'])
-    if (result.get('mode_kind') == 'survey_in' and position.get('position_type') == 'FIXEDPOS'
-            and position.get('state') == 'ok'):
-        saved = {'chip':chip, 'bestpos':position, 'mode_raw':result['mode_raw'], 'recorded_at':int(time.time())}
-        previous_saved = agent.config.get('survey_in_result') or {}
-        previous_position = previous_saved.get('bestpos') or {}
-        if ({k: v for k, v in previous_position.items() if k != 'raw'}
-                != {k: v for k, v in position.items() if k != 'raw'}
-                or previous_saved.get('mode_raw') != saved['mode_raw']):
-            agent.config['survey_in_result'] = saved
-            agent.save_config()
+    _save_completed_survey_result(agent, chip, result)
     return result
 
 
