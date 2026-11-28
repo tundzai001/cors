@@ -2505,145 +2505,164 @@ class MonitorWorker(threading.Thread):
                 SOURCE_CONNECT_LIMIT.release()
         return None
 
+    def _monitor_ntrip_request(self, sock):
+        rover_user = self.cfg.get('rover_user') or self.cfg['mountpoint']
+        rover_password = self.cfg.get('rover_pass')
+        if self.is_prefix7 and not rover_password:
+            raise ValueError('Base 4G requires the saved Rover password')
+        rover_password = rover_password or "12345"
+        authorization = base64.b64encode(f"{rover_user}:{rover_password}".encode()).decode()
+        decoder_id = 'AITOGY_DECODER_' + re.sub(r'[^A-Za-z0-9_.-]', '_', self.serial)
+        request = (
+            f"GET /{self.cfg['mountpoint']} HTTP/1.0\r\n"
+            f"User-Agent: NTRIP AitogyDecoder/{decoder_id}\r\n"
+            f"Authorization: Basic {authorization}\r\n\r\n"
+        )
+        sock.sendall(request.encode())
+        return self._read_ntrip_response(sock)
+
+    def _send_periodic_monitor_gga(self, sock, now):
+        if now - self.last_gga_send_time < self.gga_send_interval:
+            return True
+        try:
+            self._send_rover_gga(sock)
+            return True
+        except Exception as error:
+            self.log("WARNING", f"Periodic GGA send error: {error}")
+            return False
+
+    def _update_monitor_satellites(self, decoder, frames, now):
+        for frame in frames:
+            decoded = decoder.decode_sync(self.serial, frame)
+            satellites = decoded.get("satellites", []) if decoded else []
+            for satellite in satellites:
+                sat_key = f"{satellite.get('system', 'un')}:{satellite.get('prn')}"
+                existing = self.satellites.get(sat_key, {})
+                existing.update({key: value for key, value in satellite.items() if value or key not in existing})
+                existing["last_seen"] = now
+                self.satellites[sat_key] = existing
+
+    def _process_monitor_data(self, sock, data, rtcm_buffer, rtcm_confirmed, now):
+        if not self._send_periodic_monitor_gga(sock, now):
+            return rtcm_confirmed, False
+        rtcm_buffer.extend(data)
+        frames = extract_rtcm3_frames(rtcm_buffer)
+        first_rtcm = bool(frames) and not rtcm_confirmed
+        if frames:
+            self.last_rtcm_received_at = now
+            if not rtcm_confirmed:
+                self.log("INFO", "RTCM confirmed: received CRC-valid frame")
+                rtcm_confirmed = True
+            self.bytes_received += sum(len(frame) for frame in frames)
+            self.last_data_received_at = now
+        if self.is_prefix7 and now - self.last_data_received_at >= self.max_no_data_seconds:
+            return rtcm_confirmed, False
+        decoder = globals().get("rtcm_signal_decoder")
+        if decoder and frames:
+            self._update_monitor_satellites(decoder, frames, now)
+        if first_rtcm or now - self.last_stat_update >= 1.0:
+            self.current_bps = int(self.bytes_received / max(1.0, now - self.last_stat_update))
+            self.bytes_received = 0
+            self.last_stat_update = now
+            self.is_connected = True
+            self.publish_status()
+        return rtcm_confirmed, True
+
+    def _handle_monitor_timeout(self, sock, now):
+        self.current_bps = 0
+        if not self._send_periodic_monitor_gga(sock, now):
+            return False
+        no_data_for = now - self.last_data_received_at
+        if no_data_for >= self.max_no_data_seconds:
+            self.is_connected = False
+            self.publish_status()
+            self.log("WARNING", f"No RTCM data for {no_data_for:.1f}s -> mark OFFLINE and reconnect")
+            return False
+        self.is_connected = True
+        self.publish_status()
+        return True
+
+    def _read_monitor_stream(self, sock, pending_data):
+        sock.settimeout(2.0)
+        rtcm_buffer = bytearray()
+        rtcm_confirmed = False
+        while not self.stop_event.is_set():
+            try:
+                data = pending_data or sock.recv(4096)
+                pending_data = b''
+                if not data:
+                    self.log("WARNING", "Caster closed the authenticated stream (EOF)")
+                    break
+                now = time.time()
+                rtcm_confirmed, keep_stream = self._process_monitor_data(
+                    sock, data, rtcm_buffer, rtcm_confirmed, now
+                )
+                if not keep_stream:
+                    break
+            except socket.timeout:
+                if not self._handle_monitor_timeout(sock, time.time()):
+                    break
+            except Exception as error:
+                if not self.stop_event.is_set():
+                    self.log("WARNING", f"Data error: {error}")
+                break
+
+    def _wait_monitor_retry(self, level, message):
+        self.log(level, message)
+        self._close_live_socket()
+        self.is_connected = False
+        self.current_bps = 0
+        self.publish_status()
+        self.wakeup_event.wait(self.retry_seconds)
+        self.wakeup_event.clear()
+
+    def _cleanup_monitor_connection(self, sock):
+        self.is_connected = False
+        self.current_bps = 0
+        if sock:
+            try:
+                sock.close()
+            except Exception:
+                pass
+        with self.socket_lock:
+            self._sock = None
+        self.publish_status()
+
+    def _run_monitor_session(self):
+        sock = None
+        self.last_rtcm_received_at = 0.0
+        try:
+            sock = self._connect_socket()
+            if sock is None:
+                return False
+            with self.socket_lock:
+                self._sock = sock
+            if self.stop_event.is_set():
+                return True
+            pending_data = self._monitor_ntrip_request(sock)
+            try:
+                self._send_rover_gga(sock)
+            except Exception as error:
+                self.log("WARNING", f"Failed to send initial GGA: {error}")
+            self.is_connected = True
+            self.publish_status()
+            self.log("INFO", "NTRIP authenticated; waiting for valid RTCM")
+            self.bytes_received = 0
+            self.last_stat_update = time.time()
+            self.last_data_received_at = time.time()
+            self._read_monitor_stream(sock, pending_data)
+            self._wait_monitor_retry("INFO", f"Monitor disconnected, reconnecting in {self.retry_seconds}s...")
+        except Exception as error:
+            self._wait_monitor_retry("WARNING", f"Connection error: {error}")
+        finally:
+            self._cleanup_monitor_connection(sock)
+        return True
+
     def run(self):
         while not self.stop_event.is_set():
-            sock = None
-            self.last_rtcm_received_at = 0.0
-            try:
-                sock = self._connect_socket()
-                if sock is None:
-                    break
-                with self.socket_lock:
-                    self._sock = sock
-                if self.stop_event.is_set():
-                    break
+            if not self._run_monitor_session():
+                break
 
-                # Cấu trúc y hệt chuẩn thiết bị Rover Ntrip 1.0 cổ điển:
-                r_user = self.cfg.get('rover_user') or self.cfg['mountpoint']
-                r_pass = self.cfg.get('rover_pass')
-                if self.is_prefix7 and not r_pass:
-                    raise ValueError('Base 4G requires the saved Rover password')
-                r_pass = r_pass or "12345"
-                auth = base64.b64encode(f"{r_user}:{r_pass}".encode()).decode()
-                # Caster exposes the final User-Agent segment as receiver_id/client_id.
-                decoder_id = 'AITOGY_DECODER_' + re.sub(r'[^A-Za-z0-9_.-]', '_', self.serial)
-                request = f"GET /{self.cfg['mountpoint']} HTTP/1.0\r\nUser-Agent: NTRIP AitogyDecoder/{decoder_id}\r\nAuthorization: Basic {auth}\r\n\r\n"
-                sock.sendall(request.encode())
-                pending_data = self._read_ntrip_response(sock)
-                
-                try:
-                    self._send_rover_gga(sock)
-                except Exception as e:
-                    self.log("WARNING", f"Failed to send initial GGA: {e}")
-                
-                self.is_connected = True
-                self.publish_status()
-                self.log("INFO", "NTRIP authenticated; waiting for valid RTCM")
-                rtcm_confirmed = False
-                
-                self.bytes_received = 0
-                self.last_stat_update = time.time()
-                self.last_data_received_at = time.time()
-                
-                sock.settimeout(2.0)
-                rtcm_buffer = bytearray()
-                while not self.stop_event.is_set():
-                    try:
-                        data = pending_data or sock.recv(4096)
-                        pending_data = b''
-                        if not data:
-                            self.log("WARNING", "Caster closed the authenticated stream (EOF)")
-                            break
-                        
-                        now = time.time()
-
-                        if now - self.last_gga_send_time >= self.gga_send_interval:
-                            try:
-                                self._send_rover_gga(sock)
-                            except Exception as e:
-                                self.log("WARNING", f"Periodic GGA send error: {e}")
-                                break
-
-                        rtcm_buffer.extend(data)
-                        frames = extract_rtcm3_frames(rtcm_buffer)
-                        first_rtcm = bool(frames) and not rtcm_confirmed
-                        if frames:
-                            self.last_rtcm_received_at = now
-                            if not rtcm_confirmed:
-                                self.log("INFO", "RTCM confirmed: received CRC-valid frame")
-                                rtcm_confirmed = True
-                            self.bytes_received += sum(len(frame) for frame in frames)
-                            self.last_data_received_at = now
-                        if self.is_prefix7 and now - self.last_data_received_at >= self.max_no_data_seconds:
-                            break
-                        decoder = globals().get("rtcm_signal_decoder")
-                        if decoder and frames:
-                            for frame in frames:
-                                decoded = decoder.decode_sync(self.serial, frame)
-                                sats = decoded.get("satellites", []) if decoded else []
-                                for sat in sats:
-                                    sat_key = f"{sat.get('system', 'un')}:{sat.get('prn')}"
-                                    existing = self.satellites.get(sat_key, {})
-                                    existing.update({k: v for k, v in sat.items() if v or k not in existing})
-                                    existing["last_seen"] = now
-                                    self.satellites[sat_key] = existing
-
-                        if first_rtcm or now - self.last_stat_update >= 1.0:
-                            self.current_bps = int(self.bytes_received / max(1.0, now - self.last_stat_update))
-                            self.bytes_received = 0
-                            self.last_stat_update = now
-                            self.is_connected = True
-                            self.publish_status()
-                            
-                    except socket.timeout:
-                        self.current_bps = 0
-                        now = time.time()
-                        if now - self.last_gga_send_time >= self.gga_send_interval:
-                            try:
-                                self._send_rover_gga(sock)
-                            except Exception as e:
-                                self.log("WARNING", f"Periodic GGA send error: {e}")
-                                break
-                        no_data_for = now - self.last_data_received_at
-                        # If source has no RTCM data for too long, treat it as offline and force reconnect.
-                        if no_data_for >= self.max_no_data_seconds:
-                            self.is_connected = False
-                            self.publish_status()
-                            self.log("WARNING", f"No RTCM data for {no_data_for:.1f}s -> mark OFFLINE and reconnect")
-                            break
-                        self.is_connected = True
-                        self.publish_status()
-                    except Exception as e:
-                        if not self.stop_event.is_set():
-                            self.log("WARNING", f"Data error: {e}")
-                        break
-                        
-                self.log("INFO", f"Monitor disconnected, reconnecting in {self.retry_seconds}s...")
-                self._close_live_socket()
-                self.is_connected = False
-                self.current_bps = 0
-                self.publish_status()
-                self.wakeup_event.wait(self.retry_seconds)
-                self.wakeup_event.clear()
-            except Exception as e:
-                self.log("WARNING", f"Connection error: {e}")
-                self._close_live_socket()
-                self.is_connected = False
-                self.current_bps = 0
-                self.publish_status()
-                self.wakeup_event.wait(self.retry_seconds)
-                self.wakeup_event.clear()
-            finally:
-                self.is_connected = False
-                self.current_bps = 0
-                if sock:
-                    try: sock.close()
-                    except Exception: pass
-                with self.socket_lock:
-                    self._sock = None
-                self.publish_status()
-
-# ==============================================================================
 # === MQTT SOURCE WORKER (MQTT -> NTRIP) ===
 # ==============================================================================
 class MqttSourceWorker(threading.Thread):
