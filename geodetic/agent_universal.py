@@ -3490,12 +3490,7 @@ class RTCMPublisherMQTT(threading.Thread):
             and time.time() - last_gsv_ts >= 60
         )
 
-    def _ensure_rtcm_base_position(self, publish_rtcm_skyview):
-        if not publish_rtcm_skyview or self.serial_number in self.decoder._base_positions:
-            return
-        agent_manager = self.agent_manager or globals().get('agent')
-        if not agent_manager or not hasattr(agent_manager, 'get_base_config'):
-            return
+    def _rtcm_reference_coordinates(self, agent_manager):
         base_config = agent_manager.get_base_config() or {}
         base_coords = base_config.get("coords") or {}
         if not base_coords and "lat" in base_config:
@@ -3510,8 +3505,16 @@ class RTCMPublisherMQTT(threading.Thread):
                 float(base_coords["lon"]),
                 float(base_coords.get("alt") or 0.0),
             )
-        else:
-            reference = globals().get('LAST_HPPOSLLH_COORD') or globals().get('LAST_GGA_COORD')
+            return reference
+        return globals().get('LAST_HPPOSLLH_COORD') or globals().get('LAST_GGA_COORD')
+
+    def _ensure_rtcm_base_position(self, publish_rtcm_skyview):
+        if not publish_rtcm_skyview or self.serial_number in self.decoder._base_positions:
+            return
+        agent_manager = self.agent_manager or globals().get('agent')
+        if not agent_manager or not hasattr(agent_manager, 'get_base_config'):
+            return
+        reference = self._rtcm_reference_coordinates(agent_manager)
         if not reference:
             return
         try:
