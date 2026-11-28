@@ -3671,265 +3671,190 @@ def setup_mqtt(worker_map):
         else:
             logging.error(f"MQTT failed: {rc}")
 
-    def on_message(c, userdata, msg):
-        if msg.topic == "pi/decoder/esp_base":
-            if bool(getattr(msg, "retain", False)):
-                return
-            try:
-                payload = json.loads((msg.payload or b"{}").decode("utf-8"))
-                action = payload.get("action")
-                serial = str(payload.get("serial") or '').strip()
-                mp = str(payload.get("mountpoint") or '').strip().lstrip('/')
-                if not serial or not mp:
-                    return
-                with WORKER_MAP_LOCK:
-                    if action == "start":
-                        prefix7 = mp.startswith('7')
-                        if prefix7 and (not payload.get('rover_pass') or payload.get('rover_user') != mp):
-                            logging.warning('Rejected Base 4G decoder start without Rover credentials')
-                            return
-                        cfg = {
-                            "serial": serial, "mountpoint": mp,
-                            "rover_user": payload.get("rover_user") or mp,
-                            "rover_pass": payload.get("rover_pass") or "12345",
-                            "host": str(payload.get("host") or TARGET_HOST).strip().lower(),
-                            "port": int(payload.get("port") or TARGET_PORT),
-                            "lat": payload.get("lat", 0.0), "lon": payload.get("lon", 0.0),
-                            "alt": payload.get("alt", 0.0),
-                        }
-                        existing = worker_map.get(serial)
-                        connection_keys = ('mountpoint', 'rover_user', 'rover_pass', 'host', 'port')
-                        if existing and existing.is_alive() and all(
-                            getattr(existing, 'cfg', {}).get(key) == cfg[key] for key in connection_keys
-                        ):
-                            return
-                        if existing:
-                            changed = [key for key in connection_keys if existing.cfg.get(key) != cfg[key]]
-                            logging.info('Decoder configuration changed for %s: %s', serial, ', '.join(changed) or 'worker stopped')
-                            existing.stop()
-                            existing.join(timeout=12)
-                            if existing.is_alive():
-                                logging.warning('Previous decoder still stopping; deferring replacement')
-                                return
-                        worker = MonitorWorker(cfg, c)
-                        worker_map[serial] = worker
-                        worker.start()
-                        logging.info(f"✓ Dynamically started ESP Decoder Worker: serial={serial}, mp={mp}")
-                    elif action == "stop":
-                        existing = worker_map.get(serial)
-                        if existing:
-                            if hasattr(existing, "stop"):
-                                existing.stop()
-                            try:
-                                existing.join(timeout=2)
-                            except Exception:
-                                pass
-                            worker_map.pop(serial, None)
-                            logging.info(f"✓ Stopped ESP Decoder Worker: serial={serial}, mp={mp}")
-            except Exception as e:
-                logging.exception(f"Error handling esp_base decoder control: {e}")
+    def _handle_decoder_control(c, msg):
+        if bool(getattr(msg, "retain", False)):
             return
-
         try:
             payload = json.loads((msg.payload or b"{}").decode("utf-8"))
-        except Exception:
-            logging.warning(f"Control MQTT non-JSON message on {msg.topic}")
-            return
-        if not isinstance(payload, dict):
-            return
-
-        parts = msg.topic.split("/")
-        valid_topic = (
-            len(parts) == 4
-            and ((parts[0:2] == ["pi", "devices"] and parts[3] in {"command", "commands"})
-                 or (parts[0:2] == ["pi", "device"] and parts[3] == "command"))
-        )
-        if not valid_topic or bool(getattr(msg, "retain", False)):
-            return
-        serial = str(parts[2] or "").strip()
-        if not serial or (payload.get("serial") and str(payload.get("serial")).strip() != serial):
-            logging.warning("Rejected control message with invalid topic serial")
-            return
-
-        command_id = str(payload.get("command_id") or "")
-        now = int(time.time())
-        try:
-            issued_at = int(payload.get("issued_at"))
-            expires_at = int(payload.get("expires_at"))
-        except (TypeError, ValueError):
-            issued_at = expires_at = 0
-        if (
-            not re.fullmatch(r"[A-Za-z0-9_-]{16,100}", command_id)
-            or issued_at > now + 60
-            or issued_at < now - 300
-            or expires_at < now
-            or expires_at > issued_at + 300
-        ):
-            logging.warning(
-                "Rejected control command freshness: id_valid=%s issued_at=%s expires_at=%s now=%s",
-                bool(re.fullmatch(r"[A-Za-z0-9_-]{16,100}", command_id)), issued_at, expires_at, now,
-            )
-            return
-        with command_lock:
-            if command_id in seen_command_ids:
-                logging.warning("Rejected replayed MQTT command id")
+            action = payload.get("action")
+            serial = str(payload.get("serial") or '').strip()
+            mp = str(payload.get("mountpoint") or '').strip().lstrip('/')
+            if not serial or not mp:
                 return
-            seen_command_ids[command_id] = expires_at
-            while len(seen_command_ids) > 2048:
-                seen_command_ids.popitem(last=False)
-            for old_id, old_expiry in list(seen_command_ids.items()):
-                if old_expiry < now:
-                    seen_command_ids.pop(old_id, None)
-
-        worker = worker_map.get(serial)
-        if serial.upper().startswith('MONITOR_7') or (isinstance(worker, MonitorWorker) and worker.is_prefix7):
-            logging.warning('Rejected device command for read-only Base 4G')
-            return
-        command = str(payload.get("command", "")).strip().upper()
-        if command != "SET_RTCM_STREAM_ACTIVE" or serial in worker_map:
-            logging.info(f"Control MQTT received topic={msg.topic} command={command}")
-
-        if command == "EXECUTE_RAW_COMMANDS":
-            if not serial:
-                return
-
-            worker = worker_map.get(serial)
-            if not worker:
-                logging.warning(f"[{serial}] Command received but no active worker. Known serials: {list(worker_map.keys())}")
-                return
-
-            cmd_payload = payload.get("payload", {}) if isinstance(payload.get("payload"), dict) else {}
-            commands_b64 = cmd_payload.get("commands_b64")
-            if commands_b64 and hasattr(worker, "execute_commands"):
-                with command_lock:
-                    if serial in active_execution_serials:
-                        logging.warning("Rejected concurrent receiver command execution for %s", serial)
+            with WORKER_MAP_LOCK:
+                if action == "start":
+                    prefix7 = mp.startswith('7')
+                    if prefix7 and (not payload.get('rover_pass') or payload.get('rover_user') != mp):
+                        logging.warning('Rejected Base 4G decoder start without Rover credentials')
                         return
-                    active_execution_serials.add(serial)
-                logging.info(f"[{serial}] Executing remote commands from Dashboard in background thread")
-                import threading
-
-                def execute_once():
-                    try:
-                        worker.execute_commands(commands_b64, payload.get("original_config"))
-                    finally:
-                        with command_lock:
-                            active_execution_serials.discard(serial)
-
-                threading.Thread(
-                    target=execute_once,
-                    daemon=True
-                ).start()
-            return
-
-        if command == "DEPLOY_SERVICE_CONFIG":
-            if not serial:
-                return
-
-            worker = worker_map.get(serial)
-            if not worker or not hasattr(worker, "_persist_remote_config"):
-                cmd_payload = payload.get("payload", {}) if isinstance(payload.get("payload"), dict) else {}
-                runtime = status_mgr.get_runtime_config(serial)
-                runtime.update(_mqtt_source_persistable_config(cmd_payload))
-                status_mgr.update_runtime_config(serial, runtime)
-                publish_unconfigured_device_status(c, serial, "Service config saved; waiting for geotek source config")
-                logging.warning(f"[{serial}] Service config saved without active worker. Known serials: {list(worker_map.keys())}")
-                return
-
-            cmd_payload = payload.get("payload", {}) if isinstance(payload.get("payload"), dict) else {}
-            logging.info(f"[{serial}] Persisting service config from Dashboard")
-            worker._persist_remote_config({"payload": {"service_config": cmd_payload}})
-            worker.publish_status()
-            return
-
-        if command == "PROVISION_DEVICE":
-            if not serial:
-                return
-
-            worker = worker_map.get(serial)
-            if not worker or not hasattr(worker, "apply_provision_payload"):
-                cmd_payload = payload.get("payload", {}) if isinstance(payload.get("payload"), dict) else {}
-                runtime = status_mgr.get_runtime_config(serial)
-                name = str(cmd_payload.get("name") or cmd_payload.get("display_name") or "").strip()
-                if name:
-                    runtime.update({"name": name, "display_name": name})
-                    status_mgr.update_runtime_config(serial, runtime)
-                publish_unconfigured_device_status(c, serial, "Provision saved; waiting for geotek source config")
-                logging.warning(f"[{serial}] Provision saved without active worker. Known serials: {list(worker_map.keys())}")
-                return
-
-            cmd_payload = payload.get("payload", {}) if isinstance(payload.get("payload"), dict) else {}
-            worker.apply_provision_payload(cmd_payload)
-            logging.info(f"[{serial}] Applied provision payload from Dashboard")
-            return
-            
-        if command == "DEPLOY_LICENSE":
-            if not serial:
-                return
-            cmd_payload = payload.get("payload", {}) if isinstance(payload.get("payload"), dict) else {}
-            license_key = cmd_payload.get("license_key")
-            if license_key:
-                try:
-                    license_path = save_license(serial, license_key)
-                    worker = worker_map.get(serial)
-                    if worker and hasattr(worker, "publish_status"):
-                        worker.publish_status()
-                    else:
-                        publish_unconfigured_device_status(c, serial, "License saved; waiting for geotek source config")
-                    logging.info(f"[{serial}] Received and applied new license key at {license_path}; relay remains running")
-                except Exception as e:
-                    logging.exception(f"[{serial}] Failed to save license key: {e}")
-            return
-
-        if command in {"REBOOT_DEVICE", "RESTART_DEVICE", "RESTART_MQTT"}:
-            worker = worker_map.get(serial)
-            if worker is None:
-                publish_unconfigured_device_status(c, serial, f"{command} ignored: no configured worker")
-                logging.warning(f"[{serial}] {command} received but no configured worker exists")
-            elif worker.is_alive():
-                restart_worker_connections(worker, reason=command.lower())
-            else:
-                restart_worker(worker_map, serial, c, reason=f"{command.lower()}_dead_worker")
-            return
-
-        if command == "CHANGE_SERIAL":
-            if not serial:
-                return
-            cmd_payload = payload.get("payload", {}) if isinstance(payload.get("payload"), dict) else {}
-            new_serial = cmd_payload.get("new_serial")
-            if new_serial:
-                try:
-                    updated = config_mgr.update_mqtt_source_config(serial, {"serial": new_serial})
-                    if updated:
-                        worker = replace_worker_serial(worker_map, serial, new_serial, c)
-                        if worker is None:
-                            publish_unconfigured_device_status(c, new_serial, "Serial saved; waiting for geotek source config")
-                        logging.info(f"[{serial}] Received CHANGE_SERIAL command. Applied new serial '{new_serial}' without exiting")
-                except Exception as e:
-                    logging.exception(f"[{serial}] Failed to update serial: {e}")
-            return
-
-        if command == "SET_CONFIGURED_RELAY_ACTIVE":
-            worker = worker_map.get(serial)
-            cmd_payload = payload.get("payload", {}) if isinstance(payload.get("payload"), dict) else {}
-            active = cmd_payload.get("active")
-            if not isinstance(worker, RelayWorker) or not isinstance(active, bool):
-                logging.warning(f"[{serial}] Ignore invalid configured-relay power command")
-                return
-            worker.set_station_active(active)
-            logging.info(f"[{serial}] Configured relay station active={active}")
-            return
-
-        if command != "SET_RTCM_STREAM_ACTIVE":
-            return
-
+                    cfg = {
+                        "serial": serial, "mountpoint": mp,
+                        "rover_user": payload.get("rover_user") or mp,
+                        "rover_pass": payload.get("rover_pass") or "12345",
+                        "host": str(payload.get("host") or TARGET_HOST).strip().lower(),
+                        "port": int(payload.get("port") or TARGET_PORT),
+                        "lat": payload.get("lat", 0.0), "lon": payload.get("lon", 0.0),
+                        "alt": payload.get("alt", 0.0),
+                    }
+                    existing = worker_map.get(serial)
+                    connection_keys = ('mountpoint', 'rover_user', 'rover_pass', 'host', 'port')
+                    if existing and existing.is_alive() and all(
+                        getattr(existing, 'cfg', {}).get(key) == cfg[key] for key in connection_keys
+                    ):
+                        return
+                    if existing:
+                        changed = [key for key in connection_keys if existing.cfg.get(key) != cfg[key]]
+                        logging.info('Decoder configuration changed for %s: %s', serial, ', '.join(changed) or 'worker stopped')
+                        existing.stop()
+                        existing.join(timeout=12)
+                        if existing.is_alive():
+                            logging.warning('Previous decoder still stopping; deferring replacement')
+                            return
+                    worker = MonitorWorker(cfg, c)
+                    worker_map[serial] = worker
+                    worker.start()
+                    logging.info(f"✓ Dynamically started ESP Decoder Worker: serial={serial}, mp={mp}")
+                elif action == "stop":
+                    existing = worker_map.get(serial)
+                    if existing:
+                        if hasattr(existing, "stop"):
+                            existing.stop()
+                        try:
+                            existing.join(timeout=2)
+                        except Exception:
+                            pass
+                        worker_map.pop(serial, None)
+                        logging.info(f"✓ Stopped ESP Decoder Worker: serial={serial}, mp={mp}")
+        except Exception as e:
+            logging.exception(f"Error handling esp_base decoder control: {e}")
+        return
+    def _execute_raw_commands(serial, payload, worker):
         if not serial:
             return
 
         worker = worker_map.get(serial)
         if not worker:
+            logging.warning(f"[{serial}] Command received but no active worker. Known serials: {list(worker_map.keys())}")
             return
 
+        cmd_payload = payload.get("payload", {}) if isinstance(payload.get("payload"), dict) else {}
+        commands_b64 = cmd_payload.get("commands_b64")
+        if commands_b64 and hasattr(worker, "execute_commands"):
+            with command_lock:
+                if serial in active_execution_serials:
+                    logging.warning("Rejected concurrent receiver command execution for %s", serial)
+                    return
+                active_execution_serials.add(serial)
+            logging.info(f"[{serial}] Executing remote commands from Dashboard in background thread")
+            import threading
+
+            def execute_once():
+                try:
+                    worker.execute_commands(commands_b64, payload.get("original_config"))
+                finally:
+                    with command_lock:
+                        active_execution_serials.discard(serial)
+
+            threading.Thread(
+                target=execute_once,
+                daemon=True
+            ).start()
+        return
+    def _deploy_service_config(c, serial, payload, worker):
+        if not serial:
+            return
+
+        worker = worker_map.get(serial)
+        if not worker or not hasattr(worker, "_persist_remote_config"):
+            cmd_payload = payload.get("payload", {}) if isinstance(payload.get("payload"), dict) else {}
+            runtime = status_mgr.get_runtime_config(serial)
+            runtime.update(_mqtt_source_persistable_config(cmd_payload))
+            status_mgr.update_runtime_config(serial, runtime)
+            publish_unconfigured_device_status(c, serial, "Service config saved; waiting for geotek source config")
+            logging.warning(f"[{serial}] Service config saved without active worker. Known serials: {list(worker_map.keys())}")
+            return
+
+        cmd_payload = payload.get("payload", {}) if isinstance(payload.get("payload"), dict) else {}
+        logging.info(f"[{serial}] Persisting service config from Dashboard")
+        worker._persist_remote_config({"payload": {"service_config": cmd_payload}})
+        worker.publish_status()
+        return
+    def _provision_device(c, serial, payload):
+        if not serial:
+            return
+
+        worker = worker_map.get(serial)
+        if not worker or not hasattr(worker, "apply_provision_payload"):
+            cmd_payload = payload.get("payload", {}) if isinstance(payload.get("payload"), dict) else {}
+            runtime = status_mgr.get_runtime_config(serial)
+            name = str(cmd_payload.get("name") or cmd_payload.get("display_name") or "").strip()
+            if name:
+                runtime.update({"name": name, "display_name": name})
+                status_mgr.update_runtime_config(serial, runtime)
+            publish_unconfigured_device_status(c, serial, "Provision saved; waiting for geotek source config")
+            logging.warning(f"[{serial}] Provision saved without active worker. Known serials: {list(worker_map.keys())}")
+            return
+
+        cmd_payload = payload.get("payload", {}) if isinstance(payload.get("payload"), dict) else {}
+        worker.apply_provision_payload(cmd_payload)
+        logging.info(f"[{serial}] Applied provision payload from Dashboard")
+        return
+    def _deploy_license(c, serial, payload):
+        if not serial:
+            return
+        cmd_payload = payload.get("payload", {}) if isinstance(payload.get("payload"), dict) else {}
+        license_key = cmd_payload.get("license_key")
+        if license_key:
+            try:
+                license_path = save_license(serial, license_key)
+                worker = worker_map.get(serial)
+                if worker and hasattr(worker, "publish_status"):
+                    worker.publish_status()
+                else:
+                    publish_unconfigured_device_status(c, serial, "License saved; waiting for geotek source config")
+                logging.info(f"[{serial}] Received and applied new license key at {license_path}; relay remains running")
+            except Exception as e:
+                logging.exception(f"[{serial}] Failed to save license key: {e}")
+        return
+    def _restart_device(c, serial, command, worker):
+        worker = worker_map.get(serial)
+        if worker is None:
+            publish_unconfigured_device_status(c, serial, f"{command} ignored: no configured worker")
+            logging.warning(f"[{serial}] {command} received but no configured worker exists")
+        elif worker.is_alive():
+            restart_worker_connections(worker, reason=command.lower())
+        else:
+            restart_worker(worker_map, serial, c, reason=f"{command.lower()}_dead_worker")
+        return
+    def _change_device_serial(c, serial, payload):
+        if not serial:
+            return
+        cmd_payload = payload.get("payload", {}) if isinstance(payload.get("payload"), dict) else {}
+        new_serial = cmd_payload.get("new_serial")
+        if new_serial:
+            try:
+                updated = config_mgr.update_mqtt_source_config(serial, {"serial": new_serial})
+                if updated:
+                    worker = replace_worker_serial(worker_map, serial, new_serial, c)
+                    if worker is None:
+                        publish_unconfigured_device_status(c, new_serial, "Serial saved; waiting for geotek source config")
+                    logging.info(f"[{serial}] Received CHANGE_SERIAL command. Applied new serial '{new_serial}' without exiting")
+            except Exception as e:
+                logging.exception(f"[{serial}] Failed to update serial: {e}")
+        return
+    def _set_configured_relay_active(serial, payload, worker):
+        worker = worker_map.get(serial)
+        cmd_payload = payload.get("payload", {}) if isinstance(payload.get("payload"), dict) else {}
+        active = cmd_payload.get("active")
+        if not isinstance(worker, RelayWorker) or not isinstance(active, bool):
+            logging.warning(f"[{serial}] Ignore invalid configured-relay power command")
+            return
+        worker.set_station_active(active)
+        logging.info(f"[{serial}] Configured relay station active={active}")
+        return
+    def _set_rtcm_stream_active(serial, payload, worker):
+        if not serial or not worker:
+            return
         cmd_payload = payload.get("payload", {}) if isinstance(payload.get("payload"), dict) else {}
         active = bool(cmd_payload.get("active", False))
         cmd_mp = str(cmd_payload.get("mountpoint", "")).strip()
@@ -3937,13 +3862,113 @@ def setup_mqtt(worker_map):
         if cmd_mp and worker_mp and cmd_mp.lower() != worker_mp.lower():
             logging.info(f"[{serial}] Ignore SET_RTCM_STREAM_ACTIVE for mountpoint={cmd_mp}, worker_mp={worker_mp}")
             return
-
         try:
             worker.set_stream_active(active, mountpoint=cmd_mp or None)
         except TypeError:
             worker.set_stream_active(active)
         logging.info(f"[{serial}] SET_RTCM_STREAM_ACTIVE active={active} mountpoint={cmd_mp or worker_mp}")
-        return
+
+    def _decode_control_payload(msg):
+        try:
+            payload = json.loads((msg.payload or b"{}").decode("utf-8"))
+        except Exception:
+            logging.warning(f"Control MQTT non-JSON message on {msg.topic}")
+            return None
+        return payload if isinstance(payload, dict) else None
+
+    def _control_serial(msg, payload):
+        parts = msg.topic.split("/")
+        valid_topic = (
+            len(parts) == 4
+            and ((parts[0:2] == ["pi", "devices"] and parts[3] in {"command", "commands"})
+                 or (parts[0:2] == ["pi", "device"] and parts[3] == "command"))
+        )
+        if not valid_topic or bool(getattr(msg, "retain", False)):
+            return None
+        serial = str(parts[2] or "").strip()
+        if not serial or (payload.get("serial") and str(payload.get("serial")).strip() != serial):
+            logging.warning("Rejected control message with invalid topic serial")
+            return None
+        return serial
+
+    def _fresh_control_command(payload):
+        command_id = str(payload.get("command_id") or "")
+        now = int(time.time())
+        try:
+            issued_at = int(payload.get("issued_at"))
+            expires_at = int(payload.get("expires_at"))
+        except (TypeError, ValueError):
+            issued_at = expires_at = 0
+        valid_id = bool(re.fullmatch(r"[A-Za-z0-9_-]{16,100}", command_id))
+        if not valid_id or issued_at > now + 60 or issued_at < now - 300 or expires_at < now or expires_at > issued_at + 300:
+            logging.warning(
+                "Rejected control command freshness: id_valid=%s issued_at=%s expires_at=%s now=%s",
+                valid_id, issued_at, expires_at, now,
+            )
+            return None
+        return command_id, expires_at, now
+
+    def _remember_control_command(command_id, expires_at, now):
+        with command_lock:
+            if command_id in seen_command_ids:
+                logging.warning("Rejected replayed MQTT command id")
+                return False
+            seen_command_ids[command_id] = expires_at
+            while len(seen_command_ids) > 2048:
+                seen_command_ids.popitem(last=False)
+            for old_id, old_expiry in list(seen_command_ids.items()):
+                if old_expiry < now:
+                    seen_command_ids.pop(old_id, None)
+        return True
+
+    def _reject_readonly_device(serial, worker):
+        if serial.upper().startswith('MONITOR_7') or (isinstance(worker, MonitorWorker) and worker.is_prefix7):
+            logging.warning('Rejected device command for read-only Base 4G')
+            return True
+        return False
+
+    def _dispatch_device_command(c, serial, payload, worker, command):
+        if command == "EXECUTE_RAW_COMMANDS":
+            _execute_raw_commands(serial, payload, worker)
+        elif command == "DEPLOY_SERVICE_CONFIG":
+            _deploy_service_config(c, serial, payload, worker)
+        elif command == "PROVISION_DEVICE":
+            _provision_device(c, serial, payload)
+        elif command == "DEPLOY_LICENSE":
+            _deploy_license(c, serial, payload)
+        elif command in {"REBOOT_DEVICE", "RESTART_DEVICE", "RESTART_MQTT"}:
+            _restart_device(c, serial, command, worker)
+        elif command == "CHANGE_SERIAL":
+            _change_device_serial(c, serial, payload)
+        elif command == "SET_CONFIGURED_RELAY_ACTIVE":
+            _set_configured_relay_active(serial, payload, worker)
+        elif command == "SET_RTCM_STREAM_ACTIVE":
+            _set_rtcm_stream_active(serial, payload, worker)
+
+
+    def on_message(c, userdata, msg):
+        if msg.topic == "pi/decoder/esp_base":
+            _handle_decoder_control(c, msg)
+            return
+        payload = _decode_control_payload(msg)
+        if payload is None:
+            return
+        serial = _control_serial(msg, payload)
+        if serial is None:
+            return
+        freshness = _fresh_control_command(payload)
+        if freshness is None:
+            return
+        command_id, expires_at, now = freshness
+        if not _remember_control_command(command_id, expires_at, now):
+            return
+        worker = worker_map.get(serial)
+        if _reject_readonly_device(serial, worker):
+            return
+        command = str(payload.get("command", "")).strip().upper()
+        if command != "SET_RTCM_STREAM_ACTIVE" or serial in worker_map:
+            logging.info(f"Control MQTT received topic={msg.topic} command={command}")
+        _dispatch_device_command(c, serial, payload, worker, command)
 
     client.on_connect = on_connect
     client.on_message = on_message
