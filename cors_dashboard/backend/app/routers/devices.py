@@ -844,25 +844,26 @@ async def _validate_rover_update_scope(rover, update_req, devices_db, db, curren
             raise HTTPException(status_code=403, detail="Mountpoint không thuộc trạm được cấp cho bạn.")
 
 
+def _request_value_or_current(requested, current):
+    return current if requested is None else requested
+
+
 def _rover_update_values(rover, update_req):
     return {
-        "password": update_req.password if update_req.password else rover.password,
-        "mountpoints": update_req.mountpoints if update_req.mountpoints is not None else rover.mountpoints,
-        "max_connections": update_req.max_connections if update_req.max_connections is not None else rover.max_connections,
-        "show_position": update_req.show_position if update_req.show_position is not None else rover.show_position,
-        "rtcm_cycle_enabled": (
-            update_req.rtcm_cycle_enabled if update_req.rtcm_cycle_enabled is not None
-            else bool(getattr(rover, "rtcm_cycle_enabled", False))
+        "password": update_req.password or rover.password,
+        "mountpoints": _request_value_or_current(update_req.mountpoints, rover.mountpoints),
+        "max_connections": _request_value_or_current(update_req.max_connections, rover.max_connections),
+        "show_position": _request_value_or_current(update_req.show_position, rover.show_position),
+        "rtcm_cycle_enabled": _request_value_or_current(
+            update_req.rtcm_cycle_enabled, bool(getattr(rover, "rtcm_cycle_enabled", False))
         ),
-        "rtcm_cycle_interval": (
-            update_req.rtcm_disconnect_interval_seconds
-            if update_req.rtcm_disconnect_interval_seconds is not None
-            else int(getattr(rover, "rtcm_disconnect_interval_seconds", 300) or 300)
+        "rtcm_cycle_interval": _request_value_or_current(
+            update_req.rtcm_disconnect_interval_seconds,
+            int(getattr(rover, "rtcm_disconnect_interval_seconds", 300) or 300),
         ),
-        "rtcm_cycle_duration": (
-            update_req.rtcm_disconnect_duration_seconds
-            if update_req.rtcm_disconnect_duration_seconds is not None
-            else int(getattr(rover, "rtcm_disconnect_duration_seconds", 10) or 10)
+        "rtcm_cycle_duration": _request_value_or_current(
+            update_req.rtcm_disconnect_duration_seconds,
+            int(getattr(rover, "rtcm_disconnect_duration_seconds", 10) or 10),
         ),
     }
 
