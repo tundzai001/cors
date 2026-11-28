@@ -87,6 +87,13 @@ MSM_TYPES = (
     MsmTypeInfo(1121, "cn", "BEIDOU"),
     MsmTypeInfo(1131, "un", "IRNSS"),
 )
+JSON_NAV_SYSTEM_CODES = {
+    "gps": "G", "us": "G", "g": "G",
+    "glonass": "R", "ru": "R", "r": "R",
+    "galileo": "E", "eu": "E", "e": "E",
+    "beidou": "C", "cn": "C", "c": "C",
+    "qzss": "J", "jp": "J", "j": "J",
+}
 
 
 def _message_type_info(message_type: int) -> tuple[MsmTypeInfo, int] | None:
@@ -571,6 +578,51 @@ class RTCMSignalDecoder:
         with self._lock:
             return self._decode_json_unlocked(serial, data)
 
+    def _json_satellite_geometry(self, serial, system_code, prn, now_ms, now_s, base_pos):
+        satellite_id = f"RTCM:{system_code}:{prn}"
+        cached = self._azel_cache[serial].get(satellite_id)
+        if cached and now_s - cached[0] < 10.0:
+            return cached[1], cached[2], True
+        if not base_pos:
+            return 0.0, 0.0, False
+        satellite_pos = self._satpos(system_code, prn, now_ms)
+        if not satellite_pos:
+            return 0.0, 0.0, False
+        azimuth, elevation = self._satazel(satellite_pos, base_pos)
+        self._azel_cache[serial][satellite_id] = (now_s, azimuth, elevation)
+        return azimuth, elevation, True
+
+    def _decode_json_satellite(self, serial, system_code, satellite, now_ms, now_s, base_pos):
+        if not isinstance(satellite, dict):
+            return None
+        try:
+            prn = int(satellite.get("prn"))
+            snr = float(satellite.get("snr", 0))
+        except (TypeError, ValueError):
+            return None
+        if system_code == "J" and 1 <= prn <= 10:
+            prn += 192
+        valid_prn = 193 <= prn <= 202 if system_code == "J" else 1 <= prn <= 64
+        if not valid_prn or not math.isfinite(snr) or not 0 <= snr <= 99:
+            return None
+        azimuth, elevation, has_geometry = self._json_satellite_geometry(
+            serial, system_code, prn, now_ms, now_s, base_pos
+        )
+        return {
+            "id": f"RTCM:{system_code}:{prn}",
+            "prn": prn,
+            "system": system_code,
+            "snr": snr,
+            "cnr": float(snr),
+            "signalId": 1,
+            "messageType": 9999,
+            "isTracking": snr > 0,
+            "elevation": elevation,
+            "azimuth": azimuth,
+            "has_geometry": has_geometry,
+            "lastSeen": now_ms,
+        }
+
     def _decode_json_unlocked(self, serial: str, data: dict) -> dict[str, Any] | None:
         serial = self._touch_serial(serial)
         if serial is None or not isinstance(data, dict):
@@ -579,74 +631,19 @@ class RTCMSignalDecoder:
         sats_in = data.get("satellites", [])
         if not nav_system or not isinstance(sats_in, (list, tuple)) or not sats_in:
             return None
-        
-        system_map = {
-            "gps": "G", "us": "G", "g": "G",
-            "glonass": "R", "ru": "R", "r": "R",
-            "galileo": "E", "eu": "E", "e": "E",
-            "beidou": "C", "cn": "C", "c": "C",
-            "qzss": "J", "jp": "J", "j": "J",
-        }
-        sys_code = system_map.get(str(nav_system or "").strip().lower())
+        sys_code = JSON_NAV_SYSTEM_CODES.get(str(nav_system or "").strip().lower())
         if not sys_code:
             return None
-            
         now_ms = int(time.time() * 1000)
         now_s = now_ms / 1000.0
-        satellites_out = []
         base_pos = self._base_positions.get(serial)
-        
         if serial not in self._azel_cache:
             self._azel_cache[serial] = {}
-            
+        satellites_out = []
         for sat in sats_in[:64]:
-            if not isinstance(sat, dict):
-                continue
-            try:
-                prn = int(sat.get("prn"))
-                snr = float(sat.get("snr", 0))
-            except (TypeError, ValueError):
-                continue
-            if sys_code == "J" and 1 <= prn <= 10:
-                prn += 192
-            valid_prn = 193 <= prn <= 202 if sys_code == "J" else 1 <= prn <= 64
-            if not valid_prn or not math.isfinite(snr) or not 0 <= snr <= 99:
-                continue
-                
-            sat_str_id = f"RTCM:{sys_code}:{prn}"
-            elevation = 0.0
-            azimuth = 0.0
-            has_geometry = False
-            
-            cached = self._azel_cache[serial].get(sat_str_id)
-            if cached and now_s - cached[0] < 10.0:
-                azimuth, elevation = cached[1], cached[2]
-                has_geometry = True
-            else:
-                if base_pos:
-                    sat_pos = self._satpos(sys_code, prn, now_ms)
-                    if sat_pos:
-                        az, el = self._satazel(sat_pos, base_pos)
-                        azimuth = az
-                        elevation = el
-                        has_geometry = True
-                        self._azel_cache[serial][sat_str_id] = (now_s, azimuth, elevation)
-            
-            satellites_out.append({
-                "id": sat_str_id,
-                "prn": prn,
-                "system": sys_code,
-                "snr": snr,
-                "cnr": float(snr),
-                "signalId": 1,
-                "messageType": 9999,
-                "isTracking": snr > 0,
-                "elevation": elevation,
-                "azimuth": azimuth,
-                "has_geometry": has_geometry,
-                "lastSeen": now_ms,
-            })
-            
+            decoded = self._decode_json_satellite(serial, sys_code, sat, now_ms, now_s, base_pos)
+            if decoded is not None:
+                satellites_out.append(decoded)
         self._prune_satellite_caches(serial)
         return {
             "navSystem": nav_system,
@@ -782,72 +779,73 @@ class RTCMSignalDecoder:
         if not satellite_ids or not signal_ids:
             return {"navSystem": info.nav_system, "msmLevel": msm_level, "satellites": []}
 
-        cell_mask: list[tuple[int, int]] = []
-        for satellite_id in satellite_ids:
-            for signal_id in signal_ids:
-                if reader.read_uint(1):
-                    cell_mask.append((satellite_id, signal_id))
-
+        cell_mask = self._msm_cell_mask(reader, satellite_ids, signal_ids)
         self._skip_msm_satellite_data(reader, msm_level, len(satellite_ids))
         signal_cnr = self._read_msm_signal_cnr(reader, msm_level, cell_mask)
         now_ms = int(time.time() * 1000)
 
-        satellites: list[dict[str, Any]] = []
+        satellites = []
         for satellite_id in satellite_ids:
-            best_signal_id, best_cnr = self._best_signal(signal_cnr, satellite_id)
-            if best_cnr <= 0:
-                continue
-                
-            prn = _rtcm_msm_prn(info.system, satellite_id)
-            sat_str_id = f"RTCM:{info.system}:{prn}"
-            
-            elevation = 0.0
-            azimuth = 0.0
-            has_geometry = False
-            
-            now = time.time()
-            if serial not in self._azel_cache: self._azel_cache[serial] = {}
-            cached = self._azel_cache[serial].get(sat_str_id)
-            
-            if cached and now - cached[0] < 10.0:
-                azimuth, elevation = cached[1], cached[2]
-                has_geometry = True
-            else:
-                base_pos = self._base_positions.get(serial)
-                eph = self._ephemeris_data.get(serial, {}).get(sat_str_id)
-                
-                if base_pos and eph:
-                    if eph.get('type') == 'glonass':
-                        sat_pos = self._glonass_eph2pos(eph, epoch_time_ms / 1000.0)
-                    else:
-                        sat_pos = self._eph2pos(eph, epoch_time_ms / 1000.0, info.nav_system)
-                        
-                    if sat_pos:
-                        az, el = self._satazel(sat_pos, base_pos)
-                        azimuth = az
-                        elevation = el
-                        has_geometry = True
-                        self._azel_cache[serial][sat_str_id] = (now, azimuth, elevation)
-
-            satellites.append(
-                {
-                    "id": sat_str_id,
-                    "prn": prn,
-                    "system": info.system,
-                    "talker": "RTCM",
-                    "snr": round(best_cnr),
-                    "cnr": best_cnr,
-                    "signalId": best_signal_id,
-                    "messageType": message_type,
-                    "isTracking": True,
-                    "elevation": elevation,
-                    "azimuth": azimuth,
-                    "has_geometry": has_geometry,
-                    "lastSeen": now_ms,
-                }
+            satellite = self._decode_msm_satellite(
+                message_type, info, epoch_time_ms, signal_cnr, satellite_id, serial, now_ms
             )
-
+            if satellite is not None:
+                satellites.append(satellite)
         return {"navSystem": info.nav_system, "msmLevel": msm_level, "satellites": satellites}
+
+    @staticmethod
+    def _msm_cell_mask(reader, satellite_ids, signal_ids):
+        cell_mask = []
+        for satellite_id in satellite_ids:
+            for signal_id in signal_ids:
+                if reader.read_uint(1):
+                    cell_mask.append((satellite_id, signal_id))
+        return cell_mask
+
+    def _decode_msm_satellite(self, message_type, info, epoch_time_ms, signal_cnr, satellite_id, serial, now_ms):
+        best_signal_id, best_cnr = self._best_signal(signal_cnr, satellite_id)
+        if best_cnr <= 0:
+            return None
+        prn = _rtcm_msm_prn(info.system, satellite_id)
+        satellite_key = f"RTCM:{info.system}:{prn}"
+        azimuth, elevation, has_geometry = self._msm_satellite_geometry(serial, satellite_key, info, epoch_time_ms)
+        return {
+            "id": satellite_key,
+            "prn": prn,
+            "system": info.system,
+            "talker": "RTCM",
+            "snr": round(best_cnr),
+            "cnr": best_cnr,
+            "signalId": best_signal_id,
+            "messageType": message_type,
+            "isTracking": True,
+            "elevation": elevation,
+            "azimuth": azimuth,
+            "has_geometry": has_geometry,
+            "lastSeen": now_ms,
+        }
+
+    def _msm_satellite_geometry(self, serial, satellite_key, info, epoch_time_ms):
+        now = time.time()
+        if serial not in self._azel_cache:
+            self._azel_cache[serial] = {}
+        cached = self._azel_cache[serial].get(satellite_key)
+        if cached and now - cached[0] < 10.0:
+            return cached[1], cached[2], True
+        base_pos = self._base_positions.get(serial)
+        eph = self._ephemeris_data.get(serial, {}).get(satellite_key)
+        if not base_pos or not eph:
+            return 0.0, 0.0, False
+        epoch_seconds = epoch_time_ms / 1000.0
+        if eph.get('type') == 'glonass':
+            satellite_pos = self._glonass_eph2pos(eph, epoch_seconds)
+        else:
+            satellite_pos = self._eph2pos(eph, epoch_seconds, info.nav_system)
+        if not satellite_pos:
+            return 0.0, 0.0, False
+        azimuth, elevation = self._satazel(satellite_pos, base_pos)
+        self._azel_cache[serial][satellite_key] = (now, azimuth, elevation)
+        return azimuth, elevation, True
 
     @staticmethod
     def _skip_msm_satellite_data(reader: BitReader, msm_level: int, satellite_count: int) -> None:

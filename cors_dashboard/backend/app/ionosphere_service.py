@@ -308,107 +308,110 @@ class IonosphereService:
 
         return compact_payload, geojson_payload
 
+    def _cached_response(self, format_type: str) -> dict[str, Any]:
+        if format_type == "geojson" and self._cached_geojson:
+            return self._cached_geojson
+        return self._cached_compact
+
+    def _fresh_cached_response(
+        self, now: float, format_type: str, force_refresh: bool
+    ) -> Optional[dict[str, Any]]:
+        if not force_refresh and self._cached_compact and now - self._last_catalog_fetch < CACHE_TTL_SECONDS:
+            return self._cached_response(format_type)
+        return None
+
+    @staticmethod
+    def _candidate_entries(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        return [
+            entry for entry in reversed(items)
+            if isinstance(entry, dict) and entry.get("url") and entry.get("time_tag")
+        ][:3]
+
+    def _cached_catalog_response(self, time_tag: str, now: float, format_type: str, force_refresh: bool):
+        if self._cached_compact and time_tag and time_tag == self._last_known_timetag and not force_refresh:
+            self._last_catalog_fetch = now
+            return self._cached_response(format_type)
+        return None
+
+    async def _parse_catalog_entry(self, client: httpx.AsyncClient, entry: dict[str, Any]):
+        url_path = entry.get("url")
+        full_url = NOAA_BASE_URL + url_path if str(url_path).startswith("/") else url_path
+        response = await client.get(full_url, headers=DEFAULT_REQUEST_HEADERS, timeout=22.0)
+        response.raise_for_status()
+        raw_geojson = response.json()
+        if not isinstance(raw_geojson, dict) or not raw_geojson.get("features"):
+            raise ValueError(f"Empty or invalid GeoJSON payload from {full_url}")
+        compact, geojson = self._parse_glotec_payload(raw_geojson, full_url)
+        return compact, geojson, entry.get("time_tag"), full_url
+
+    async def _fetch_latest_candidate(self, client, items, now, format_type, force_refresh):
+        last_error = None
+        for entry in self._candidate_entries(items):
+            cached = self._cached_catalog_response(entry.get("time_tag"), now, format_type, force_refresh)
+            if cached is not None:
+                return None, cached
+            url_path = entry.get("url")
+            full_url = NOAA_BASE_URL + url_path if str(url_path).startswith("/") else url_path
+            try:
+                return await self._parse_catalog_entry(client, entry), None
+            except Exception as error:
+                last_error = error
+                logger.info("Failed loading GloTEC file %s, trying previous candidate: %s", full_url, error)
+        if last_error:
+            raise last_error
+        raise ValueError("No valid GloTEC observations could be parsed from candidates")
+
+    def _store_latest_payload(self, parsed, now: float, format_type: str) -> dict[str, Any]:
+        compact, geojson, time_tag, full_url = parsed
+        self._cached_compact = compact
+        self._cached_geojson = geojson
+        self._last_known_timetag = time_tag
+        self._last_known_url = full_url
+        self._last_catalog_fetch = now
+        self._save_disk_cache(compact, geojson)
+        return geojson if format_type == "geojson" else compact
+
+    def _stale_cached_response(self, format_type: str, error: Exception) -> Optional[dict[str, Any]]:
+        if not self._cached_compact:
+            return None
+        stale_compact = dict(self._cached_compact)
+        stale_compact["is_stale"] = True
+        stale_compact["status"] = "STALE"
+        stale_compact["warning"] = f"NOAA SWPC update temporarily unavailable: {error}"
+        if format_type == "geojson" and self._cached_geojson:
+            stale_geo = dict(self._cached_geojson)
+            stale_geo["metadata"] = dict(stale_geo["metadata"])
+            stale_geo["metadata"]["is_stale"] = True
+            stale_geo["metadata"]["status"] = "STALE"
+            return stale_geo
+        return stale_compact
+
     async def get_latest(self, format_type: str = "compact", force_refresh: bool = False) -> dict[str, Any]:
         async with self._lock:
             now = time.monotonic()
-            if not force_refresh and self._cached_compact and (now - self._last_catalog_fetch < CACHE_TTL_SECONDS):
-                if format_type == "geojson" and self._cached_geojson:
-                    return self._cached_geojson
-                return self._cached_compact
-
+            cached = self._fresh_cached_response(now, format_type, force_refresh)
+            if cached is not None:
+                return cached
             try:
                 async with httpx.AsyncClient(timeout=22.0) as client:
                     items = await self._fetch_catalog(client)
-
-                    # Iterate up to 3 latest entries in reverse order so if the very newest file is
-                    # temporarily 404/empty during NOAA upload, we automatically fallback to the previous valid file.
-                    candidate_entries = [
-                        e for e in reversed(items)
-                        if isinstance(e, dict) and e.get("url") and e.get("time_tag")
-                    ][:3]
-
-                    parsed = None
-                    last_dl_exc: Optional[Exception] = None
-
-                    for entry in candidate_entries:
-                        url_path = entry.get("url")
-                        time_tag = entry.get("time_tag")
-
-                        # If timetag matches cached and we already have data, just renew TTL
-                        if (
-                            self._cached_compact
-                            and time_tag
-                            and time_tag == self._last_known_timetag
-                            and not force_refresh
-                        ):
-                            self._last_catalog_fetch = now
-                            if format_type == "geojson" and self._cached_geojson:
-                                return self._cached_geojson
-                            return self._cached_compact
-
-                        full_url = NOAA_BASE_URL + url_path if str(url_path).startswith("/") else url_path
-                        try:
-                            resp = await client.get(full_url, headers=DEFAULT_REQUEST_HEADERS, timeout=22.0)
-                            resp.raise_for_status()
-                            raw_geojson = resp.json()
-                            if not isinstance(raw_geojson, dict) or not raw_geojson.get("features"):
-                                raise ValueError(f"Empty or invalid GeoJSON payload from {full_url}")
-
-                            compact, geojson = self._parse_glotec_payload(raw_geojson, full_url)
-                            parsed = (compact, geojson, time_tag, full_url)
-                            break
-                        except Exception as dl_err:
-                            last_dl_exc = dl_err
-                            logger.info("Failed loading GloTEC file %s, trying previous candidate: %s", full_url, dl_err)
-                            continue
-
-                    if not parsed:
-                        if last_dl_exc:
-                            raise last_dl_exc
-                        raise ValueError("No valid GloTEC observations could be parsed from candidates")
-
-                    compact, geojson, time_tag, full_url = parsed
-                    self._cached_compact = compact
-                    self._cached_geojson = geojson
-                    self._last_known_timetag = time_tag
-                    self._last_known_url = full_url
-                    self._last_catalog_fetch = now
-                    self._save_disk_cache(compact, geojson)
-
-                    if format_type == "geojson":
-                        return geojson
-                    return compact
-
-            except Exception as exc:
-                logger.warning("Error fetching NOAA GloTEC ionosphere data: %s", exc)
-                # If cached data exists (either memory or disk), return it with warning
-                if self._cached_compact:
-                    stale_compact = dict(self._cached_compact)
-                    stale_compact["is_stale"] = True
-                    stale_compact["status"] = "STALE"
-                    stale_compact["warning"] = f"NOAA SWPC update temporarily unavailable: {exc}"
-                    if format_type == "geojson" and self._cached_geojson:
-                        stale_geo = dict(self._cached_geojson)
-                        stale_geo["metadata"] = dict(stale_geo["metadata"])
-                        stale_geo["metadata"]["is_stale"] = True
-                        stale_geo["metadata"]["status"] = "STALE"
-                        return stale_geo
-                    return stale_compact
-
-                # No cache available
-                fallback = {
-                    "status": "UNAVAILABLE",
-                    "is_stale": True,
-                    "error": str(exc),
-                    "time_tag": None,
-                    "observation_time_vn": None,
+                    parsed, cached = await self._fetch_latest_candidate(
+                        client, items, now, format_type, force_refresh
+                    )
+                    if cached is not None:
+                        return cached
+                    return self._store_latest_payload(parsed, now, format_type)
+            except Exception as error:
+                logger.warning("Error fetching NOAA GloTEC ionosphere data: %s", error)
+                cached = self._stale_cached_response(format_type, error)
+                if cached is not None:
+                    return cached
+                return {
+                    "status": "UNAVAILABLE", "is_stale": True, "error": str(error),
+                    "time_tag": None, "observation_time_vn": None,
                     "stats": {"min_tec": 0, "max_tec": 0, "avg_tec": 0},
-                    "tec_grid": [],
-                    "anomaly_grid": [],
-                    "lats": [],
-                    "lons": [],
+                    "tec_grid": [], "anomaly_grid": [], "lats": [], "lons": [],
                 }
-                return fallback
 
     async def get_status(self) -> dict[str, Any]:
         latest = await self.get_latest(format_type="compact")
