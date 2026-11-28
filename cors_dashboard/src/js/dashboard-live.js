@@ -1157,27 +1157,37 @@ function RfMonitorOverview({model}) {
     </div>;
 }
 
+function ReceiverVersionSummary({receiver}) {
+    return receiver?.software ? <dl className="row g-2 mb-3" aria-label="MON-VER đầy đủ">
+        {getReceiverVersionRows(receiver).map((row,index)=><React.Fragment key={index}>
+            <dt className="col-sm-4 fw-normal text-muted" style={{overflowWrap:'anywhere'}}>{row.label}</dt>
+            <dd className="col-sm-8 font-monospace mb-0" data-no-translate style={{overflowWrap:'anywhere',whiteSpace:'pre-wrap'}}>{row.value}</dd>
+        </React.Fragment>)}
+    </dl> : <p className="text-muted mb-2" role="status">Chưa nhận được MON-VER mới. Các trường chỉ hiện khi chip trả lời.</p>;
+}
+
+function ReceiverInterferenceSummary({device, receiver, interferenceConfig}) {
+    if (receiver?.itfm_supported === false) return <div className="small">
+        <p className="mb-1 text-muted">Theo dõi nhiễu và giả mạo bằng SEC-SIG · Tự động tại Pi.</p>
+        <p className="mb-1">Độ nhạy đã lưu: <strong>{device.base_config?.gnss_options?.jamming_sensitivity_high === false ? 'Thường' : 'Cao (mặc định)'}</strong> · Chip đọc lại: <strong>{getSensitivityLabel(receiver.jamming_sensitivity_high)}</strong></p>
+        {receiver.sensitivity_error ? <p className="text-warning mb-0" data-no-translate>{receiver.sensitivity_error}</p> : receiver.jamming_sensitivity_high !== null && <p className={`mb-0 ${receiver.jamming_sensitivity_high === (device.base_config?.gnss_options?.jamming_sensitivity_high !== false) ? 'text-success' : 'text-warning'}`}>{receiver.jamming_sensitivity_high === (device.base_config?.gnss_options?.jamming_sensitivity_high !== false) ? 'Độ nhạy khớp cấu hình đã lưu.' : 'Độ nhạy chưa khớp cấu hình đã lưu.'}</p>}
+    </div>;
+    return <>
+        <div>Cấu hình đã lưu: <strong>{getInterferenceDesiredLabel(interferenceConfig.desired)}</strong></div>
+        <div>Chip đọc lại: <strong>{getInterferenceReadbackLabel(receiver?.itfm_enabled)}</strong> · {receiver ? `Đọc ${Math.floor(receiver.age_seconds)} giây trước` : 'Chờ phản hồi từ chip'}</div>
+        <div className={interferenceConfig.tone} role="status">{interferenceConfig.label}</div>
+    </>;
+}
+
 const ReceiverDiagnosticSummary = memo(function ReceiverDiagnosticSummary({device, receiver, interferenceConfig}) {
+    const unicore = device.detected_chip_type === 'Unicorecomm';
     return (
         <>
             {!unicore && <div className="small border rounded p-2 mb-2" aria-label="Thông tin chip GNSS">
                 <div data-no-translate style={{overflowWrap:'anywhere'}}><strong>{receiver?.model || 'u-blox'}</strong> · Firmware: {receiver?.firmware || receiver?.software || 'Chưa đọc được'} · Protocol: {receiver?.protocol || 'Chưa đọc được'}</div>
                 <h6 className="mt-3 mb-2">Thông tin MON-VER đầy đủ</h6>
-                {receiver?.software ? <dl className="row g-2 mb-3" aria-label="MON-VER đầy đủ">
-                    {getReceiverVersionRows(receiver).map((row,index)=><React.Fragment key={index}>
-                        <dt className="col-sm-4 fw-normal text-muted" style={{overflowWrap:'anywhere'}}>{row.label}</dt>
-                        <dd className="col-sm-8 font-monospace mb-0" data-no-translate style={{overflowWrap:'anywhere',whiteSpace:'pre-wrap'}}>{row.value}</dd>
-                    </React.Fragment>)}
-                </dl> : <p className="text-muted mb-2" role="status">Chưa nhận được MON-VER mới. Các trường chỉ hiện khi chip trả lời.</p>}
-                {receiver?.itfm_supported === false ? <div className="small">
-                    <p className="mb-1 text-muted">Theo dõi nhiễu và giả mạo bằng SEC-SIG · Tự động tại Pi.</p>
-                    <p className="mb-1">Độ nhạy đã lưu: <strong>{device.base_config?.gnss_options?.jamming_sensitivity_high === false ? 'Thường' : 'Cao (mặc định)'}</strong> · Chip đọc lại: <strong>{getSensitivityLabel(receiver.jamming_sensitivity_high)}</strong></p>
-                    {receiver.sensitivity_error ? <p className="text-warning mb-0" data-no-translate>{receiver.sensitivity_error}</p> : receiver.jamming_sensitivity_high !== null && <p className={`mb-0 ${receiver.jamming_sensitivity_high === (device.base_config?.gnss_options?.jamming_sensitivity_high !== false) ? 'text-success' : 'text-warning'}`}>{receiver.jamming_sensitivity_high === (device.base_config?.gnss_options?.jamming_sensitivity_high !== false) ? 'Độ nhạy khớp cấu hình đã lưu.' : 'Độ nhạy chưa khớp cấu hình đã lưu.'}</p>}
-                </div> : <>
-                    <div>Cấu hình đã lưu: <strong>{getInterferenceDesiredLabel(interferenceConfig.desired)}</strong></div>
-                    <div>Chip đọc lại: <strong>{getInterferenceReadbackLabel(receiver?.itfm_enabled)}</strong> · {receiver ? `Đọc ${Math.floor(receiver.age_seconds)} giây trước` : 'Chờ phản hồi từ chip'}</div>
-                    <div className={interferenceConfig.tone} role="status">{interferenceConfig.label}</div>
-                </>}
+                <ReceiverVersionSummary receiver={receiver} />
+                <ReceiverInterferenceSummary device={device} receiver={receiver} interferenceConfig={interferenceConfig} />
                 {receiver?.firmware && /^HPG 1\.(?:0\d|1\d|2\d)(?:$|\s)/.test(receiver.firmware) && <div>Firmware trước HPG 1.30 có lỗi trùng ID khối RF đã được u-blox ghi nhận.</div>}
                 {(receiver?.error || receiver?.itfm_error) && <details><summary>Chi tiết đọc thông tin chip</summary><p className="mb-0" data-no-translate style={{overflowWrap:'anywhere'}}>{[receiver.error,receiver.itfm_error].filter(Boolean).join(' · ')}</p></details>}
             </div>}
@@ -1298,6 +1308,41 @@ const RfSpectrumDetails = memo(function RfSpectrumDetails({spectrum, receiver, r
     );
 });
 
+function Esp32ReceiverSummary({receiver}) {
+    return <section className="card mt-3" aria-label="Thông tin chip GNSS">
+        <div className="card-body">
+            <h6>Thông tin MON-VER đầy đủ</h6>
+            {receiver?.software ? <dl className="row g-2 mb-0" aria-label="MON-VER đầy đủ">
+                {getReceiverVersionRows(receiver).map((row,index)=><React.Fragment key={index}>
+                    <dt className="col-sm-4 fw-normal text-muted" style={{overflowWrap:'anywhere'}}>{row.label}</dt>
+                    <dd className="col-sm-8 font-monospace mb-0" data-no-translate style={{overflowWrap:'anywhere',whiteSpace:'pre-wrap'}}>{row.value}</dd>
+                </React.Fragment>)}
+            </dl> : <p className="text-muted mb-0" role="status">Chưa nhận được MON-VER mới từ chip.</p>}
+        </div>
+    </section>;
+}
+
+function RfDiagnosticsStatus({readError, unicore, rf, spectrum}) {
+    return <>
+        {readError && <details className="mb-2"><summary>Chi tiết lỗi đọc MON-RF</summary><p className="small mb-0" data-no-translate>{readError.error}</p></details>}
+        {!unicore && <p className="small text-muted mb-2">Trạng thái RF: {rf ? `${Math.floor(rf.age_seconds)} giây trước` : 'Chưa có'} · Phổ: {spectrum ? `${Math.floor(spectrum.age_seconds)} giây trước` : 'Chưa có'}</p>}
+        {rf && <p className="small text-muted mb-2">RF1 và RF2 là các khối xử lý tín hiệu vô tuyến bên trong chip, không phải tên cổng USB/UART hay số anten. Khi ID hợp lệ: 0 là L1, 1 là L2/L5 tùy model. Nếu trùng ID, số RF chỉ thứ tự khối trả về, chưa xác định được băng của từng khối.</p>}
+    </>;
+}
+
+function RfDiagnosticsReadings({unicore, um, hasData, rf, spectrum, receiver, reference, stateNames, onClearReference}) {
+    return <details className="mt-2 rf-details"><summary className="mb-2">Xem chỉ số và phổ chi tiết</summary>
+        {!hasData && <p className="text-muted mb-2" role="status">Chưa có dữ liệu RF mới. Cần agent hỗ trợ và chip trả lời; dữ liệu quá 45 giây không được dùng để kết luận.</p>}
+        <UnicoreRfDetails unicore={unicore} um={um} reference={reference} />
+        <UbxRfDetails rf={rf} receiver={receiver} stateNames={stateNames} />
+        {reference && <p className="small mb-2" role="status">Mốc so sánh: {new Date(reference.captured_at).toLocaleString()}.
+            <button className="btn btn-sm btn-link" onClick={onClearReference}>Xóa mốc</button></p>}
+        {!unicore && !spectrum && <p className="small text-muted mb-2">Chưa có phổ GNSS mới.</p>}
+        <RfSpectrumDetails spectrum={spectrum} receiver={receiver} reference={reference} />
+        <p className="small text-muted mb-0">{!unicore && 'Phổ thô không phải công suất dBm; đỉnh phổ đơn lẻ chưa chứng minh có nhiễu. '}Chỉ số RF không xác định nguồn gây nhiễu hoặc sai số tọa độ.</p>
+    </details>;
+}
+
 function RfDiagnostics({device, live, data}) {
     const esp32 = device.system_info?.gnss_rf_supported === false || /^esp_/i.test(device.serial || '');
     const [, refreshClock] = useState(0);
@@ -1327,17 +1372,7 @@ function RfDiagnostics({device, live, data}) {
         const link = document.createElement('a'); link.href = url; link.download = 'gnss-rf.json'; link.click();
         setTimeout(() => URL.revokeObjectURL(url), 1000);
     };
-    if (esp32) return unicore ? null : <section className="card mt-3" aria-label="Thông tin chip GNSS">
-        <div className="card-body">
-            <h6>Thông tin MON-VER đầy đủ</h6>
-            {receiver?.software ? <dl className="row g-2 mb-0" aria-label="MON-VER đầy đủ">
-                {getReceiverVersionRows(receiver).map((row,index) => <React.Fragment key={index}>
-                    <dt className="col-sm-4 fw-normal text-muted" style={{overflowWrap:'anywhere'}}>{row.label}</dt>
-                    <dd className="col-sm-8 font-monospace mb-0" data-no-translate style={{overflowWrap:'anywhere',whiteSpace:'pre-wrap'}}>{row.value}</dd>
-                </React.Fragment>)}
-            </dl> : <p className="text-muted mb-0" role="status">Chưa nhận được MON-VER mới từ chip.</p>}
-        </div>
-    </section>;
+    if (esp32) return unicore ? null : <Esp32ReceiverSummary receiver={receiver} />;
     return <section className="card mt-3" aria-label="Chẩn đoán nhiễu GNSS">
         <div className="card-body">
             {unicore ? <UnicoreReceptionOverview key={device.serial} device={device} live={live} data={data} />
@@ -1360,19 +1395,9 @@ function RfDiagnostics({device, live, data}) {
             </div>
             <SecuritySignalPanel security={security} securityLog={securityLog} receiver={receiver} />
             <p className="small text-muted mb-2">Giữ mẫu trước khi đổi vị trí anten hoặc tắt nguồn phát của mình, rồi so sánh. Mốc được chọn chưa chắc sạch nhiễu.</p>
-            {readError && <details className="mb-2"><summary>Chi tiết lỗi đọc MON-RF</summary><p className="small mb-0" data-no-translate>{readError.error}</p></details>}
-            {!unicore && <p className="small text-muted mb-2">Trạng thái RF: {rf ? `${Math.floor(rf.age_seconds)} giây trước` : 'Chưa có'} · Phổ: {spectrum ? `${Math.floor(spectrum.age_seconds)} giây trước` : 'Chưa có'}</p>}
-            {rf && <p className="small text-muted mb-2">RF1 và RF2 là các khối xử lý tín hiệu vô tuyến bên trong chip, không phải tên cổng USB/UART hay số anten. Khi ID hợp lệ: 0 là L1, 1 là L2/L5 tùy model. Nếu trùng ID, số RF chỉ thứ tự khối trả về, chưa xác định được băng của từng khối.</p>}
-            <details className="mt-2 rf-details"><summary className="mb-2">Xem chỉ số và phổ chi tiết</summary>
-            {!hasData && <p className="text-muted mb-2" role="status">Chưa có dữ liệu RF mới. Cần agent hỗ trợ và chip trả lời; dữ liệu quá 45 giây không được dùng để kết luận.</p>}
-            <UnicoreRfDetails unicore={unicore} um={um} reference={reference} />
-            <UbxRfDetails rf={rf} receiver={receiver} stateNames={stateNames} />
-            {reference && <p className="small mb-2" role="status">Mốc so sánh: {new Date(reference.captured_at).toLocaleString()}.
-                <button className="btn btn-sm btn-link" onClick={() => setReference(null)}>Xóa mốc</button></p>}
-            {!unicore && !spectrum && <p className="small text-muted mb-2">Chưa có phổ GNSS mới.</p>}
-            <RfSpectrumDetails spectrum={spectrum} receiver={receiver} reference={reference} />
-            <p className="small text-muted mb-0">{!unicore && 'Phổ thô không phải công suất dBm; đỉnh phổ đơn lẻ chưa chứng minh có nhiễu. '}Chỉ số RF không xác định nguồn gây nhiễu hoặc sai số tọa độ.</p>
-            </details>
+            <RfDiagnosticsStatus readError={readError} unicore={unicore} rf={rf} spectrum={spectrum} />
+            <RfDiagnosticsReadings unicore={unicore} um={um} hasData={hasData} rf={rf} spectrum={spectrum}
+                receiver={receiver} reference={reference} stateNames={stateNames} onClearReference={() => setReference(null)} />
         </div>
     </section>;
 }
@@ -1838,6 +1863,91 @@ function resizeDashboardSkyplot(backgroundCanvas, satelliteCanvas, drawBackgroun
     drawBackground();
 }
 
+function DashboardMetricsSummary({metrics, fixInfo, isReadonly4g, quality, accuracy, baseCoords}) {
+    return <>
+        {window.MetricCard && <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fit, minmax(200px, 1fr))',gap:'12px',marginBottom:'16px'}}>
+            <window.MetricCard title="Throughput" value={(metrics.throughput.value / 1024).toFixed(1)} unit="KB/s" trend={0} sparklineData={metrics.throughput.history} color="#51cf66" icon="⚡" />
+            <window.MetricCard title="Vệ tinh RTCM" value={metrics.satellites.value ?? "—"} unit="" trend={0} sparklineData={metrics.satellites.history} color="#0d6efd" icon="🛰️" />
+            <window.MetricCard title="hAcc (ước lượng)" value={accuracy.value} unit={accuracy.unit} trend={0} sparklineData={metrics.accuracy?.history || []} color={accuracy.color} icon="🎯" />
+            <window.MetricCard title="C/N0 RTCM" value={metrics.signalStrength.value} unit="dB-Hz" trend={0} sparklineData={metrics.signalStrength.history} color="#fa5252" icon="📶" />
+        </div>}
+        <div className="stats-strip">
+            <div className="stat-item">
+                <div className="stat-icon" style={{fontSize:'2rem'}}>{fixInfo.icon}</div>
+                <div className="stat-content">
+                    <div className="stat-label">{isReadonly4g ? 'Trạng thái RTCM' : 'Fix Status'}</div>
+                    <div className="stat-value" style={{color:fixInfo.color,textShadow:`0 0 10px ${fixInfo.color}`,fontWeight:'bold'}}>{fixInfo.label}</div>
+                </div>
+            </div>
+            <div className="stat-item"><div className="stat-icon">🛰️</div><div className="stat-content"><div className="stat-label">Vệ tinh RTCM</div><div id="db-sats" className="stat-value">0</div></div></div>
+            <div className="stat-item"><div className="stat-icon">📡</div><div className="stat-content"><div className="stat-label">HDOP / PDOP</div><div id="db-dop" className="stat-value">— / —</div><div id="db-dop-source" className="small text-muted">Đang đọc DOP</div><div id="db-dop-raw" className="small text-muted"></div></div></div>
+            <div className="stat-item"><div className="stat-icon">📍</div><div className="stat-content"><div className="stat-label">Position</div><div className="stat-value stat-small"><span id="db-lat">—</span> / <span id="db-lon">—</span></div><div id="db-position-source" className="small text-muted"></div></div></div>
+        </div>
+        <div className="alert alert-info mt-3" role="status">
+            {quality ? <div>Nguồn: {getGnssQualitySourceLabel(quality.source)}{' · '}Đọc cách đây {Math.floor(quality.age_seconds)} giây.{quality.hacc_m === null && ' Chip chưa báo độ chính xác hợp lệ.'}</div>
+                : <div>Chưa có số liệu độ chính xác còn hiệu lực từ chip.</div>}
+            <div className="small mt-1">{accuracy.fixedBase
+                ? 'Fixed LLA dùng tọa độ đã khai báo. hAcc không xác minh sai số tọa độ Base và không phải độ chính xác RTK của rover.'
+                : 'hAcc là ước lượng của chip, không phải sai số được đo với tọa độ chuẩn.'}</div>
+        </div>
+        <div className="map-section"><BaseLocationMap coords={baseCoords} rtcmOnly={isReadonly4g} /></div>
+    </>;
+}
+
+function DashboardSatelliteStatsPanel({satStats, signalBarsContainerRef}) {
+    const systemCount = Object.keys(satStats.bySystem).length;
+    const averageSnr = satStats.total > 0 ? (satStats.avgSnr || 0).toFixed(1) : null;
+    return <div className="sky-panel signals-panel">
+        <div className="panel-header">
+            <i className="bi bi-bar-chart-fill"></i><span>C/N₀ giải mã từ RTCM</span>
+            <div className="ms-auto d-flex gap-2"><span className="badge bg-secondary">{satStats.total} giải mã RTCM</span></div>
+        </div>
+        <div ref={signalBarsContainerRef} className="signals-scroll" style={{flex:1,overflowY:'auto',overflowX:'hidden',padding:'10px'}}></div>
+        <div className="antenna-assessment-section mt-2 p-2 mx-2 mb-2 rounded" style={{backgroundColor:'rgba(0,0,0,0.1)'}}>
+            <div className="d-flex justify-content-between align-items-center mb-1">
+                <span style={{fontSize:'0.85rem',fontWeight:600,color:'var(--text-secondary)'}}><i className="bi bi-broadcast me-1"></i>Antenna Health</span>
+                <span className="badge rounded-pill" style={{backgroundColor:satStats.total > 0 && satStats.avgSnr > 35 ? 'var(--success-color)' : 'var(--warning-color)'}}>{averageSnr ? `${averageSnr} dBHz Avg` : 'N/A'}</span>
+            </div>
+            <div className="d-flex justify-content-between small text-muted">
+                <div className="text-center"><div>Diversity</div><div style={{color:systemCount >= 3 ? 'var(--success-color)' : 'var(--warning-color)',fontWeight:'bold'}}>{systemCount} Sys</div></div>
+                <div className="text-center"><div>Multipath Risk</div><div style={{color:(satStats.lowSnrCount || 0) > 5 ? 'var(--danger-color)' : 'var(--success-color)',fontWeight:'bold'}}>{satStats.lowSnrCount || 0} Low SNR</div></div>
+            </div>
+        </div>
+    </div>;
+}
+
+function DashboardSkyplotPanel({device, satStats, bgCanvasRef, satCanvasRef}) {
+    return <div className="sky-panel skyplot-panel" style={{height:'100%',display:'flex',flexDirection:'column',overflow:'hidden'}}>
+        <div className="panel-header" style={{flexShrink:0}}>
+            <i className="bi bi-radar"></i><span>Sky View</span>
+            <span className="badge bg-primary-subtle text-primary ms-auto">{satStats.total} giải mã · <span data-no-translate>RTCM</span></span>
+        </div>
+        <div className="small text-muted px-3 pb-1">{device.detected_chip_type === 'Ublox'
+            ? 'Danh sách và C/N₀ từ RTCM; NAV-SAT chỉ bổ sung góc cho vệ tinh trùng PRN.'
+            : 'Danh sách và C/N₀ từ RTCM; biểu đồ vị trí cần thêm góc phương vị và độ cao.'}</div>
+        <div className="small text-muted px-3 pb-1" data-no-translate>G GPS · R GLONASS · E Galileo · C BeiDou · J QZSS · S SBAS</div>
+        <div className="skyplot-wrapper" style={{position:'relative',width:'100%',height:'100%'}}>
+            <canvas ref={bgCanvasRef} className="skyplot-bg" style={{position:'absolute',top:0,left:0,width:'100%',height:'100%',zIndex:1}}></canvas>
+            {satStats.total > 0 && !satStats.positioned && <div className="position-absolute top-50 start-50 translate-middle text-center small text-muted px-3" style={{zIndex:3,width:'80%'}}>Có tín hiệu vệ tinh nhưng chưa có góc phương vị / độ cao để vẽ.</div>}
+            <canvas ref={satCanvasRef} className="skyplot-sat" style={{position:'absolute',top:0,left:0,width:'100%',height:'100%',zIndex:2}}></canvas>
+        </div>
+    </div>;
+}
+
+function DashboardSatellitePanels({device, liveDataAvailable, safeNmeaData, satStats, bgCanvasRef, satCanvasRef, signalBarsContainerRef}) {
+    const needsRfDiagnostics = !/^MONITOR_/i.test(String(device.serial || ''))
+        && ['Ublox', 'Unicorecomm'].includes(device.detected_chip_type);
+    return <>
+        {device.detected_chip_type === 'Unicorecomm' && Object.keys(safeNmeaData.satellites || {}).length === 0 &&
+            <div className="alert alert-info small" role="status">Đang chờ dữ liệu vệ tinh từ decoder RTCM. Có danh sách bản tin chưa đồng nghĩa đã đủ dữ liệu vị trí quỹ đạo để vẽ biểu đồ.</div>}
+        {needsRfDiagnostics && <RfDiagnostics key={`${device.serial}:${device.detected_chip_type}`} device={device} live={liveDataAvailable} data={safeNmeaData} />}
+        <div className="sky-grid">
+            <DashboardSkyplotPanel device={device} satStats={satStats} bgCanvasRef={bgCanvasRef} satCanvasRef={satCanvasRef} />
+            <DashboardSatelliteStatsPanel satStats={satStats} signalBarsContainerRef={signalBarsContainerRef} />
+        </div>
+    </>;
+}
+
 const DashboardPanel = memo(function DashboardPanel({ device, nmeaData }) {
     const [offlineClockNow, setOfflineClockNow] = useState(Date.now());
     useEffect(() => {
@@ -2058,56 +2168,14 @@ const DashboardPanel = memo(function DashboardPanel({ device, nmeaData }) {
     if (fixedBase) accColor = 'var(--bs-info, #0dcaf0)';
     return (
         <div className="dashboard-master">
-            {/* 🆕 METRIC CARDS WITH SPARKLINES (Nếu có component MetricCard) */}
-            {window.MetricCard && (
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '12px', marginBottom: '16px' }}>
-                    <window.MetricCard title="Throughput" value={(metrics.throughput.value / 1024).toFixed(1)} unit="KB/s" trend={0} sparklineData={metrics.throughput.history} color="#51cf66" icon="⚡" />
-                    <window.MetricCard title="Vệ tinh RTCM" value={metrics.satellites.value ?? "—"} unit="" trend={0} sparklineData={metrics.satellites.history} color="#0d6efd" icon="🛰️" />
-                    <window.MetricCard title="hAcc (ước lượng)" value={accDisplayValue} unit={accUnit} trend={0} sparklineData={metrics.accuracy?.history || []} color={accColor} icon="🎯" />
-                    <window.MetricCard title="C/N0 RTCM" value={metrics.signalStrength.value} unit="dB-Hz" trend={0} sparklineData={metrics.signalStrength.history} color="#fa5252" icon="📶" />
-                </div>
-            )}
-
-            {/* STATS STRIP */}
-            <div className="stats-strip">
-                {/* ✅ CẬP NHẬT FIX STATUS CARD */}
-                <div className="stat-item">
-                    <div className="stat-icon" style={{ fontSize: '2rem' }}>{fixInfo.icon}</div>
-                    <div className="stat-content">
-                        <div className="stat-label">{isReadonly4g ? 'Trạng thái RTCM' : 'Fix Status'}</div>
-                        <div
-                            className="stat-value"
-                            style={{
-                                color: fixInfo.color,
-                                textShadow: `0 0 10px ${fixInfo.color}`,
-                                fontWeight: 'bold'
-                            }}
-                        >
-                            {fixInfo.label}
-                        </div>
-                    </div>
-                </div>
-                <div className="stat-item"><div className="stat-icon">🛰️</div><div className="stat-content"><div className="stat-label">Vệ tinh RTCM</div><div id="db-sats" className="stat-value">0</div></div></div>
-                <div className="stat-item"><div className="stat-icon">📡</div><div className="stat-content"><div className="stat-label">HDOP / PDOP</div><div id="db-dop" className="stat-value">— / —</div><div id="db-dop-source" className="small text-muted">Đang đọc DOP</div><div id="db-dop-raw" className="small text-muted"></div></div></div>
-                <div className="stat-item"><div className="stat-icon">📍</div><div className="stat-content"><div className="stat-label">Position</div><div className="stat-value stat-small"><span id="db-lat">—</span> / <span id="db-lon">—</span></div><div id="db-position-source" className="small text-muted"></div></div></div>
-            </div>
-            <div className="alert alert-info mt-3" role="status">
-                {quality ? <div>
-                    Nguồn: {getGnssQualitySourceLabel(quality.source)}
-                    {' · '}Đọc cách đây {Math.floor(quality.age_seconds)} giây.
-                    {quality.hacc_m === null && ' Chip chưa báo độ chính xác hợp lệ.'}
-                </div> : <div>Chưa có số liệu độ chính xác còn hiệu lực từ chip.</div>}
-                <div className="small mt-1">
-                    {fixedBase
-                        ? 'Fixed LLA dùng tọa độ đã khai báo. hAcc không xác minh sai số tọa độ Base và không phải độ chính xác RTK của rover.'
-                        : 'hAcc là ước lượng của chip, không phải sai số được đo với tọa độ chuẩn.'}
-                </div>
-            </div>
-
-            {/* MAP */}
-            <div className="map-section">
-                <BaseLocationMap coords={baseCoords} rtcmOnly={isReadonly4g} />
-            </div>
+            <DashboardMetricsSummary
+                metrics={metrics}
+                fixInfo={fixInfo}
+                isReadonly4g={isReadonly4g}
+                quality={quality}
+                accuracy={{value:accDisplayValue, unit:accUnit, color:accColor, fixedBase}}
+                baseCoords={baseCoords}
+            />
 
             <RtcmAntennaPanel
                 device={device}
@@ -2119,69 +2187,15 @@ const DashboardPanel = memo(function DashboardPanel({ device, nmeaData }) {
 
             <HardwareTelemetryPanel device={device} liveDataAvailable={liveDataAvailable} isReadonly4g={isReadonly4g} />
 
-            {/* SKYPLOT & SIGNALS */}
-            {device.detected_chip_type === 'Unicorecomm' && Object.keys(safeNmeaData.satellites || {}).length === 0 && (
-                <div className="alert alert-info small" role="status">
-                    Đang chờ dữ liệu vệ tinh từ decoder RTCM. Có danh sách bản tin chưa đồng nghĩa đã đủ dữ liệu vị trí quỹ đạo để vẽ biểu đồ.
-                </div>
-            )}
-            {!/^MONITOR_/i.test(String(device.serial || '')) && ['Ublox','Unicorecomm'].includes(device.detected_chip_type) && <RfDiagnostics key={`${device.serial}:${device.detected_chip_type}`} device={device} live={liveDataAvailable} data={safeNmeaData} />}
-
-            <div className="sky-grid">
-                <div className="sky-panel skyplot-panel" style={{ height: '100%', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
-                    <div className="panel-header" style={{ flexShrink: 0 }}>
-                        <i className="bi bi-radar"></i><span>Sky View</span>
-                        <span className="badge bg-primary-subtle text-primary ms-auto">{satStats.total} giải mã · <span data-no-translate>RTCM</span></span>
-                    </div>
-                    <div className="small text-muted px-3 pb-1">{device.detected_chip_type === 'Ublox'
-                        ? 'Danh sách và C/N₀ từ RTCM; NAV-SAT chỉ bổ sung góc cho vệ tinh trùng PRN.'
-                        : 'Danh sách và C/N₀ từ RTCM; biểu đồ vị trí cần thêm góc phương vị và độ cao.'}</div>
-                    <div className="small text-muted px-3 pb-1" data-no-translate>G GPS · R GLONASS · E Galileo · C BeiDou · J QZSS · S SBAS</div>
-                    <div className="skyplot-wrapper" style={{ position: 'relative', width: '100%', height: '100%' }}>
-                        <canvas ref={bgCanvasRef} className="skyplot-bg" style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', zIndex: 1 }}></canvas>
-                        {satStats.total > 0 && !satStats.positioned && <div className="position-absolute top-50 start-50 translate-middle text-center small text-muted px-3" style={{zIndex: 3, width: '80%'}}>
-                            Có tín hiệu vệ tinh nhưng chưa có góc phương vị / độ cao để vẽ.
-                        </div>}
-                        <canvas ref={satCanvasRef} className="skyplot-sat" style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', zIndex: 2 }}></canvas>
-                    </div>
-                </div>
-
-                <div className="sky-panel signals-panel">
-                    <div className="panel-header">
-                        <i className="bi bi-bar-chart-fill"></i><span>C/N₀ giải mã từ RTCM</span>
-                        <div className="ms-auto d-flex gap-2">
-                            <span className="badge bg-secondary">{satStats.total} giải mã RTCM</span>
-                        </div>
-                    </div>
-                    <div ref={signalBarsContainerRef} className="signals-scroll" style={{ flex: 1, overflowY: 'auto', overflowX: 'hidden', padding: '10px' }}></div>
-
-                    {/* Antenna Assessment */}
-                    <div className="antenna-assessment-section mt-2 p-2 mx-2 mb-2 rounded" style={{ backgroundColor: 'rgba(0,0,0,0.1)' }}>
-                        <div className="d-flex justify-content-between align-items-center mb-1">
-                            <span style={{ fontSize: '0.85rem', fontWeight: 600, color: 'var(--text-secondary)' }}>
-                                <i className="bi bi-broadcast me-1"></i>Antenna Health
-                            </span>
-                            <span className="badge rounded-pill" style={{ backgroundColor: satStats.total > 0 && satStats.avgSnr > 35 ? 'var(--success-color)' : 'var(--warning-color)' }}>
-                                {satStats.total > 0 ? (satStats.avgSnr || 0).toFixed(1) + ' dBHz Avg' : 'N/A'}
-                            </span>
-                        </div>
-                        <div className="d-flex justify-content-between small text-muted">
-                            <div className="text-center">
-                                <div>Diversity</div>
-                                <div style={{ color: Object.keys(satStats.bySystem).length >= 3 ? 'var(--success-color)' : 'var(--warning-color)', fontWeight: 'bold' }}>
-                                    {Object.keys(satStats.bySystem).length} Sys
-                                </div>
-                            </div>
-                            <div className="text-center">
-                                <div>Multipath Risk</div>
-                                <div style={{ color: (satStats.lowSnrCount || 0) > 5 ? 'var(--danger-color)' : 'var(--success-color)', fontWeight: 'bold' }}>
-                                    {(satStats.lowSnrCount || 0)} Low SNR
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-            </div>
+            <DashboardSatellitePanels
+                device={device}
+                liveDataAvailable={liveDataAvailable}
+                safeNmeaData={safeNmeaData}
+                satStats={satStats}
+                bgCanvasRef={bgCanvasRef}
+                satCanvasRef={satCanvasRef}
+                signalBarsContainerRef={signalBarsContainerRef}
+            />
 
         </div>
     );
