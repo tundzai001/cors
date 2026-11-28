@@ -662,13 +662,10 @@ async def flush_device_buffer(db: AsyncSession):
 
 pi_websocket_endpoint_router = APIRouter()
 
-@pi_websocket_endpoint_router.websocket("/ws/pi/{serial}")
-async def pi_websocket_endpoint(websocket: WebSocket, serial: str, token: str = Query(None)):
+async def _authenticate_pi_websocket(websocket, serial, token):
     if crud.is_blocked_device_serial(serial):
         await _safe_ws_close(websocket, code=1008, reason="Blocked device serial")
-        return
-    # Never leave an unaccepted socket queued behind a saturated DB pool.  The
-    # short-lived metadata cache removes the per-reconnect SELECT in steady state.
+        return None
     try:
         metadata = await asyncio.wait_for(
             mqtt_handler.get_device_metadata(serial),
@@ -677,287 +674,310 @@ async def pi_websocket_endpoint(websocket: WebSocket, serial: str, token: str = 
     except (asyncio.TimeoutError, TimeoutError):
         logger.warning("Pi auth lookup timed out; asking agent to retry")
         await _safe_ws_close(websocket, code=1013, reason="Server busy; retry")
-        return
+        return None
     except Exception as exc:
         logger.warning("Pi auth lookup failed; asking agent to retry (%s)", type(exc).__name__)
         await _safe_ws_close(websocket, code=1013, reason="Server busy; retry")
-        return
+        return None
 
     expected_token = str(metadata.get("device_token") or "").strip()
     db_sync_state = bool(metadata.get("is_synced", False))
     license_bypass = bool(metadata.get("license_bypass"))
     provided_token = str(token or "").strip()
-
     logger.debug(
         "Agent WS auth serial=%s expected_token=%s provided_token=%s bypass=%s",
-        serial,
-        bool(expected_token),
-        bool(provided_token),
-        license_bypass,
+        serial, bool(expected_token), bool(provided_token), license_bypass,
     )
-
     if not metadata.get("exists"):
         logger.warning("Pi connection rejected: unknown device serial")
         await _safe_ws_close(websocket, code=status.WS_1008_POLICY_VIOLATION)
-        return
+        return None
     if not license_bypass and (
         not license_manager.is_compatible_device_token(expected_token, serial)
         or not hmac.compare_digest(provided_token, expected_token)
     ):
         logger.warning("Pi connection rejected: invalid or missing token")
         await _safe_ws_close(websocket, code=status.WS_1008_POLICY_VIOLATION)
-        return
+        return None
     if license_bypass and expected_token and provided_token != expected_token:
         logger.warning("Pi connection allowed because per-device license bypass is enabled")
+    return metadata, expected_token, db_sync_state, license_bypass
 
+
+async def _prepare_pi_status_payload(serial, payload, db_sync_state, license_bypass, expected_token):
+    payload = dict(payload)
+    payload["serial"] = serial
+    if isinstance(payload.get("service_config"), (dict, list)):
+        payload["service_config"] = schemas.strip_status_config_secrets(payload["service_config"])
+    sync_errors = list(mqtt_handler.device_sync_cache.get(f"{serial}_errors", []) or [])
+    cached_sync = mqtt_handler.device_sync_cache.get(serial, db_sync_state)
+    payload["is_synced"] = bool(cached_sync)
+    if not cached_sync and not sync_errors:
+        sync_errors.append("Pending server configuration sync")
+    agent_version = str(payload.get("version") or "").strip().upper()
+    server_version = str(settings.APP_VERSION or "").strip().upper()
+    if agent_version and server_version and agent_version != server_version:
+        payload["is_synced"] = False
+        version_error = f"Agent version {agent_version} != server {server_version}"
+        if version_error not in sync_errors:
+            sync_errors.append(version_error)
+    if not license_bypass and not expected_token:
+        payload["status"] = "awaiting_license"
+        payload["bps"] = 0
+        payload["ntrip_connected"] = False
+        payload["ntrip_status"] = {}
+        payload["ntrip_stats"] = {}
+        payload["is_synced"] = False
+        sync_errors.append("Server token has not been issued to this agent")
+    payload["sync_errors"] = sync_errors
+    saved_name = mqtt_handler.device_name_cache.get(serial)
+    if saved_name:
+        payload["name"] = saved_name
+    return payload
+
+
+async def _enqueue_pi_status(payload):
+    try:
+        pi_status_ingest_queue.put_nowait(payload)
+    except asyncio.QueueFull:
+        try:
+            pi_status_ingest_queue.get_nowait()
+            pi_status_ingest_queue.task_done()
+            buffer_metrics["pi_ingest_queue_drop_count"] += 1
+        except Exception:
+            pass
+        try:
+            pi_status_ingest_queue.put_nowait(payload)
+        except Exception:
+            pass
+
+
+async def _process_pi_status_update(serial, payload, db_sync_state, license_bypass, expected_token):
+    control_ack = build_control_plane_ack(payload, channel="websocket", serial=serial)
+    if control_ack:
+        await pi_manager.send_personal_message(serial, control_ack)
+    payload = await _prepare_pi_status_payload(
+        serial, payload, db_sync_state, license_bypass, expected_token
+    )
+    compact_payload = _compact_status_payload(payload)
+    if not compact_payload:
+        return
+    status_decision = await status_reconciler.accept(compact_payload, source="websocket")
+    if not status_decision.accepted:
+        logger.debug(
+            "Ignored WebSocket status for %s: %s", serial, status_decision.reason
+        )
+        return
+    compact_payload = status_decision.payload
+    mqtt_handler.cache_agent_sync_inputs(serial, payload)
+    mqtt_handler.cache_websocket_status(serial, compact_payload, payload.get('system_info'))
+    reported_status = str(compact_payload.get("status") or "").strip().lower()
+    if reported_status:
+        mqtt_handler.device_status_cache[serial] = reported_status
+    # Hot path: enqueue for async workers (broadcast + buffered DB write).
+    await _enqueue_pi_status(compact_payload)
+
+
+async def _process_pi_nmea_update(serial, payload):
+    parsed_data = mqtt_handler.parse_nmea_sentence(serial, payload)
+    if not parsed_data:
+        return
+    live = latest_device_telemetry_cache.setdefault(str(serial), {})
+    nmea_live = live.setdefault("nmea_data", {})
+    parsed_type = str(parsed_data.get("type") or "").upper()
+    if parsed_type == "GGA":
+        nmea_live["gga"] = parsed_data
+    elif parsed_type == "GSA":
+        nmea_live["gsa"] = parsed_data
+    elif parsed_type == "GSV":
+        nmea_live["satellites"] = parsed_data.get("satellites") or []
+    elif parsed_type:
+        nmea_live[parsed_type.lower()] = parsed_data
+    await ui_manager.broadcast({"type": "nmea_update", "serial": serial, "data": parsed_data})
+
+
+def _parse_rtcm_signal_payload(payload):
+    if isinstance(payload, str):
+        try:
+            payload = json.loads(payload)
+        except Exception:
+            return None
+    return payload if isinstance(payload, dict) else None
+
+
+def _normalize_rtcm_satellite(item, now_ms, index):
+    if not isinstance(item, dict):
+        return None
+    satellite = dict(item)
+    try:
+        last_seen = int(float(satellite.get("lastSeen") or satellite.get("last_seen") or now_ms))
+    except (TypeError, ValueError):
+        last_seen = now_ms
+    if 0 < last_seen < 10_000_000_000:
+        last_seen *= 1000
+    if last_seen <= 0 or last_seen > now_ms + 60_000:
+        last_seen = now_ms
+    satellite["lastSeen"] = last_seen
+    key = str(
+        satellite.get("id")
+        or f"RTCM:{satellite.get('system') or satellite.get('sys') or 'un'}:{satellite.get('prn') or index}"
+    )
+    return key, satellite
+
+
+def _prune_rtcm_satellites(satellite_map, now_ms):
+    for key, item in list(satellite_map.items()):
+        try:
+            last_seen = int(item.get("lastSeen") or 0)
+        except (TypeError, ValueError, AttributeError):
+            last_seen = 0
+        if last_seen and now_ms - last_seen > 10_000:
+            satellite_map.pop(key, None)
+
+
+def _update_rtcm_satellite_map(satellite_map, satellites, now_ms):
+    if isinstance(satellites, dict):
+        satellites = list(satellites.values())
+    for index, item in enumerate(satellites):
+        normalized = _normalize_rtcm_satellite(item, now_ms, index)
+        if normalized:
+            key, satellite = normalized
+            satellite_map[key] = satellite
+    _prune_rtcm_satellites(satellite_map, now_ms)
+
+
+async def _process_rtcm_signal_update(serial, payload):
+    decoded_data = _parse_rtcm_signal_payload(payload)
+    if decoded_data is None:
+        return
+    now_ms = int(time.time() * 1000)
+    live = latest_device_telemetry_cache.setdefault(str(serial), {})
+    satellite_map = live.setdefault("rtcm_satellites", {})
+    if not isinstance(satellite_map, dict):
+        satellite_map = {}
+        live["rtcm_satellites"] = satellite_map
+    _update_rtcm_satellite_map(satellite_map, decoded_data.get("satellites") or [], now_ms)
+    decoded_data = {
+        **decoded_data,
+        "satellites": list(satellite_map.values()),
+        "satellite_count": len(satellite_map),
+        "updated_at_ms": now_ms,
+    }
+    live["rtcm_signal_data"] = decoded_data
+    live["satellite_count"] = len(satellite_map)
+    await ui_manager.broadcast({"type": "rtcm_signal_update", "serial": serial, "data": decoded_data})
+
+
+async def _process_pi_websocket_message(serial, data, db_sync_state, license_bypass, expected_token):
+    message_type = data.get("type")
+    payload = data.get("payload")
+    if message_type == "status_update" and payload:
+        await _process_pi_status_update(serial, payload, db_sync_state, license_bypass, expected_token)
+    elif message_type == "nmea_update" and payload:
+        await _process_pi_nmea_update(serial, payload)
+    elif message_type == "rtcm_signal_update" and payload:
+        await _process_rtcm_signal_update(serial, payload)
+
+
+async def _should_finalize_pi_disconnect(serial, websocket, device_exists):
+    if pi_manager.has_replacement(serial, websocket):
+        logger.debug("Pi '%s' old WebSocket closed after a newer connection replaced it", serial)
+        return False
+    if not device_exists or mqtt_handler.device_was_deleted(serial):
+        return False
+    disconnected_at = time.time()
+    await asyncio.sleep(12)
+    if mqtt_handler.device_was_deleted(serial):
+        return False
+    if await status_reconciler.has_update_after(serial, disconnected_at):
+        logger.debug("Pi '%s' WebSocket dropped but another status channel is active", serial)
+        return False
+    if await status_reconciler.current_status(serial) == "offline":
+        return False
+    return True
+
+
+async def _save_pi_offline_status(serial, now_ts, ui_broadcast_payload):
+    try:
+        async with device_session_scope() as offline_db:
+            device = await crud.get_device_by_serial(offline_db, serial)
+            if not device:
+                return False
+            ui_broadcast_payload.update({
+                "name": device.name,
+                "base_config": device.base_config or {},
+                "service_config": _device_service_config(device),
+                "detected_chip_type": device.detected_chip_type,
+                "is_provisioned": device.is_provisioned,
+                "version": device.version,
+                "is_synced": device.is_synced if device.is_synced is not None else True,
+            })
+            device.status = "offline"
+            device.offline_since = now_ts
+            device.bps = 0
+            device.ntrip_connected = False
+            device.ntrip_status = {
+                "server1": {"connected": False, "bps": 0},
+                "server2": {"connected": False, "bps": 0},
+            }
+            device.timestamp = now_ts
+            await offline_db.commit()
+            logger.info("Device set to offline (config preserved in DB)")
+    except Exception as exc:
+        logger.warning("[OFFLINE] DB lookup/update failed (%s)", type(exc).__name__)
+    return True
+
+
+async def _finalize_pi_disconnect(serial, websocket, metadata):
+    logging.debug("Pi '%s' disconnected", serial)
+    pi_manager.disconnect(serial, websocket)
+    if not await _should_finalize_pi_disconnect(serial, websocket, bool(metadata.get("exists"))):
+        return
+    now_ts = int(time.time())
+    offline_decision = await status_reconciler.accept_offline(
+        serial, source="disconnect", received_at=now_ts
+    )
+    if not offline_decision.accepted:
+        return
+    ui_broadcast_payload = {
+        **(offline_decision.payload or {}),
+        "serial": serial,
+        "status": "offline",
+        "offline_since": now_ts,
+        "ntrip_connected": False,
+        "bps": 0,
+        "ntrip_status": {
+            "server1": {"connected": False, "bps": 0},
+            "server2": {"connected": False, "bps": 0},
+        },
+        "timestamp": now_ts,
+    }
+    if not await _save_pi_offline_status(serial, now_ts, ui_broadcast_payload):
+        return
+    if mqtt_handler.device_was_deleted(serial):
+        return
+    await enqueue_ui_broadcast({"type": "status_update", "data": ui_broadcast_payload})
+
+
+@pi_websocket_endpoint_router.websocket("/ws/pi/{serial}")
+async def pi_websocket_endpoint(websocket: WebSocket, serial: str, token: str = Query(None)):
+    authentication = await _authenticate_pi_websocket(websocket, serial, token)
+    if authentication is None:
+        return
+    metadata, expected_token, db_sync_state, license_bypass = authentication
     await pi_manager.connect(serial, websocket)
-
     try:
         while True:
             data = await websocket.receive_json()
-            message_type = data.get("type")
-            payload = data.get("payload")
-
-            if message_type == "status_update" and payload:
-                control_ack = build_control_plane_ack(
-                    payload,
-                    channel="websocket",
-                    serial=serial,
-                )
-                if control_ack:
-                    await pi_manager.send_personal_message(serial, control_ack)
-                payload = dict(payload)
-                payload["serial"] = serial
-                if isinstance(payload.get("service_config"), (dict, list)):
-                    payload["service_config"] = schemas.strip_status_config_secrets(payload["service_config"])
-                sync_errors = list(mqtt_handler.device_sync_cache.get(f"{serial}_errors", []) or [])
-                cached_sync = mqtt_handler.device_sync_cache.get(serial, db_sync_state)
-                payload["is_synced"] = bool(cached_sync)
-                if not cached_sync and not sync_errors:
-                    sync_errors.append("Pending server configuration sync")
-                agent_version = str(payload.get("version") or "").strip().upper()
-                server_version = str(settings.APP_VERSION or "").strip().upper()
-                if agent_version and server_version and agent_version != server_version:
-                    payload["is_synced"] = False
-                    version_error = f"Agent version {agent_version} != server {server_version}"
-                    if version_error not in sync_errors:
-                        sync_errors.append(version_error)
-                if not license_bypass and not expected_token:
-                    payload["status"] = "awaiting_license"
-                    payload["bps"] = 0
-                    payload["ntrip_connected"] = False
-                    payload["ntrip_status"] = {}
-                    payload["ntrip_stats"] = {}
-                    payload["is_synced"] = False
-                    sync_errors.append("Server token has not been issued to this agent")
-                payload["sync_errors"] = sync_errors
-                saved_name = mqtt_handler.device_name_cache.get(serial)
-                if saved_name:
-                    payload["name"] = saved_name
-                compact_payload = _compact_status_payload(payload)
-                if not compact_payload:
-                    continue
-                status_decision = await status_reconciler.accept(
-                    compact_payload,
-                    source="websocket",
-                )
-                if not status_decision.accepted:
-                    logger.debug(
-                        "Ignored WebSocket status for %s: %s",
-                        serial,
-                        status_decision.reason,
-                    )
-                    continue
-                compact_payload = status_decision.payload
-                # WebSocket usually arrives before the duplicate MQTT heartbeat.
-                # The reconciler accepts WebSocket and drops that MQTT duplicate,
-                # so feed the same sync cache and online-device index here.
-                mqtt_handler.cache_agent_sync_inputs(serial, payload)
-                mqtt_handler.cache_websocket_status(serial, compact_payload, payload.get('system_info'))
-                reported_status = str(compact_payload.get("status") or "").strip().lower()
-                if reported_status:
-                    mqtt_handler.device_status_cache[serial] = reported_status
-
-                # Hot path: enqueue for async workers (broadcast + buffered DB write)
-                try:
-                    pi_status_ingest_queue.put_nowait(compact_payload)
-                except asyncio.QueueFull:
-                    # If overloaded, keep newest packet and drop oldest pending packet.
-                    try:
-                        _ = pi_status_ingest_queue.get_nowait()
-                        pi_status_ingest_queue.task_done()
-                        buffer_metrics["pi_ingest_queue_drop_count"] += 1
-                    except Exception:
-                        pass
-                    try:
-                        pi_status_ingest_queue.put_nowait(compact_payload)
-                    except Exception:
-                        pass
-
-            elif message_type == "nmea_update" and payload:
-                parsed_data = mqtt_handler.parse_nmea_sentence(serial, payload)
-                if parsed_data:
-                    live = latest_device_telemetry_cache.setdefault(str(serial), {})
-                    nmea_live = live.setdefault("nmea_data", {})
-                    parsed_type = str(parsed_data.get("type") or "").upper()
-                    if parsed_type == "GGA":
-                        nmea_live["gga"] = parsed_data
-                    elif parsed_type == "GSA":
-                        nmea_live["gsa"] = parsed_data
-                    elif parsed_type == "GSV":
-                        nmea_live["satellites"] = parsed_data.get("satellites") or []
-                    elif parsed_type:
-                        nmea_live[parsed_type.lower()] = parsed_data
-                    await ui_manager.broadcast({
-                        "type": "nmea_update",
-                        "serial": serial,
-                        "data": parsed_data
-                    })
-            elif message_type == "rtcm_signal_update" and payload:
-                decoded_data = payload
-                if isinstance(decoded_data, str):
-                    try:
-                        decoded_data = json.loads(decoded_data)
-                    except Exception:
-                        decoded_data = None
-                if isinstance(decoded_data, dict):
-                    now_ms = int(time.time() * 1000)
-                    live = latest_device_telemetry_cache.setdefault(str(serial), {})
-                    satellite_map = live.setdefault("rtcm_satellites", {})
-                    if not isinstance(satellite_map, dict):
-                        satellite_map = {}
-                        live["rtcm_satellites"] = satellite_map
-                    satellites = decoded_data.get("satellites") or []
-                    if isinstance(satellites, dict):
-                        satellites = list(satellites.values())
-                    for index, item in enumerate(satellites):
-                        if not isinstance(item, dict):
-                            continue
-                        satellite = dict(item)
-                        try:
-                            last_seen = int(float(satellite.get("lastSeen") or satellite.get("last_seen") or now_ms))
-                        except (TypeError, ValueError):
-                            last_seen = now_ms
-                        if 0 < last_seen < 10_000_000_000:
-                            last_seen *= 1000
-                        if last_seen <= 0 or last_seen > now_ms + 60_000:
-                            last_seen = now_ms
-                        satellite["lastSeen"] = last_seen
-                        key = str(
-                            satellite.get("id")
-                            or f"RTCM:{satellite.get('system') or satellite.get('sys') or 'un'}:{satellite.get('prn') or index}"
-                        )
-                        satellite_map[key] = satellite
-                    for key, item in list(satellite_map.items()):
-                        try:
-                            last_seen = int(item.get("lastSeen") or 0)
-                        except (TypeError, ValueError, AttributeError):
-                            last_seen = 0
-                        if last_seen and now_ms - last_seen > 10_000:
-                            satellite_map.pop(key, None)
-                    decoded_data = {
-                        **decoded_data,
-                        "satellites": list(satellite_map.values()),
-                        "satellite_count": len(satellite_map),
-                        "updated_at_ms": now_ms,
-                    }
-                    live["rtcm_signal_data"] = decoded_data
-                    live["satellite_count"] = len(satellite_map)
-                    await ui_manager.broadcast({
-                        "type": "rtcm_signal_update",
-                        "serial": serial,
-                        "data": decoded_data
-                    })
-
+            await _process_pi_websocket_message(
+                serial, data, db_sync_state, license_bypass, expected_token
+            )
     except WebSocketDisconnect:
-        logging.debug("Pi '%s' disconnected", serial)
-        pi_manager.disconnect(serial, websocket)
-        if pi_manager.has_replacement(serial, websocket):
-            logger.debug("Pi '%s' old WebSocket closed after a newer connection replaced it", serial)
-            return
-        if not metadata.get("exists") or mqtt_handler.device_was_deleted(serial):
-            return
-
-        # WebSocket is the secondary channel. Give MQTT/LWT time to prove the
-        # device is still alive before changing the effective station status.
-        disconnected_at = time.time()
-        await asyncio.sleep(12)
-        if mqtt_handler.device_was_deleted(serial):
-            return
-        if await status_reconciler.has_update_after(serial, disconnected_at):
-            logger.debug("Pi '%s' WebSocket dropped but another status channel is active", serial)
-            return
-        if await status_reconciler.current_status(serial) == "offline":
-            return
-
-        now_ts = int(time.time())
-        offline_decision = await status_reconciler.accept_offline(
-            serial,
-            source="disconnect",
-            received_at=now_ts,
-        )
-        if not offline_decision.accepted:
-            return
-
-        # FIX: Read device from DB to get full config (name, base_config, service_config)
-        # then broadcast FULL payload to UI so the map doesn't lose station position.
-        # Only write status-related fields to DB, do NOT touch config.
-        ui_broadcast_payload = {
-            **(offline_decision.payload or {}),
-            "serial": serial,
-            "status": "offline",
-            "offline_since": now_ts,
-            "ntrip_connected": False,
-            "bps": 0,
-            "ntrip_status": {
-                "server1": {"connected": False, "bps": 0},
-                "server2": {"connected": False, "bps": 0}
-            },
-            "timestamp": now_ts
-        }
-
-        try:
-            async with device_session_scope() as offline_db:
-                device = await crud.get_device_by_serial(offline_db, serial)
-                if device:
-                    # Include config in broadcast payload so UI keeps full data
-                    ui_broadcast_payload["name"] = device.name
-                    ui_broadcast_payload["base_config"] = device.base_config or {}
-                    ui_broadcast_payload["service_config"] = _device_service_config(device)
-                    ui_broadcast_payload["detected_chip_type"] = device.detected_chip_type
-                    ui_broadcast_payload["is_provisioned"] = device.is_provisioned
-                    ui_broadcast_payload["version"] = device.version
-                    ui_broadcast_payload["is_synced"] = device.is_synced if device.is_synced is not None else True
-
-                    # Only update status-related fields, do NOT touch config
-                    device.status = "offline"
-                    device.offline_since = now_ts
-                    device.bps = 0
-                    device.ntrip_connected = False
-                    device.ntrip_status = {
-                        "server1": {"connected": False, "bps": 0},
-                        "server2": {"connected": False, "bps": 0}
-                    }
-                    device.timestamp = now_ts
-                    await offline_db.commit()
-                    logger.info("Device set to offline (config preserved in DB)")
-                else:
-                    return
-        except Exception as e:
-            logger.warning("[OFFLINE] DB lookup/update failed (%s)", type(e).__name__)
-
-        # Broadcast FULL payload (with config) to UI so map keeps station
-        if mqtt_handler.device_was_deleted(serial):
-            return
-        await enqueue_ui_broadcast({
-            "type": "status_update",
-            "data": ui_broadcast_payload
-        })
-
-    except Exception as e:
-        if isinstance(e, RuntimeError) and "accept" in str(e).lower():
-            logging.debug("Stale WS '%s' closed before accept completed: %s", serial, e)
+        await _finalize_pi_disconnect(serial, websocket, metadata)
+    except Exception as exc:
+        if isinstance(exc, RuntimeError) and "accept" in str(exc).lower():
+            logging.debug("Stale WS '%s' closed before accept completed: %s", serial, exc)
         else:
-            logging.warning("WS Error '%s': %s", serial, e)
+            logging.warning("WS Error '%s': %s", serial, exc)
         pi_manager.disconnect(serial, websocket)
 
