@@ -373,8 +373,7 @@
         // Pulse effect
         const section = document.getElementById('otp-section');
         section.classList.remove('pulse');
-        section.offsetWidth; // reflow
-        section.classList.add('pulse');
+        requestAnimationFrame(() => requestAnimationFrame(() => section.classList.add('pulse')));
     }
 
     function animateCountdown() {
