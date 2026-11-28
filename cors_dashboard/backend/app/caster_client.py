@@ -257,6 +257,41 @@ class CasterClient:
             return None
         return coordinate if math.isfinite(coordinate) else None
 
+    @staticmethod
+    def _table_text(parts, index, default=""):
+        return parts[index].strip() if len(parts) > index else default
+
+    @classmethod
+    def _table_int(cls, parts, index, default):
+        value = cls._table_text(parts, index)
+        return int(value) if value.isdigit() else default
+
+    def _table_coordinate(self, parts, index):
+        value = self._table_text(parts, index)
+        return self._parse_coordinate(value) if value else None
+
+    def _parse_usertable_line(self, line):
+        if not line.strip().startswith("STR;"):
+            return None
+        parts = line.split(";")
+        if len(parts) < 9:
+            return None
+        from urllib.parse import unquote
+
+        return {
+            "username": self._table_text(parts, 1),
+            "password": self._table_text(parts, 2),
+            "mountpoints": [mp.strip() for mp in self._table_text(parts, 3).split(",") if mp.strip()],
+            "datacount": self._table_int(parts, 4, 0),
+            "status": self._table_int(parts, 5, 0),
+            "identifier": self._table_text(parts, 6),
+            "nclient": self._extract_nclient(parts, default=0),
+            "maxclient": self._extract_maxclient(parts, default=0),
+            "show_position": self._extract_show_position(parts, default=True),
+            "is_blocked": self._table_text(parts, 12) == "1",
+            "block_reason": unquote(self._table_text(parts, 13)),
+        }
+
     async def get_users(self, *, require_complete: bool = False) -> List[dict]:
         if not self.admin_user or not self.admin_password:
             logger.error("Caster usertable credentials are not configured")
@@ -271,22 +306,9 @@ class CasterClient:
                 raise ValueError("Caster did not return a complete usertable")
             users = []
             for line in response.split('\n'):
-                if line.strip().startswith('STR;'):
-                    parts = line.split(';')
-                    if len(parts) >= 9:
-                        users.append({
-                            "username": parts[1].strip(),
-                            "password": parts[2].strip(),
-                            "mountpoints": [mp.strip() for mp in parts[3].split(',') if mp.strip()],
-                            "datacount": int(parts[4]) if parts[4].isdigit() else 0,
-                            "status": int(parts[5]) if parts[5].isdigit() else 0,
-                            "identifier": parts[6].strip() if len(parts) > 6 else "",
-                            "nclient": self._extract_nclient(parts, default=0),
-                            "maxclient": self._extract_maxclient(parts, default=0),
-                            "show_position": self._extract_show_position(parts, default=True),
-                            "is_blocked": parts[12].strip() == "1" if len(parts) > 12 else False,
-                            "block_reason": __import__("urllib").parse.unquote(parts[13].strip()) if len(parts) > 13 else ""
-                        })
+                user = self._parse_usertable_line(line)
+                if user is not None:
+                    users.append(user)
             return users
         except Exception:
             if require_complete:
@@ -337,6 +359,64 @@ class CasterClient:
         response = await self._send_command(cmd)
         return self._is_success_response(response) or self._is_no_change_warning(response)
 
+    async def _read_clienttable(self, commands):
+        for command in commands:
+            try:
+                response = await self._send_command(command)
+                is_complete = (
+                    response
+                    and "ENDCLIENTTABLE" in response
+                    and ("CLIENTTABLE 200 OK" in response or "OK" in response[:30])
+                )
+                if is_complete:
+                    if CLIENTTABLE_DEBUG:
+                        logger.info("-> THÀNH CÔNG VỚI LỆNH: %r", command)
+                    return response
+            except Exception:
+                continue
+        return ""
+
+    def _parse_clienttable_row(self, line, unquote):
+        line = line.strip()
+        if "STR;" not in line:
+            return None
+        if not line.startswith("STR;"):
+            line = line[line.find("STR;"):]
+        parts = line.split(";")
+        if len(parts) < 8:
+            return None
+        try:
+            requested = next(
+                (unquote(part[len("RequestedMP="):]) for part in parts[15:]
+                 if part.startswith("RequestedMP=")),
+                None,
+            )
+            return {
+                "username": self._table_text(parts, 1),
+                "receiver_id": self._table_text(parts, 2),
+                "mountpoint": self._table_text(parts, 3),
+                "requested_mountpoint": requested,
+                "selected_mountpoint": self._table_text(parts, 3) if requested else None,
+                "latitude": self._table_coordinate(parts, 4),
+                "longitude": self._table_coordinate(parts, 5),
+                "status": self._table_int(parts, 6, 1),
+                "nsv": self._table_int(parts, 7, 0),
+                "uptime": self._table_int(parts, 8, None),
+                "client_id": self._table_text(parts, 9),
+            }
+        except Exception:
+            return None
+
+    def _parse_clienttable(self, response):
+        from urllib.parse import unquote
+
+        clients = []
+        for line in response.splitlines():
+            client = self._parse_clienttable_row(line, unquote)
+            if client is not None:
+                clients.append(client)
+        return clients
+
     async def get_clienttable(
         self, mountpoint: str = "all", password: str = None, data_count: int = 1000, admin_user: str = None
     ) -> Optional[List[dict]]:
@@ -345,64 +425,16 @@ class CasterClient:
         if not user or not pw:
             logger.error("Caster clienttable credentials are not configured")
             return None
-        
-        # THỬ 3 PHƯƠNG ÁN LỆNH KHÁC NHAU
-        cmds = [
+        commands = [
             f"GET /clienttable HTTP/1.0/{user}/{mountpoint}/{pw}/{data_count}\r\n\r\n",
             f"GET /admin/clienttable?user={user}&pass={pw}&mountpoint={mountpoint}\r\n\r\n",
         ]
-
-        response = ""
-        for cmd in cmds:
-            try:
-                resp = await self._send_command(cmd)
-                if (resp and "ENDCLIENTTABLE" in resp
-                        and ("CLIENTTABLE 200 OK" in resp or "OK" in resp[:30])):
-                    response = resp
-                    if CLIENTTABLE_DEBUG: logger.info(f"-> THÀNH CÔNG VỚI LỆNH: {repr(cmd)}")
-                    break
-            except Exception: continue
-
-        if not response: return None
-
+        response = await self._read_clienttable(commands)
+        if not response:
+            return None
         if CLIENTTABLE_DEBUG:
             logger.info(f"[CASTER RAW] Response: {repr(response[:150])}")
-
-        from urllib.parse import unquote
-
-        clients = []
-        for line in response.splitlines():
-            line = line.strip()
-            # Caster một số dòng bị thừa ký tự rác (như nSTR;) nên chúng ta tìm STR; trong chuỗi
-            if "STR;" not in line: continue
-            
-            # Cắt bỏ phần rác trước STR; nếu có
-            if not line.startswith("STR;"):
-                idx = line.find("STR;")
-                line = line[idx:]
-
-            parts = line.split(";")
-            if len(parts) < 8: continue
-            
-            try:
-                requested = next((unquote(part[len("RequestedMP="):]) for part in parts[15:]
-                                  if part.startswith("RequestedMP=")), None)
-                clients.append({
-                    "username": parts[1].strip(),
-                    "receiver_id": parts[2].strip(),
-                    "mountpoint": parts[3].strip(),
-                    "requested_mountpoint": requested,
-                    "selected_mountpoint": parts[3].strip() if requested else None,
-                    "latitude": self._parse_coordinate(parts[4]) if parts[4] else None,
-                    "longitude": self._parse_coordinate(parts[5]) if parts[5] else None,
-                    "status": int(parts[6]) if parts[6].isdigit() else 1,
-                    "nsv": int(parts[7]) if parts[7].isdigit() else 0,
-                    "uptime": int(parts[8]) if len(parts) > 8 and parts[8].isdigit() else None,
-                    "client_id": parts[9].strip() if len(parts) > 9 else "",
-                })
-            except Exception: continue
-        
-        return clients
+        return self._parse_clienttable(response)
 
     async def delete_user(self, identifier: str, username: str) -> bool:
         # Tự động truy vấn và lấy identifier thực tế của user trên Caster trước khi thực hiện lệnh xóa
