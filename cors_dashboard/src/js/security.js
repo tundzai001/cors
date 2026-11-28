@@ -63,6 +63,105 @@ document.addEventListener('DOMContentLoaded', async () => {
     const attackAlert = document.getElementById('attack-mode-alert');
     const currentRpsEl = document.getElementById('current-rps');
 
+    function updateHistoryPagination(pagination) {
+        if (pagination) {
+            historyPage = pagination.page;
+            document.getElementById('active-sessions-badge').textContent = `Lịch sử · ${pagination.total} phiên`;
+            document.getElementById('sessions-page-label').textContent = `Trang ${pagination.page}/${pagination.pages} · 20 phiên/trang`;
+        }
+        document.getElementById('sessions-prev').disabled = !pagination || pagination.page <= 1;
+        document.getElementById('sessions-next').disabled = !pagination || pagination.page >= pagination.pages;
+    }
+
+    function renderRequestedSecuritySessions(sessionsData, requestedView, requestedPage) {
+        if (requestedView !== sessionsView || requestedPage !== historyPage) return;
+        const history = requestedView === 'history';
+        const sessions = history ? sessionsData.history_sessions : sessionsData.active_sessions;
+        renderActiveSessions(sessions || [], sessionsData.error, history);
+        document.getElementById('sessions-pagination').classList.toggle('d-none', !history);
+        if (history) updateHistoryPagination(sessionsData.pagination);
+    }
+
+    function renderSecuritySessions(sessionsData, requestedView, requestedPage) {
+        if (!sessionsData) return;
+        renderRequestedSecuritySessions(sessionsData, requestedView, requestedPage);
+        renderBlockedDevices(sessionsData.blocked_devices || [], sessionsData.error);
+    }
+
+    function renderLoadedSecurityData(statsData, settingsData, sessionsData, requestedView, requestedPage, isManualReload) {
+        if (statsData.status === 'error' || statsData.rate_limiter?.error) {
+            throw new Error(statsData.error || 'Security monitoring unavailable');
+        }
+        window.securityErrorCount = 0;
+        document.getElementById('offline-overlay')?.remove();
+        document.querySelectorAll('.ops-card').forEach(card => { card.style.opacity = ''; card.style.filter = ''; });
+        document.getElementById('last-scan-time').textContent = new Date(statsData.timestamp * 1000).toLocaleTimeString('vi-VN');
+        document.getElementById('security-updated').textContent = `Cập nhật ${new Date(statsData.timestamp * 1000).toLocaleTimeString('vi-VN')}`;
+        updateDashboardMetrics(statsData.rate_limiter, settingsData);
+        renderBlacklistTable(statsData.rate_limiter.blacklisted_ips);
+        const edge = statsData.rate_limiter.nginx_security || {};
+        const edgeStatus = document.getElementById('proxy-block-status');
+        if (edgeStatus) edgeStatus.textContent = edge.state === 'reload_requested'
+            ? 'Nginx: đã gửi cập nhật danh sách chặn'
+            : edge.state === 'error' ? 'Đồng bộ Nginx lỗi · chặn ứng dụng vẫn hoạt động'
+            : edge.enabled ? 'Đang đồng bộ danh sách sang Nginx' : 'Hiện chỉ chặn tại ứng dụng';
+        renderTemporaryBlocksTable(statsData.rate_limiter.temporary_blocked_ips || []);
+        renderBlockHistory(statsData.rate_limiter.recent_blocks || []);
+        renderSuspiciousIPs(statsData.rate_limiter.suspicious_ips);
+        updateSwitchesState(settingsData);
+        renderTrafficChart(statsData.rate_limiter.traffic_history);
+        renderVpnIntelligence(statsData.rate_limiter.vpn_suspects);
+        handleAttackMode(statsData.rate_limiter.attack_mode);
+        renderSecuritySessions(sessionsData, requestedView, requestedPage);
+        if (statsData.system_health) renderSystemHealth(statsData.system_health);
+        if (statsData.rate_limiter.traffic_history.length > 0) {
+            const lastVal = statsData.rate_limiter.traffic_history[statsData.rate_limiter.traffic_history.length - 1];
+            currentRpsEl.textContent = lastVal;
+        }
+        if (isManualReload) showSuccess('Đã cập nhật dữ liệu bảo mật');
+    }
+
+    function handleSecurityLoadError(error) {
+        console.error('❌ Failed to load security data:', error);
+        if (error.message === 'Unauthorized') return;
+        showError(`Connection error: ${error.message || 'Cannot reach server'}`);
+        showOfflineState();
+        document.getElementById('security-updated').textContent = 'Mất cập nhật · đang giữ dữ liệu lần cuối';
+        if (!window.securityErrorCount) window.securityErrorCount = 0;
+        window.securityErrorCount++;
+        if (window.securityErrorCount >= 3) {
+            console.warn('⚠️ Too many errors, stopping auto-refresh');
+            stopPolling();
+            showError('Auto-refresh disabled. Click Refresh to retry');
+        }
+    }
+
+    function restoreManualRefresh(isManualReload) {
+        if (!isManualReload) return;
+        refreshBtn.disabled = false;
+        refreshBtn.innerHTML = '<i class="bi bi-arrow-clockwise" aria-hidden="true"></i>Làm mới';
+        window.securityErrorCount = 0;
+    }
+
+    async function fetchSecurityData(requestedView, requestedPage, isManualReload) {
+        const settingsRequest = !cachedSecuritySettings || isManualReload || Date.now() - settingsUpdatedAt > 30000
+            ? apiFetch('/api/admin/settings').then(value => {
+                cachedSecuritySettings = value;
+                settingsUpdatedAt = Date.now();
+                return value;
+            })
+            : Promise.resolve(cachedSecuritySettings);
+        const sessionsUrl = '/api/admin/security/sessions'
+            + (requestedView === 'history' ? `?history_page=${requestedPage}` : '');
+        const sessionsRequest = apiFetch(sessionsUrl).catch(error => {
+            console.warn('Could not load sessions:', error);
+            return {active_sessions:[],blocked_devices:[],error:error.message};
+        });
+        return Promise.all([
+            apiFetch('/api/admin/security/stats'), settingsRequest, sessionsRequest
+        ]);
+    }
+
     async function loadSecurityData(isManualReload = false) {
         if (loadingSecurityData) return;
         loadingSecurityData = true;
@@ -74,111 +173,13 @@ document.addEventListener('DOMContentLoaded', async () => {
         }
 
         try {
-            const [statsData, settingsData, sessionsData] = await Promise.all([
-                apiFetch('/api/admin/security/stats'),
-                !cachedSecuritySettings || isManualReload || Date.now() - settingsUpdatedAt > 30000
-                    ? apiFetch('/api/admin/settings').then(value => { cachedSecuritySettings = value; settingsUpdatedAt = Date.now(); return value; })
-                    : Promise.resolve(cachedSecuritySettings),
-                apiFetch('/api/admin/security/sessions' + (requestedView === 'history' ? `?history_page=${requestedPage}` : '')).catch(err => {
-                    console.warn('Could not load sessions:', err);
-                    return { active_sessions: [], blocked_devices: [], error: err.message };
-                })
-            ]);
-            
-            // === 🆕 KIỂM TRA NẾU API TRẢ VỀ LỖI (status: "error") ===
-            if (statsData.status === 'error' || statsData.rate_limiter?.error) {
-                throw new Error(statsData.error || 'Security monitoring unavailable');
-            }
-            window.securityErrorCount = 0;
-            document.getElementById('offline-overlay')?.remove();
-            document.querySelectorAll('.ops-card').forEach(card => { card.style.opacity = ''; card.style.filter = ''; });
-            document.getElementById('last-scan-time').textContent = new Date(statsData.timestamp * 1000).toLocaleTimeString('vi-VN');
-            document.getElementById('security-updated').textContent = `Cập nhật ${new Date(statsData.timestamp * 1000).toLocaleTimeString('vi-VN')}`;
-            // === LOGIC CŨ (Khi không có lỗi) ===
-            updateDashboardMetrics(statsData.rate_limiter, settingsData);
-            renderBlacklistTable(statsData.rate_limiter.blacklisted_ips);
-            const edge = statsData.rate_limiter.nginx_security || {};
-            const edgeStatus = document.getElementById('proxy-block-status');
-            if (edgeStatus) edgeStatus.textContent = edge.state === 'reload_requested'
-                ? 'Nginx: đã gửi cập nhật danh sách chặn'
-                : edge.state === 'error' ? 'Đồng bộ Nginx lỗi · chặn ứng dụng vẫn hoạt động'
-                : edge.enabled ? 'Đang đồng bộ danh sách sang Nginx' : 'Hiện chỉ chặn tại ứng dụng';
-            renderTemporaryBlocksTable(statsData.rate_limiter.temporary_blocked_ips || []);
-            renderBlockHistory(statsData.rate_limiter.recent_blocks || []);
-            renderSuspiciousIPs(statsData.rate_limiter.suspicious_ips);
-            updateSwitchesState(settingsData);
-            renderTrafficChart(statsData.rate_limiter.traffic_history);
-            renderVpnIntelligence(statsData.rate_limiter.vpn_suspects);
-            handleAttackMode(statsData.rate_limiter.attack_mode);
-
-            if (sessionsData) {
-                if (requestedView === sessionsView && requestedPage === historyPage) {
-                    const history = requestedView === 'history';
-                    renderActiveSessions((history ? sessionsData.history_sessions : sessionsData.active_sessions) || [], sessionsData.error, history);
-                    document.getElementById('sessions-pagination').classList.toggle('d-none', !history);
-                    if (history) {
-                        const pagination = sessionsData.pagination;
-                        if (pagination) {
-                            historyPage = pagination.page;
-                            document.getElementById('active-sessions-badge').textContent = `Lịch sử · ${pagination.total} phiên`;
-                            document.getElementById('sessions-page-label').textContent = `Trang ${pagination.page}/${pagination.pages} · 20 phiên/trang`;
-                        }
-                        document.getElementById('sessions-prev').disabled = !pagination || pagination.page <= 1;
-                        document.getElementById('sessions-next').disabled = !pagination || pagination.page >= pagination.pages;
-                    }
-                }
-                renderBlockedDevices(sessionsData.blocked_devices || [], sessionsData.error);
-            }
-
-            if (statsData.system_health) {
-                renderSystemHealth(statsData.system_health);
-            }
-            
-            if (statsData.rate_limiter.traffic_history.length > 0) {
-                const lastVal = statsData.rate_limiter.traffic_history[statsData.rate_limiter.traffic_history.length - 1];
-                currentRpsEl.textContent = lastVal;
-            }
-
-            if (isManualReload) {
-                showSuccess('Đã cập nhật dữ liệu bảo mật');
-            }
-            
+            const [statsData, settingsData, sessionsData] = await fetchSecurityData(requestedView, requestedPage, isManualReload);
+            renderLoadedSecurityData(statsData, settingsData, sessionsData, requestedView, requestedPage, isManualReload);
         } catch (error) {
-            console.error('❌ Failed to load security data:', error);
-            
-            // === 🆕 XỬ LÝ LỖI NETWORK/SERVER ===
-            if (error.message === 'Unauthorized') {
-                // apiFetch đã xử lý redirect, không cần làm gì
-                return;
-            }
-            
-            // Hiển thị thông báo lỗi cho user
-            showError(`Connection error: ${error.message || 'Cannot reach server'}`);
-            
-            // === 🆕 HIỂN thị UI "OFFLINE STATE" ===
-            showOfflineState();
-            document.getElementById('security-updated').textContent = 'Mất cập nhật · đang giữ dữ liệu lần cuối';
-            
-            // === 🆕 DỪNG POLLING NẾU LỖI LIÊN TỤC ===
-            // (Tránh spam request khi server down)
-            if (!window.securityErrorCount) window.securityErrorCount = 0;
-            window.securityErrorCount++;
-            
-            if (window.securityErrorCount >= 3) {
-                console.warn('⚠️ Too many errors, stopping auto-refresh');
-                stopPolling();
-                showError('Auto-refresh disabled. Click Refresh to retry');
-            }
-            
+            handleSecurityLoadError(error);
         } finally {
             loadingSecurityData = false;
-            if (isManualReload) {
-                refreshBtn.disabled = false;
-                refreshBtn.innerHTML = '<i class="bi bi-arrow-clockwise" aria-hidden="true"></i>Làm mới';
-                
-                // Reset error counter khi user manually reload
-                window.securityErrorCount = 0;
-            }
+            restoreManualRefresh(isManualReload);
         }
     }
 

@@ -1016,6 +1016,120 @@ function EspSetupProgress({ device, offline, tokenConfirmed }) {
     );
 }
 
+function isDetailsTabVisible(tabName, visibility) {
+    if (tabName === 'license') return visibility.showLicenseTab;
+    if (tabName === 'chip') return visibility.showConfigTabs;
+    if (tabName === 'service' || tabName === 'rovers') return visibility.showServiceAndDashboardTabs;
+    if (tabName === 'dashboard') return visibility.showOverviewTab;
+    if (tabName === 'operations') return !visibility.isDeviceRebooting;
+    return false;
+}
+
+function getDetailsSpecialTab({isReadonly4g, shouldShowLicenseTab, isDeviceSwitched, activeTab, lifecycleStatus}) {
+    if (isReadonly4g) return {tab:'dashboard'};
+    if (shouldShowLicenseTab) {
+        return !isDeviceSwitched && activeTab === 'license' ? {skip:true} : {tab:'license'};
+    }
+    if (lifecycleStatus === 'unprovisioned'
+        || ['auto_setup_rover','auto_setup_wait_fix','auto_setup_averaging','auto_setup_base'].includes(lifecycleStatus)) {
+        return {tab:'chip'};
+    }
+    return null;
+}
+
+function getDetailsDefaultTab({isGnssConfigured, isServiceConfigured, visibility}) {
+    if (!isGnssConfigured) return 'chip';
+    if (!isServiceConfigured) return 'service';
+    if (visibility.showOverviewTab) return 'dashboard';
+    if (visibility.showServiceAndDashboardTabs) return 'service';
+    if (visibility.showConfigTabs) return 'chip';
+    if (visibility.showLicenseTab) return 'license';
+    return 'operations';
+}
+
+function chooseDetailsTab(context) {
+    const specialTab = getDetailsSpecialTab(context);
+    if (specialTab) return specialTab;
+    const {isDeviceSwitched, activeTab, wasGnssConfigured, isGnssConfigured, userSelectedTab, visibility} = context;
+    if (!isDeviceSwitched && activeTab) {
+        if (activeTab === 'chip' && !wasGnssConfigured && isGnssConfigured) return {tab:'service'};
+        if (isDetailsTabVisible(activeTab, visibility)) return {skip:true};
+    }
+    if (!isDeviceSwitched && userSelectedTab && activeTab && isDetailsTabVisible(activeTab, visibility)) {
+        return {skip:true};
+    }
+    return {tab:getDetailsDefaultTab(context)};
+}
+
+function missingDetailsPanel(name) {
+    return <div className="alert alert-warning small mb-0">
+        <i className="bi bi-exclamation-triangle-fill me-2"></i>
+        Dashboard module <strong>{name}</strong> chưa sẵn sàng. Vui lòng refresh lại trang.
+    </div>;
+}
+
+function renderRequiredDetailsPanel(Component, name, props) {
+    return Component ? <Component {...props} /> : missingDetailsPanel(name);
+}
+
+function OfflineStationPanel({offlineInfo}) {
+    if (!offlineInfo?.sinceSeconds) return <div className="small text-white-50">
+        The start time for this offline period was not saved. The next transition to offline will be recorded accurately.
+    </div>;
+    return <>
+        <div className="small text-white-50">
+            <i className="bi bi-clock-history me-1" aria-hidden="true"></i>
+            <span>Offline since</span>{': '}
+            <time dateTime={new Date(offlineInfo.sinceSeconds * 1000).toISOString()}>{offlineInfo.sinceText}</time>
+        </div>
+        <div className="fs-5 fw-semibold mt-1"><span>Duration</span>{': '}{offlineInfo.durationText}</div>
+    </>;
+}
+
+function OfflineDashboardDetails({offlineInfo}) {
+    return <div className="card bg-dark border-danger" role="status">
+        <div className="card-body d-flex align-items-center gap-3 p-4">
+            <div className="rounded-circle bg-danger bg-opacity-10 text-danger d-flex align-items-center justify-content-center flex-shrink-0" style={{width:56,height:56}}>
+                <i className="bi bi-wifi-off fs-3" aria-hidden="true"></i>
+            </div>
+            <div className="min-w-0">
+                <div className="d-flex align-items-center gap-2 mb-2"><span className="badge bg-danger">OFFLINE</span><strong>Station is offline</strong></div>
+                <OfflineStationPanel offlineInfo={offlineInfo} />
+            </div>
+        </div>
+    </div>;
+}
+
+function DetailsPanelTabContent({device, currentUser, activeTab, isReadonly4g, canEdit, canEditService, canManageRovers, isAdmin, staleOffline, offlineInfo, nmeaData, handlers}) {
+    const forms = window.CorsDashboardForms || {};
+    const LicenseForm = forms.LicenseForm || window.LicenseForm;
+    const ProvisionForm = forms.ProvisionForm || window.ProvisionForm;
+    const BaseConfigForm = forms.BaseConfigForm || window.BaseConfigForm;
+    const ServiceConfigForm = forms.ServiceConfigForm || window.ServiceConfigForm;
+    const commonProps = {device,currentUser,disabled:!canEdit};
+    switch (isReadonly4g ? 'dashboard' : activeTab) {
+        case 'license':
+            return renderRequiredDetailsPanel(LicenseForm,'LicenseForm',{...commonProps,onDeployLicense:handlers.onDeployLicense});
+        case 'chip':
+            return device.status === 'unprovisioned'
+                ? renderRequiredDetailsPanel(ProvisionForm,'ProvisionForm',{...commonProps,onProvision:handlers.onProvision})
+                : renderRequiredDetailsPanel(BaseConfigForm,'BaseConfigForm',{...commonProps,onConfigureChip:handlers.onConfigureChip,onStopAutoBase:handlers.onStopAutoBase,onReadBaseStatus:handlers.onReadBaseStatus});
+        case 'service':
+            return renderRequiredDetailsPanel(ServiceConfigForm,'ServiceConfigForm',{...commonProps,disabled:!canEditService,onConfigureService:handlers.onConfigureService});
+        case 'dashboard':
+            if (staleOffline) return <OfflineDashboardDetails offlineInfo={offlineInfo} />;
+            if (!window.DashboardPanel) return missingDetailsPanel('DashboardPanel');
+            return <window.DashboardPanel device={device} nmeaData={nmeaData} />;
+        case 'rovers':
+            return canManageRovers ? <RoverManagementPanel device={device} /> : <div className="alert alert-danger">Bạn không có quyền truy cập mục này.</div>;
+        case 'operations':
+            return <StationOperationsPanel device={device} canEditService={canEditService} canRunDeviceActions={isAdmin}
+                onLock={handlers.onLock} onUnlock={handlers.onUnlock} onReset={handlers.onReset} />;
+        default:
+            return null;
+    }
+}
+
 const DetailsPanel = memo(function DetailsPanel({
     device,
     currentUser,
@@ -1117,15 +1231,6 @@ const DetailsPanel = memo(function DetailsPanel({
     const showServiceAndDashboardTabs = showConfigTabs && (!isDeviceUnprovisioned || isRelayLikeStation);
     const showOverviewTab = isReadonly4g || showServiceAndDashboardTabs;
 
-    const isTabVisible = (tabName) => {
-        if (tabName === 'license') return showLicenseTab;
-        if (tabName === 'chip') return showConfigTabs;
-        if (tabName === 'service' || tabName === 'rovers') return showServiceAndDashboardTabs;
-        if (tabName === 'dashboard') return showOverviewTab;
-        if (tabName === 'operations') return !isDeviceRebooting;
-        return false;
-    };
-
     useEffect(() => {
         if (!device) return;
 
@@ -1141,51 +1246,13 @@ const DetailsPanel = memo(function DetailsPanel({
             setIsEditingName(false);
             return;
         }
-        if (shouldShowLicenseTab) {
-            if (!isDeviceSwitched && activeTab === 'license') {
-                return;
-            }
-            newActiveTab = 'license';
-        } else switch (lifecycleStatus) {
-            case 'unprovisioned':
-                newActiveTab = 'chip';
-                break;
-            case 'auto_setup_rover':
-            case 'auto_setup_wait_fix':
-            case 'auto_setup_averaging':
-            case 'auto_setup_base':
-                newActiveTab = 'chip';
-                break;
-            default:
-                if (!isDeviceSwitched && activeTab) {
-                    if (activeTab === 'chip' && !wasGnssConfigured && isGnssConfigured) {
-                        newActiveTab = 'service';
-                    } else if (isTabVisible(activeTab)) {
-                        return;
-                    }
-                }
-
-                if (!isDeviceSwitched && userSelectedTab && activeTab && isTabVisible(activeTab)) {
-                    return;
-                }
-
-                if (!isGnssConfigured) {
-                    newActiveTab = 'chip';
-                } else if (!isServiceConfigured) {
-                    newActiveTab = 'service';
-                } else if (showOverviewTab) {
-                    newActiveTab = 'dashboard';
-                } else if (showServiceAndDashboardTabs) {
-                    newActiveTab = 'service';
-                } else if (showConfigTabs) {
-                    newActiveTab = 'chip';
-                } else if (showLicenseTab) {
-                    newActiveTab = 'license';
-                } else {
-                    newActiveTab = 'operations';
-                }
-                break;
-        }
+        const selection = chooseDetailsTab({
+            isReadonly4g, shouldShowLicenseTab, isDeviceSwitched, activeTab,
+            lifecycleStatus, wasGnssConfigured, isGnssConfigured, isServiceConfigured, userSelectedTab,
+            visibility:{showLicenseTab,showConfigTabs,showServiceAndDashboardTabs,showOverviewTab,isDeviceRebooting}
+        });
+        if (selection.skip) return;
+        newActiveTab = selection.tab;
 
         if (newActiveTab) {
             setActiveTab(newActiveTab);
@@ -1247,83 +1314,6 @@ const DetailsPanel = memo(function DetailsPanel({
             </div>
         );
     }
-
-    const renderTabContent = () => {
-        const commonProps = { device, currentUser, disabled: !canEdit };
-        const forms = window.CorsDashboardForms || {};
-        const LicenseForm = forms.LicenseForm || window.LicenseForm;
-        const ProvisionForm = forms.ProvisionForm || window.ProvisionForm;
-        const BaseConfigForm = forms.BaseConfigForm || window.BaseConfigForm;
-        const ServiceConfigForm = forms.ServiceConfigForm || window.ServiceConfigForm;
-        const DashboardPanel = window.DashboardPanel;
-        const missingPanel = (name) => (
-            <div className="alert alert-warning small mb-0">
-                <i className="bi bi-exclamation-triangle-fill me-2"></i>
-                Dashboard module <strong>{name}</strong> chưa sẵn sàng. Vui lòng refresh lại trang.
-            </div>
-        );
-
-        switch (isReadonly4g ? 'dashboard' : activeTab) {
-            case 'license':
-                if (!LicenseForm) return missingPanel('LicenseForm');
-                return <LicenseForm {...commonProps} onDeployLicense={onDeployLicense} />;
-            case 'chip':
-                if (device.status === 'unprovisioned') {
-                    if (!ProvisionForm) return missingPanel('ProvisionForm');
-                    return <ProvisionForm {...commonProps} onProvision={onProvision} />;
-                }
-                if (!BaseConfigForm) return missingPanel('BaseConfigForm');
-                return <BaseConfigForm {...commonProps} onConfigureChip={onConfigureChip} onStopAutoBase={onStopAutoBase} onReadBaseStatus={onReadBaseStatus} />;
-            case 'service':
-                if (!ServiceConfigForm) return missingPanel('ServiceConfigForm');
-                return <ServiceConfigForm {...commonProps} disabled={!canEditService} onConfigureService={onConfigureService} />;
-            case 'dashboard':
-                if (staleOffline) {
-                    return (
-                        <div className="card bg-dark border-danger" role="status">
-                            <div className="card-body d-flex align-items-center gap-3 p-4">
-                                <div className="rounded-circle bg-danger bg-opacity-10 text-danger d-flex align-items-center justify-content-center flex-shrink-0" style={{ width: 56, height: 56 }}>
-                                    <i className="bi bi-wifi-off fs-3" aria-hidden="true"></i>
-                                </div>
-                                <div className="min-w-0">
-                                    <div className="d-flex align-items-center gap-2 mb-2">
-                                        <span className="badge bg-danger">OFFLINE</span>
-                                        <strong>Station is offline</strong>
-                                    </div>
-                                    {offlineInfo?.sinceSeconds ? (
-                                        <>
-                                            <div className="small text-white-50">
-                                                <i className="bi bi-clock-history me-1" aria-hidden="true"></i>
-                                                <span>Offline since</span>{': '}
-                                                <time dateTime={new Date(offlineInfo.sinceSeconds * 1000).toISOString()}>{offlineInfo.sinceText}</time>
-                                            </div>
-                                            <div className="fs-5 fw-semibold mt-1">
-                                                <span>Duration</span>{': '}{offlineInfo.durationText}
-                                            </div>
-                                        </>
-                                    ) : (
-                                        <div className="small text-white-50">
-                                            The start time for this offline period was not saved. The next transition to offline will be recorded accurately.
-                                        </div>
-                                    )}
-                                </div>
-                            </div>
-                        </div>
-                    );
-                }
-                if (!DashboardPanel) return missingPanel('DashboardPanel');
-                return <DashboardPanel device={device} nmeaData={nmeaData} />;
-            case 'rovers':
-                if (!canManageRovers) {
-                    return <div className="alert alert-danger">Bạn không có quyền truy cập mục này.</div>;
-                }
-                return <RoverManagementPanel device={device} />;
-            case 'operations':
-                return <StationOperationsPanel device={device} canEditService={canEditService} canRunDeviceActions={isAdmin} onLock={onLock} onUnlock={onUnlock} onReset={onReset} />;
-            default:
-                return null;
-        }
-    };
 
     const canManageRovers = device && (currentUser?.role === 'admin' || (currentUser?.role === 'coordinator' && currentUser?.can_view_rovers && currentUser?.can_create_rovers));
     const showStationOperationsTab = !isReadonly4g && !isDeviceRebooting && (isAdmin || canEditService);
@@ -1617,7 +1607,20 @@ const DetailsPanel = memo(function DetailsPanel({
                 </ul>
 
                 <div className="tab-content dashboard-tab-content pt-3">
-                    {renderTabContent()}
+                    <DetailsPanelTabContent
+                        device={device}
+                        currentUser={currentUser}
+                        activeTab={activeTab}
+                        isReadonly4g={isReadonly4g}
+                        canEdit={canEdit}
+                        canEditService={canEditService}
+                        canManageRovers={canManageRovers}
+                        isAdmin={isAdmin}
+                        staleOffline={staleOffline}
+                        offlineInfo={offlineInfo}
+                        nmeaData={nmeaData}
+                        handlers={{onDeployLicense,onProvision,onConfigureChip,onStopAutoBase,onReadBaseStatus,onConfigureService,onLock,onUnlock,onReset}}
+                    />
                 </div>
             </div>
             {canEdit && (
