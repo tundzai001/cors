@@ -137,131 +137,93 @@ class AdvancedRateLimiter:
     # === MAIN ENTRY POINT WITH ATTACK MODE                                  ===
     # ==========================================================================
     
-    async def check_and_record(self, db: AsyncSession, request: Request, 
-                               username: Optional[str] = None, 
-                               is_success: bool = False, 
+    def _record_request_activity(self, request: Request, now: float, client_ip: str) -> str:
+        current_tick = int(now)
+        if current_tick > self.last_tick:
+            for _ in range(current_tick - self.last_tick - 1):
+                self.traffic_history.append(0)
+            self.traffic_history.append(1)
+            self.last_tick = current_tick
+        elif not self.traffic_history:
+            self.traffic_history.append(1)
+        else:
+            self.traffic_history[-1] += 1
+
+        self.global_request_rate.append(now)
+        fingerprint = self._generate_fingerprint(request)
+        fp_entry = self.fingerprint_history[fingerprint]
+        fp_entry["ips"].add(client_ip)
+        fp_entry["ua"] = request.headers.get("User-Agent", "Unknown")
+        if now - fp_entry["first_seen"] > 3600:
+            fp_entry["recent_count"] = 1
+            fp_entry["first_seen"] = int(now)
+            fp_entry["ips"] = {client_ip}
+        else:
+            fp_entry["recent_count"] += 1
+        return fingerprint
+
+    async def _apply_attempt_policy(
+        self, db: AsyncSession, client_ip: str, username: Optional[str],
+        now: float, threat_score: float, is_success: bool,
+    ) -> None:
+        if self.attack_mode:
+            threat_score *= 1.5
+            if len(self.ip_attempts[client_ip]) % 5 == 0:
+                logger.warning(f"⚠️ ATTACK MODE ACTIVE - Increased scrutiny for {client_ip}")
+
+        if is_success:
+            self._clear_tracking(client_ip)
+            return
+
+        self.ip_attempts[client_ip].append(now)
+        self._cleanup_old_attempts(client_ip, now)
+        attempt_count = len(self.ip_attempts[client_ip])
+        if threat_score >= self.SUSPICIOUS_SCORE_THRESHOLD:
+            logger.critical(f"🚨 AUTO-BLOCK: {client_ip} (threat_score={threat_score})")
+            await self.block_ip(db, client_ip, reason=f"Auto-blocked: threat_score={threat_score}")
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Suspicious activity detected. Your IP has been blocked."
+            )
+
+        if attempt_count > 1:
+            logger.warning(f"Failed login: IP={client_ip}, user={username}, "
+                           f"attempts={attempt_count}/{self.MAX_ATTEMPTS}, "
+                           f"threat={threat_score:.1f}")
+        if attempt_count >= self.PERMANENT_THRESHOLD:
+            await self.block_ip(db, client_ip, reason="Exceeded permanent threshold")
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Permanent ban")
+        if attempt_count >= self.MAX_ATTEMPTS:
+            await self._apply_temporary_block(db, client_ip, now)
+            raise HTTPException(
+                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                detail=f"Blocked for {self._get_block_duration(client_ip)/60:.0f} min",
+            )
+
+    async def _check_request_locked(self, db, request, username, is_success, settings) -> None:
+        now = time.time()
+        client_ip = self._get_client_ip(request)
+        fingerprint = self._record_request_activity(request, now, client_ip)
+        self._check_global_attack_pattern(now)
+        block_record = await self._check_database_blocks(db, client_ip, now)
+        if block_record:
+            return
+        threat_score = await self._advanced_threat_analysis(
+            client_ip, fingerprint, request, now, settings
+        )
+        await self._apply_attempt_policy(db, client_ip, username, now, threat_score, is_success)
+
+    async def check_and_record(self, db: AsyncSession, request: Request,
+                               username: Optional[str] = None,
+                               is_success: bool = False,
                                user_role: Optional[str] = None):
-        """
-        🛡️ Multi-layer protection với attack mode detection
-        Phiên bản: v5.0 (Tích hợp Data Recording cho Dashboard)
-        """
-        # === LOAD SETTINGS ===
+        """Record request activity and apply the firewall's threat response."""
         settings = await crud.get_system_settings(db)
         if not settings.get('firewall_enabled', True):
             logger.warning("⚠️ FIREWALL DISABLED - SYSTEM VULNERABLE!")
             return
-
         async with self.lock:
-            now = time.time()
-            client_ip = self._get_client_ip(request)
-            
-            # ==================================================================
-            # 📊 DATA RECORDING PHASE (Bắt buộc cho get_stats & Dashboard)
-            # ==================================================================
-            
-            # 1. Cập nhật Traffic History (Request/Second) cho biểu đồ
-            current_tick = int(now)
-            if current_tick > self.last_tick:
-                # Nếu đã sang giây mới, điền số 0 cho những giây trôi qua không có request
-                for _ in range(current_tick - self.last_tick - 1):
-                    self.traffic_history.append(0)
-                self.traffic_history.append(1) # Request đầu tiên của giây hiện tại
-                self.last_tick = current_tick
-            else:
-                # Nếu vẫn trong giây cũ, tăng đếm
-                if not self.traffic_history:
-                    self.traffic_history.append(1)
-                else:
-                    self.traffic_history[-1] += 1
-
-            # 2. Cập nhật Global Request Rate (để phát hiện DDoS tổng thể)
-            self.global_request_rate.append(now)
-
-            # 3. Cập nhật Fingerprint History (Cho bảng VPN Intelligence)
-            # Tạo fingerprint sớm để lưu metadata
-            fingerprint = self._generate_fingerprint(request)
-            user_agent = request.headers.get("User-Agent", "Unknown")
-            
-            # Lấy hoặc tạo entry trong fingerprint_history
-            fp_entry = self.fingerprint_history[fingerprint]
-            fp_entry["ips"].add(client_ip) # Thêm IP vào set (để đếm số lượng IP unique)
-            fp_entry["ua"] = user_agent
-            
-            # Logic đếm recent_count (Reset nếu quá 1 giờ)
-            if now - fp_entry["first_seen"] > 3600:
-                 fp_entry["recent_count"] = 1
-                 fp_entry["first_seen"] = int(now)
-                 fp_entry["ips"] = {client_ip} # Reset set IPs
-            else:
-                 fp_entry["recent_count"] += 1
-
-            # ==================================================================
-            # 🛡️ SECURITY LOGIC PHASE
-            # ==================================================================
-
-            # === STEP 1: DETECT GLOBAL ATTACK ===
-            self._check_global_attack_pattern(now)
-            
-            # === STEP 2: DATABASE BLOCK CHECK ===
-            # Kiểm tra xem IP đã bị block trong DB chưa
-            block_record = await self._check_database_blocks(db, client_ip, now)
-            if block_record:
-                # Nếu đã bị block, return ngay (Request đã bị chặn bởi Middleware hoặc code này)
-                # Lưu ý: Vẫn record traffic ở trên để admin thấy "Attempted Requests"
-                return
-            
-            # === STEP 3: ADVANCED THREAT ANALYSIS ===
-            threat_score = await self._advanced_threat_analysis(
-                client_ip, 
-                fingerprint, 
-                request,
-                now,
-                settings
-            )
-            
-            # === STEP 4: ATTACK MODE SCALING ===
-            if self.attack_mode:
-                threat_score *= 1.5  # Tăng độ nhạy lên 50% khi đang bị tấn công
-                # Log cảnh báo nhưng hạn chế spam log quá nhiều
-                if len(self.ip_attempts[client_ip]) % 5 == 0: 
-                    logger.warning(f"⚠️ ATTACK MODE ACTIVE - Increased scrutiny for {client_ip}")
-            
-            # === STEP 5: SUCCESS HANDLING ===
-            if is_success:
-                self._clear_tracking(client_ip)
-                return
-            
-            # === STEP 6: FAILED ATTEMPT TRACKING ===
-            self.ip_attempts[client_ip].append(now)
-            self._cleanup_old_attempts(client_ip, now)
-            
-            attempt_count = len(self.ip_attempts[client_ip])
-            
-            # === STEP 7: AUTO-BLOCK ON HIGH THREAT SCORE ===
-            # Block ngay lập tức nếu hành vi quá đáng ngờ (kể cả khi chưa hết số lần thử)
-            if threat_score >= self.SUSPICIOUS_SCORE_THRESHOLD:
-                logger.critical(f"🚨 AUTO-BLOCK: {client_ip} (threat_score={threat_score})")
-                await self.block_ip(db, client_ip, reason=f"Auto-blocked: threat_score={threat_score}")
-                raise HTTPException(
-                    status_code=status.HTTP_403_FORBIDDEN,
-                    detail="Suspicious activity detected. Your IP has been blocked."
-                )
-            
-            if attempt_count > 1:
-                 logger.warning(f"Failed login: IP={client_ip}, user={username}, "
-                              f"attempts={attempt_count}/{self.MAX_ATTEMPTS}, "
-                              f"threat={threat_score:.1f}")
-            
-            # === STEP 8: APPLY COUNT-BASED BLOCKS ===
-            if attempt_count >= self.PERMANENT_THRESHOLD:
-                await self.block_ip(db, client_ip, reason="Exceeded permanent threshold")
-                raise HTTPException(status_code=status.HTTP_403_FORBIDDEN,
-                                  detail="Permanent ban")
-            
-            if attempt_count >= self.MAX_ATTEMPTS:
-                await self._apply_temporary_block(db, client_ip, now)
-                raise HTTPException(status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-                                  detail=f"Blocked for {self._get_block_duration(client_ip)/60:.0f} min")
+            await self._check_request_locked(db, request, username, is_success, settings)
 
     # ==========================================================================
     # === 🆕 GLOBAL ATTACK DETECTION                                         ===
