@@ -38,13 +38,16 @@ function getSatelliteSystem(sat) {
         if (mapping[firstChar]) return mapping[firstChar];
     }
 
-    const prn = Number(sat.prn);
+    return getSatelliteSystemFromPrn(Number(sat.prn)) || 'un';
+}
+
+function getSatelliteSystemFromPrn(prn) {
     if (prn >= 1 && prn <= 32) return 'us';
     if (prn >= 65 && prn <= 96) return 'ru';
     if (prn >= 301 && prn <= 336) return 'eu';
     if (prn >= 193 && prn <= 200) return 'jp';
     if ((prn >= 33 && prn <= 64) || (prn >= 401 && prn <= 463)) return 'cn';
-    return 'un';
+    return null;
 }
 
 // Chuẩn hóa PRN về dải RTCM (1-based) để NMEA và RTCM cùng vệ tinh dùng chung key.
@@ -56,15 +59,100 @@ function getNormalizedPrn(sat) {
     const prn = match ? Number(match[1]) : Number(prnRaw);
     if (Number.isNaN(prn)) return prnStr; // fallback to raw string
     const sys = getSatelliteSystem(sat);
-    if (sys === 'ru' && prn >= 65 && prn <= 96) return prn - 64;
-    if (sys === 'eu' && prn >= 301 && prn <= 336) return prn - 300;
-    if (sys === 'cn' && prn >= 401 && prn <= 463) return prn - 400;
-    if (sys === 'jp' && prn >= 193 && prn <= 200) return prn - 192;
-    return prn;
+    if (sys === 'ru' && prn >= 65 && prn <= 96) return String(prn - 64);
+    if (sys === 'eu' && prn >= 301 && prn <= 336) return String(prn - 300);
+    if (sys === 'cn' && prn >= 401 && prn <= 463) return String(prn - 400);
+    if (sys === 'jp' && prn >= 193 && prn <= 200) return String(prn - 192);
+    return String(prn);
 }
 
 function getSatelliteKey(sat) {
     return `${getSatelliteSystem(sat)}:${getNormalizedPrn(sat)}`;
+}
+
+function updateSkyplotSatellite(buffer, sat, now) {
+    const key = getSatelliteKey(sat);
+    const existing = buffer.get(key);
+    const satSnr = Number(sat.snr) || 0;
+    const existingSnr = existing ? (Number(existing.snr) || 0) : 0;
+    const newAz = Number(sat.azimuth) || 0;
+    const newEl = Number(sat.elevation) || 0;
+    const hasNewPos = newAz !== 0 || newEl !== 0;
+    const hasOldPos = existing && (Number(existing.azimuth) !== 0 || Number(existing.elevation) !== 0);
+
+    if (!existing || satSnr > 0 || existingSnr === 0) {
+        const position = !hasNewPos && hasOldPos
+            ? { azimuth: existing.azimuth, elevation: existing.elevation }
+            : {};
+        buffer.set(key, { ...sat, ...position, lastSeen: now, opacity: 1.0 });
+        return;
+    }
+
+    existing.lastSeen = now;
+    if (satSnr > 0) existing.snr = satSnr;
+    if (hasNewPos) {
+        existing.azimuth = newAz;
+        existing.elevation = newEl;
+    }
+}
+
+function refreshSkyplotSatelliteBuffer(buffer, satellites, now) {
+    for (const sat of satellites) updateSkyplotSatellite(buffer, sat, now);
+}
+
+function updateSkyplotSatelliteOpacity(buffer, now, timeout, fadeDuration) {
+    for (const [key, sat] of buffer.entries()) {
+        const age = now - sat.lastSeen;
+        if (age > timeout + fadeDuration) {
+            buffer.delete(key);
+        } else if (age > timeout) {
+            sat.opacity = Math.max(0, 1 - ((age - timeout) / fadeDuration));
+        } else {
+            sat.opacity = 1.0;
+        }
+    }
+}
+
+function drawSkyplotSatellite(ctx, satData, centerX, centerY, radius) {
+    let az = Number(satData.azimuth);
+    let el = Number(satData.elevation);
+    const snr = Number(satData.snr);
+    if (Number.isNaN(snr) || snr === 0) return;
+    if (Number.isNaN(az)) az = 0;
+    if (Number.isNaN(el)) el = 0;
+
+    const azRad = (az * Math.PI) / 180;
+    const dist = radius * (90 - el) / 90;
+    const x = centerX + dist * Math.sin(azRad);
+    const y = centerY - dist * Math.cos(azRad);
+    const system = getSatelliteSystem(satData);
+    const flag = flags[system];
+    const flagSize = satData.isTracking ? 18 : 14;
+
+    ctx.globalAlpha = satData.opacity || 1.0;
+    if (satData.isTracking) {
+        ctx.beginPath();
+        ctx.arc(x, y, flagSize / 2 + 3, 0, 2 * Math.PI);
+        ctx.fillStyle = (colors[system] || '#fff') + '40';
+        ctx.fill();
+    }
+
+    if (flag && flag.complete) {
+        ctx.drawImage(flag, x - flagSize / 2, y - flagSize / 2, flagSize, flagSize);
+    } else {
+        ctx.beginPath();
+        ctx.arc(x, y, 9, 0, 2 * Math.PI);
+        ctx.fillStyle = colors[system] || '#ccc';
+        ctx.fill();
+    }
+
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.8)';
+    ctx.fillRect(x - 8, y + flagSize / 2 + 2, 16, 10);
+    ctx.fillStyle = '#fff';
+    ctx.font = 'bold 7px Arial';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(getNormalizedPrn(satData), x, y + flagSize / 2 + 7);
 }
 
 function getVisibleSatellites(satellites, maxAgeMs) {
@@ -269,44 +357,8 @@ const SatelliteSkyView = memo(function SatelliteSkyView({ nmeaData }) {
         const drawSkyplotSatellites = (satellites) => {
             const now = Date.now();
             const buffer = satelliteBufferRef.current;
-            satellites.forEach(sat => {
-                const key = getSatelliteKey(sat);
-                const existing = buffer.get(key);
-                const satSnr = Number(sat.snr) || 0;
-                const existingSnr = existing ? (Number(existing.snr) || 0) : 0;
-                const newAz = Number(sat.azimuth) || 0;
-                const newEl = Number(sat.elevation) || 0;
-                const hasNewPos = (newAz !== 0 || newEl !== 0);
-                const hasOldPos = existing && (Number(existing.azimuth) !== 0 || Number(existing.elevation) !== 0);
-
-                if (!existing || satSnr > 0 || existingSnr === 0) {
-                    if (!hasNewPos && hasOldPos) {
-                        // Giữ lại az/el cũ khi ephemeris chưa được tính lại
-                        buffer.set(key, { ...sat, azimuth: existing.azimuth, elevation: existing.elevation, lastSeen: now, opacity: 1.0 });
-                    } else {
-                        buffer.set(key, { ...sat, lastSeen: now, opacity: 1.0 });
-                    }
-                } else {
-                    existing.lastSeen = now; // keep it alive
-                    // Cập nhật SNR nhưng giữ az/el cũ nếu mới = 0
-                    if (satSnr > 0) existing.snr = satSnr;
-                    if (hasNewPos) {
-                        existing.azimuth = newAz;
-                        existing.elevation = newEl;
-                    }
-                }
-            });
-
-            for (const [satKey, satData] of buffer.entries()) {
-                const age = now - satData.lastSeen;
-                if (age > SATELLITE_TIMEOUT + FADE_DURATION) {
-                    buffer.delete(satKey);
-                } else if (age > SATELLITE_TIMEOUT) {
-                    satData.opacity = Math.max(0, 1 - ((age - SATELLITE_TIMEOUT) / FADE_DURATION));
-                } else {
-                    satData.opacity = 1.0;
-                }
-            }
+            refreshSkyplotSatelliteBuffer(buffer, satellites, now);
+            updateSkyplotSatelliteOpacity(buffer, now, SATELLITE_TIMEOUT, FADE_DURATION);
 
             satCtx.clearRect(0, 0, satCtx.canvas.width, satCtx.canvas.height);
             if (satCtx.canvas.width === 0 || satCtx.canvas.height === 0) return;
@@ -315,47 +367,7 @@ const SatelliteSkyView = memo(function SatelliteSkyView({ nmeaData }) {
             const centerY = satCtx.canvas.height / 2;
             const radius = Math.min(centerX, centerY) * 0.82;
 
-            for (const satData of buffer.values()) {
-                let az = Number(satData.azimuth);
-                let el = Number(satData.elevation);
-                const snr = Number(satData.snr);
-                if (Number.isNaN(snr) || snr === 0) continue;
-                if (Number.isNaN(az)) az = 0;
-                if (Number.isNaN(el)) el = 0;
-
-                const azRad = (az * Math.PI) / 180;
-                const dist = radius * (90 - el) / 90;
-                const x = centerX + dist * Math.sin(azRad);
-                const y = centerY - dist * Math.cos(azRad);
-                const system = getSatelliteSystem(satData);
-                const flag = flags[system];
-                const flagSize = satData.isTracking ? 18 : 14;
-
-                satCtx.globalAlpha = satData.opacity || 1.0;
-                if (satData.isTracking) {
-                    satCtx.beginPath();
-                    satCtx.arc(x, y, flagSize / 2 + 3, 0, 2 * Math.PI);
-                    satCtx.fillStyle = (colors[system] || '#fff') + '40';
-                    satCtx.fill();
-                }
-
-                if (flag && flag.complete) {
-                    satCtx.drawImage(flag, x - flagSize / 2, y - flagSize / 2, flagSize, flagSize);
-                } else {
-                    satCtx.beginPath();
-                    satCtx.arc(x, y, 9, 0, 2 * Math.PI);
-                    satCtx.fillStyle = colors[system] || '#ccc';
-                    satCtx.fill();
-                }
-
-                satCtx.fillStyle = 'rgba(0, 0, 0, 0.8)';
-                satCtx.fillRect(x - 8, y + flagSize / 2 + 2, 16, 10);
-                satCtx.fillStyle = '#fff';
-                satCtx.font = 'bold 7px Arial';
-                satCtx.textAlign = 'center';
-                satCtx.textBaseline = 'middle';
-                satCtx.fillText(getNormalizedPrn(satData), x, y + flagSize / 2 + 7);
-            }
+            for (const satData of buffer.values()) drawSkyplotSatellite(satCtx, satData, centerX, centerY, radius);
             satCtx.globalAlpha = 1.0;
         };
 
@@ -423,9 +435,7 @@ const SatelliteSkyView = memo(function SatelliteSkyView({ nmeaData }) {
             }
         };
 
-        const animate = () => {
-            const now = Date.now();
-            const { gga, gsa, satellites } = safeNmeaDataRef.current;
+        const updateStatsIfDue = (now, gga, gsa, satellites) => {
             if (now - lastStatsUpdate.current >= STATS_INTERVAL) {
                 const satCountEl = document.getElementById('db-sats');
                 if (satCountEl) {
@@ -444,14 +454,28 @@ const SatelliteSkyView = memo(function SatelliteSkyView({ nmeaData }) {
                 if (lonEl) lonEl.textContent = gga?.longitude?.toFixed(8) || '0.0';
                 lastStatsUpdate.current = now;
             }
+        };
+
+        const drawCanvasIfDue = (now, satellites) => {
             if (now - lastCanvasUpdate.current >= CANVAS_INTERVAL) {
                 drawSkyplotSatellites(Object.values(satellites || {}));
                 lastCanvasUpdate.current = now;
             }
+        };
+
+        const drawBarsIfDue = (now, satellites) => {
             if (now - lastBarsUpdate.current >= BARS_INTERVAL) {
                 drawSignalBars(Object.values(satellites || {}));
                 lastBarsUpdate.current = now;
             }
+        };
+
+        const animate = () => {
+            const now = Date.now();
+            const { gga, gsa, satellites } = safeNmeaDataRef.current;
+            updateStatsIfDue(now, gga, gsa, satellites);
+            drawCanvasIfDue(now, satellites);
+            drawBarsIfDue(now, satellites);
             animationFrameRef.current = requestAnimationFrame(animate);
         };
 
