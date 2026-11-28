@@ -2097,43 +2097,43 @@ def is_valid_rtcm3_packet(packet: bytes) -> bool:
     return expected_crc == packet_crc
 
 
+def _next_valid_rtcm3_packet(stream_buffer: bytearray, max_packet_len: int):
+    if len(stream_buffer) < 3:
+        return None, True
+    preamble_idx = stream_buffer.find(0xD3)
+    if preamble_idx < 0:
+        stream_buffer.clear()
+        return None, True
+    if preamble_idx > 0:
+        del stream_buffer[:preamble_idx]
+    if len(stream_buffer) < 3:
+        return None, True
+
+    payload_len = ((stream_buffer[1] & 0x03) << 8) | stream_buffer[2]
+    packet_len = payload_len + 6
+    if packet_len < 6 or packet_len > max_packet_len:
+        del stream_buffer[0]
+        return None, False
+    if len(stream_buffer) < packet_len:
+        return None, True
+
+    candidate = bytes(stream_buffer[:packet_len])
+    if not is_valid_rtcm3_packet(candidate):
+        del stream_buffer[0]
+        return None, False
+    del stream_buffer[:packet_len]
+    return candidate, False
+
+
 def extract_valid_rtcm3_packets(stream_buffer: bytearray, max_packet_len: int = 2048) -> list[bytes]:
     """Extract only complete, CRC-valid RTCM3 packets from a streaming buffer."""
     packets: list[bytes] = []
-
     while True:
-        if len(stream_buffer) < 3:
+        packet, finished = _next_valid_rtcm3_packet(stream_buffer, max_packet_len)
+        if finished:
             return packets
-
-        preamble_idx = stream_buffer.find(0xD3)
-        if preamble_idx < 0:
-            stream_buffer.clear()
-            break
-
-        if preamble_idx > 0:
-            del stream_buffer[:preamble_idx]
-
-        if len(stream_buffer) < 3:
-            break
-
-        payload_len = ((stream_buffer[1] & 0x03) << 8) | stream_buffer[2]
-        packet_len = payload_len + 6
-
-        if packet_len < 6 or packet_len > max_packet_len:
-            del stream_buffer[0]
-            continue
-
-        if len(stream_buffer) < packet_len:
-            break
-
-        candidate = bytes(stream_buffer[:packet_len])
-        if is_valid_rtcm3_packet(candidate):
-            packets.append(candidate)
-            del stream_buffer[:packet_len]
-        else:
-            del stream_buffer[0]
-
-    return packets
+        if packet is not None:
+            packets.append(packet)
 
 def _rtcm_getbitu(buff: bytes, pos: int, length: int) -> int:
     bits = 0

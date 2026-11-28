@@ -696,13 +696,16 @@ class ZaloBotService(
         if self._bot_mode() == "webhook":
             self._ensure_dispatcher()
 
-    def _prepare_webhook_update(self, payload, event, trace_id, sensitive_input):
+    @staticmethod
+    def _webhook_update_data(payload):
         update_data = payload.get("result") if isinstance(payload, dict) else None
         if update_data is None and isinstance(payload, dict):
             update_data = payload
         if not isinstance(update_data, dict):
             raise ValueError("Invalid Zalo webhook payload: missing result object")
-        update_data, normalization = self._normalize_group_command(update_data)
+        return update_data
+
+    def _record_webhook_normalization(self, normalization, event, trace_id):
         if normalization:
             event["group_command_normalization"] = normalization
             chat_id = scoped_chat_id(self.bot_key, str(event["summary"].get("chat_id") or ""))
@@ -712,6 +715,18 @@ class ZaloBotService(
                 "[ZALO TRACE %s] normalized group command %r -> %r",
                 trace_id, normalization["original_text"], normalization["normalized_text"],
             )
+
+    def _webhook_dispatch_text(self, parsed_text, sensitive_input):
+        if sensitive_input:
+            return REDACTED_VALUE
+        if isinstance(parsed_text, str):
+            return self._redact_command_secret(parsed_text)
+        return parsed_text
+
+    def _prepare_webhook_update(self, payload, event, trace_id, sensitive_input):
+        update_data = self._webhook_update_data(payload)
+        update_data, normalization = self._normalize_group_command(update_data)
+        self._record_webhook_normalization(normalization, event, trace_id)
         update = Update.de_json(update_data, self.app.bot)
         if update is None:
             raise ValueError("Zalo SDK could not parse webhook payload")
@@ -722,11 +737,7 @@ class ZaloBotService(
         if not getattr(getattr(message, "chat", None), "id", None):
             return update, None, True
         parsed_text = getattr(message, "text", None)
-        safe_text = (
-            REDACTED_VALUE if sensitive_input
-            else self._redact_command_secret(parsed_text) if isinstance(parsed_text, str)
-            else parsed_text
-        )
+        safe_text = self._webhook_dispatch_text(parsed_text, sensitive_input)
         event["dispatch_text"] = safe_text
         logger.info("[ZALO TRACE %s] SDK dispatch text=%r", trace_id, safe_text)
         event["status"] = "parsed"

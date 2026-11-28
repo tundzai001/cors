@@ -380,11 +380,26 @@ def generate_gga(lat, lon, alt):
         cs ^= ord(char)
     return f"${payload}*{cs:02X}\r\n"
 
+def _split_ntrip_header(header_data):
+    header_end = header_data.find(b"\r\n\r\n")
+    if header_end >= 0:
+        split_at = header_end + 4
+        return header_data[:split_at], header_data[split_at:]
+    line_end = header_data.find(b"\r\n")
+    if line_end < 0:
+        return None
+    first_line = header_data[:line_end].decode(errors="ignore")
+    if not first_line.startswith(NTRIP_ICY_SUCCESS.decode("ascii")):
+        return None
+    blank_end = header_data.find(b"\r\n\r\n", line_end)
+    split_at = blank_end + 4 if blank_end >= 0 else line_end + 2
+    return header_data[:split_at], header_data[split_at:]
+
+
 def read_http_header(sock, timeout=5):
     sock.settimeout(timeout)
     header_data = b""
     start_time = time.time()
-    
     while True:
         if time.time() - start_time > timeout:
             preview = header_data[:160].decode(errors="ignore")
@@ -394,19 +409,9 @@ def read_http_header(sock, timeout=5):
             if not chunk:
                 raise Exception("Connection closed")
             header_data += chunk
-
-            header_end = header_data.find(b"\r\n\r\n")
-            if header_end >= 0:
-                split_at = header_end + 4
-                return header_data[:split_at], header_data[split_at:]
-
-            line_end = header_data.find(b"\r\n")
-            if line_end >= 0:
-                first_line = header_data[:line_end].decode(errors="ignore")
-                if first_line.startswith(NTRIP_ICY_SUCCESS.decode("ascii")):
-                    blank_end = header_data.find(b"\r\n\r\n", line_end)
-                    split_at = blank_end + 4 if blank_end >= 0 else line_end + 2
-                    return header_data[:split_at], header_data[split_at:]
+            split_header = _split_ntrip_header(header_data)
+            if split_header is not None:
+                return split_header
         except socket.timeout:
             raise Exception("Socket timeout")
 

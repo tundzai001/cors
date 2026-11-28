@@ -146,29 +146,44 @@ def _rover_sync_hosts(update_req, rover):
     return target_hosts, config
 
 
+async def _validate_selected_rover_serials(update_req, current_user, devices_db, db):
+    if not update_req.selected_serials or current_user.role == auth.Role.ADMIN:
+        return
+    manageable_serials = await crud.get_rover_manageable_base_serials(devices_db, current_user, db)
+    selected_serials = {
+        str(serial).strip().upper()
+        for serial in update_req.selected_serials
+        if str(serial).strip()
+    }
+    if not selected_serials.issubset(manageable_serials):
+        raise HTTPException(status_code=403, detail="Rover chỉ được gán vào trạm trong phạm vi của bạn.")
+
+
+async def _validate_rover_mountpoint_scope(update_req, rover, current_user, devices_db):
+    if current_user.role == auth.Role.ADMIN or update_req.mountpoints is None:
+        return
+    serials = update_req.selected_serials or ((rover.base_serial or "").split(",") if rover else [])
+    within_scope = await crud.rover_mountpoints_within_scope(
+        devices_db, current_user, serials, update_req.mountpoints
+    )
+    if not within_scope:
+        raise HTTPException(status_code=403, detail="Mountpoint không thuộc trạm được cấp cho bạn.")
+
+
+async def _validate_rover_management_permission(rover, current_user, devices_db, db):
+    if not rover:
+        return
+    has_perm = await crud.check_rover_management_permission(rover, current_user, devices_db, db)
+    if not has_perm:
+        raise HTTPException(status_code=403, detail="Bạn không có quyền quản lý Rover này.")
+
+
 async def _validate_rover_sync_scope(update_req, rover, current_user, devices_db, db):
     if current_user.role == auth.Role.VIEWER and not rover and not update_req.selected_serials:
         raise HTTPException(status_code=403, detail="Viewer phải chọn ít nhất một trạm trong Rover Access.")
-    if update_req.selected_serials and current_user.role != auth.Role.ADMIN:
-        manageable_serials = await crud.get_rover_manageable_base_serials(devices_db, current_user, db)
-        selected_serials = {
-            str(serial).strip().upper()
-            for serial in update_req.selected_serials
-            if str(serial).strip()
-        }
-        if not selected_serials.issubset(manageable_serials):
-            raise HTTPException(status_code=403, detail="Rover chỉ được gán vào trạm trong phạm vi của bạn.")
-    if current_user.role != auth.Role.ADMIN and update_req.mountpoints is not None:
-        serials_for_mps = update_req.selected_serials or ((rover.base_serial or "").split(",") if rover else [])
-        within_scope = await crud.rover_mountpoints_within_scope(
-            devices_db, current_user, serials_for_mps, update_req.mountpoints
-        )
-        if not within_scope:
-            raise HTTPException(status_code=403, detail="Mountpoint không thuộc trạm được cấp cho bạn.")
-    if rover:
-        has_perm = await crud.check_rover_management_permission(rover, current_user, devices_db, db)
-        if not has_perm:
-            raise HTTPException(status_code=403, detail="Bạn không có quyền quản lý Rover này.")
+    await _validate_selected_rover_serials(update_req, current_user, devices_db, db)
+    await _validate_rover_mountpoint_scope(update_req, rover, current_user, devices_db)
+    await _validate_rover_management_permission(rover, current_user, devices_db, db)
 
 
 async def _create_synced_rover(username, update_req, current_user, db):
