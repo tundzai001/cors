@@ -274,6 +274,24 @@ const getCasterNoDataReason = (sleeping, startup, runningAutoBase, device) => {
     if (device.ntrip_stats?.rtcm_input_bps === 0) return 'ESP không nhận được RTCM từ chip GNSS.';
     return 'Chưa xác định được nguyên nhân từ trạng thái thiết bị hiện tại.';
 };
+const getCasterStatusPresentation = (blocked, lockApplied, enabled, pending, offline, telemetry) => {
+    if (blocked) return lockApplied
+        ? { label: 'Đã khoá · ngừng gửi', icon: 'bi-lock-fill', tone: 'danger' }
+        : { label: 'Khoá · chờ áp dụng', icon: 'bi-lock-fill', tone: 'danger' };
+    if (!enabled) return { label: 'Đã tắt', icon: 'bi-power', tone: 'secondary' };
+    if (pending) return { label: 'Chưa áp dụng', icon: 'bi-pencil-square', tone: 'warning' };
+    if (offline) return { label: 'Trạm mất kết nối', icon: 'bi-cloud-slash', tone: 'danger' };
+    if (telemetry.connected) return { label: 'Đã kết nối Caster', icon: 'bi-check-circle-fill', tone: 'success' };
+    if (telemetry.hasConnection || telemetry.hasBps) {
+        return { label: 'Chưa kết nối Caster', icon: 'bi-exclamation-circle', tone: 'warning' };
+    }
+    return { label: 'Chờ trạng thái', icon: 'bi-hourglass-split', tone: 'secondary' };
+};
+const getCasterActivityPresentation = (sleeping, bps) => {
+    if (sleeping) return { label: 'Ngủ · chờ rover', tone: 'info' };
+    if (bps > 0) return { label: `Đang gửi RTCM · ${bps} B/s`, tone: 'success' };
+    return { label: 'Chưa gửi RTCM', tone: 'secondary' };
+};
 const LicenseForm = memo(function LicenseForm({ device, currentUser = {}, onDeployLicense, disabled }) {
     const [isDeploying, setIsDeploying] = useState(false);
     const [isUpdatingBypass, setIsUpdatingBypass] = useState(false);
@@ -2445,31 +2463,20 @@ const ServiceConfigForm = memo(function ServiceConfigForm({ device, currentUser 
         ) || enabled !== toBool(saved[`${key}_enabled`]);
         const telemetry = window.CorsDashboardShared?.getServerTelemetry(device, serverId) || {};
         const offline = !!window.CorsDashboardShared?.getOfflineInfo(device) || device.status === 'offline';
-        let label = 'Chờ trạng thái';
-        let icon = 'bi-hourglass-split';
-        let tone = 'secondary';
-        if (blockedServer(serverId)) {
-            label = lockApplied ? 'Đã khoá · ngừng gửi' : 'Khoá · chờ áp dụng'; icon = 'bi-lock-fill'; tone = 'danger';
-        } else if (!enabled) {
-            label = 'Đã tắt'; icon = 'bi-power'; tone = 'secondary';
-        } else if (pending) {
-            label = 'Chưa áp dụng'; icon = 'bi-pencil-square'; tone = 'warning';
-        } else if (offline) {
-            label = 'Trạm mất kết nối'; icon = 'bi-cloud-slash'; tone = 'danger';
-        } else if (telemetry.connected) {
-            label = 'Đã kết nối Caster'; icon = 'bi-check-circle-fill'; tone = 'success';
-        } else if (telemetry.hasConnection || telemetry.hasBps) {
-            label = 'Chưa kết nối Caster'; icon = 'bi-exclamation-circle'; tone = 'warning';
-        }
+        const blocked = blockedServer(serverId);
+        const { label, icon, tone } = getCasterStatusPresentation(blocked, lockApplied, enabled, pending, offline, telemetry);
         const sleeping = telemetry.sleep ?? (
             toBool(telemetry.onDemand, toBool(saved[`${key}_stream_on_demand`], toBool(saved.stream_on_demand))) &&
             !toBool(telemetry.active, toBool(saved[`${key}_stream_active`], toBool(saved.stream_active)))
         );
+        const activity = getCasterActivityPresentation(sleeping, telemetry.bps);
         const casterError = device.ntrip_status?.[key]?.error;
         const startup = device.system_info?.base_startup || {};
-        const workflow = device.auto_base_progress || {};
-        const runningAutoBase = /^auto_setup/.test(device.status || '');
+        const runningAutoBase = String(device.status || '').startsWith('auto_setup');
         const noDataReason = getCasterNoDataReason(sleeping, startup, runningAutoBase, device);
+        const showActivity = enabled && !blocked && !pending && !offline;
+        const showCasterError = enabled && !pending && !offline && !telemetry.connected && !sleeping && Boolean(casterError);
+        const showNoData = enabled && !blocked && !pending && !offline && telemetry.connected && telemetry.bps <= 0;
         return (
             <span className="d-inline-flex flex-wrap align-items-center gap-2 ms-2 small" role="status" aria-live="polite">
                 <span className={`badge text-bg-${enabled ? 'primary' : 'secondary'}`}>
@@ -2479,16 +2486,16 @@ const ServiceConfigForm = memo(function ServiceConfigForm({ device, currentUser 
                 <span className={`badge text-bg-${tone}`}>
                     <i className={`bi ${icon} me-1`} aria-hidden="true"></i>{label}
                 </span>
-                {enabled && !blockedServer(serverId) && !pending && !offline && (
-                    <span className={`badge text-bg-${sleeping ? 'info' : telemetry.bps > 0 ? 'success' : 'secondary'}`}>
+                {showActivity && (
+                    <span className={`badge text-bg-${activity.tone}`}>
                         <i className={`bi ${sleeping ? 'bi-moon-stars' : 'bi-broadcast'} me-1`} aria-hidden="true"></i>
-                        {sleeping ? 'Ngủ · chờ rover' : telemetry.bps > 0 ? `Đang gửi RTCM · ${telemetry.bps} B/s` : 'Chưa gửi RTCM'}
+                        {activity.label}
                     </span>
                 )}
-                {enabled && !pending && !offline && !telemetry.connected && !sleeping && casterError && (
+                {showCasterError && (
                     <span className="text-danger text-break w-100" role="status">Caster: {casterError}</span>
                 )}
-                {enabled && !blockedServer(serverId) && !pending && !offline && telemetry.connected && !(telemetry.bps > 0) && (
+                {showNoData && (
                     <span className="text-warning text-break w-100">{noDataReason}</span>
                 )}
             </span>
