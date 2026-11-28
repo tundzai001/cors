@@ -119,6 +119,58 @@ def _rover_response_list(rovers: list[models.RoverAccount], current_user: models
 
 
 # === DEVICE ENDPOINTS ===
+async def _resolve_device_user_scope(user_id, auth_db, current_user):
+    if user_id is None:
+        return current_user.id, current_user.role
+    user_info = await crud.get_user_by_id(auth_db, user_id)
+    is_child = user_info and getattr(user_info, 'parent_id', None) == current_user.id
+    can_filter = (
+        current_user.role == auth.Role.ADMIN
+        or user_id == current_user.id
+        or (current_user.role == auth.Role.COORDINATOR and is_child)
+    )
+    if not can_filter:
+        logging.warning(
+            f"IDOR ATTEMPT: User '{current_user.username}' (role={current_user.role}) "
+            f"tried to filter by user_id={user_id}"
+        )
+        raise HTTPException(status_code=403, detail="Only admins can filter devices by user_id")
+    return user_id, user_info.role if user_info else current_user.role
+
+
+async def _coordinator_device_list(target_user_id, db, auth_db, current_user):
+    coordinator = current_user if current_user.id == target_user_id else await crud.get_user_by_id(auth_db, target_user_id)
+    if not coordinator:
+        return []
+    visible_serials = await crud.get_coordinator_visible_base_serials(db, coordinator)
+    result = await db.execute(
+        select(models.Device).where(func.upper(models.Device.serial).in_(visible_serials))
+        .order_by(models.Device.name)
+    )
+    devices = result.scalars().all()
+    logger.info(
+        f"[DEVICES] {current_user.username} (role={auth.Role.COORDINATOR}) "
+        f"→ {len(devices)} devices by user_id={target_user_id}"
+    )
+    return _device_response_list(devices, current_user)
+
+
+async def _viewer_device_list(target_user_id, db, auth_db, current_user):
+    user_info = current_user if current_user.id == target_user_id else await crud.get_user_by_id(auth_db, target_user_id)
+    if not user_info:
+        return []
+    viewer_serials = await crud.get_viewer_visible_base_serials(auth_db, db, user_info)
+    if not viewer_serials:
+        return []
+    result = await db.execute(
+        select(models.Device).where(func.upper(models.Device.serial).in_(viewer_serials))
+        .order_by(models.Device.name)
+    )
+    devices = result.scalars().all()
+    logger.info(f"[DEVICES] Viewer '{current_user.username}' → returning {len(devices)} devices")
+    return _device_response_list(devices, current_user)
+
+
 @router.get("/api/devices", response_model=list[schemas.Device], responses={403: {"description": "Forbidden"}})
 async def get_initial_devices(
     user_id: Optional[int] = Query(None),
@@ -126,51 +178,12 @@ async def get_initial_devices(
     auth_db: AsyncSession = Depends(get_auth_db),
     current_user: models.User = Depends(auth.require_permission(auth.Permission.VIEW_DEVICES)) 
 ):
-    target_user_id = current_user.id
-    target_role = current_user.role
-
-    if user_id is not None:
-        user_info = await crud.get_user_by_id(auth_db, user_id)
-        is_child = user_info and getattr(user_info, 'parent_id', None) == current_user.id
-        
-        if current_user.role != auth.Role.ADMIN and user_id != current_user.id and not (current_user.role == auth.Role.COORDINATOR and is_child):
-            logging.warning(
-                f"IDOR ATTEMPT: User '{current_user.username}' (role={current_user.role}) "
-                f"tried to filter by user_id={user_id}"
-            )
-            raise HTTPException(
-                status_code=403, 
-                detail="Only admins can filter devices by user_id"
-            )
-        target_user_id = user_id
-        if user_info:
-            target_role = user_info.role
-
+    target_user_id, target_role = await _resolve_device_user_scope(user_id, auth_db, current_user)
     if target_role == auth.Role.COORDINATOR:
-        coordinator = current_user if current_user.id == target_user_id else await crud.get_user_by_id(auth_db, target_user_id)
-        if not coordinator:
-            return []
-        visible_serials = await crud.get_coordinator_visible_base_serials(db, coordinator)
-        result = await db.execute(select(models.Device).where(func.upper(models.Device.serial).in_(visible_serials)).order_by(models.Device.name))
-        devices = result.scalars().all()
-        logger.info(f"[DEVICES] {current_user.username} (role={target_role}) → {len(devices)} devices by user_id={target_user_id}")
-        return _device_response_list(devices, current_user)
-    elif target_role == auth.Role.VIEWER:
-        from sqlalchemy import select as _select
-        from sqlalchemy import func as _func
-        from .. import models as _models
-        user_info = current_user if current_user.id == target_user_id else await crud.get_user_by_id(auth_db, target_user_id)
-        if not user_info:
-            return []
-        viewer_serials = await crud.get_viewer_visible_base_serials(auth_db, db, user_info)
-        if not viewer_serials:
-            return []
-        
-        result = await db.execute(_select(_models.Device).where(_func.upper(_models.Device.serial).in_(viewer_serials)).order_by(_models.Device.name))
-        devices = result.scalars().all()
-        logger.info(f"[DEVICES] Viewer '{current_user.username}' → returning {len(devices)} devices")
-        return _device_response_list(devices, current_user)
-    
+        return await _coordinator_device_list(target_user_id, db, auth_db, current_user)
+    if target_role == auth.Role.VIEWER:
+        return await _viewer_device_list(target_user_id, db, auth_db, current_user)
+
     # Fallback: Admin sees all
     logger.info(f"[DEVICES] {current_user.username} (role={target_role}) → returning ALL devices")
     return _device_response_list(await crud.get_all_devices(db), current_user)

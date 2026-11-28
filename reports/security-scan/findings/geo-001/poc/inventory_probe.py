@@ -78,27 +78,30 @@ def literal_mqtt_password(value: ast.AST) -> str | None:
     return default.value
 
 
+def _mqtt_dict_node_passwords(node: ast.Dict, relative_path: str) -> list[Finding]:
+    findings: list[Finding] = []
+    for key, value in zip(node.keys, node.values):
+        if not (isinstance(key, ast.Constant) and key.value == "mqtt"):
+            continue
+        if not isinstance(value, ast.Dict):
+            continue
+        for nested_key, nested_value in zip(value.keys, value.values):
+            if not (
+                isinstance(nested_key, ast.Constant)
+                and str(nested_key.value).lower() in {"password", "pass", "pwd"}
+                and isinstance(nested_value, ast.Constant)
+                and isinstance(nested_value.value, str)
+            ):
+                continue
+            findings.append(Finding(relative_path, nested_value.lineno, nested_value.value))
+    return findings
+
+
 def mqtt_dict_passwords(tree: ast.AST, relative_path: str) -> list[Finding]:
     findings: list[Finding] = []
     for node in ast.walk(tree):
-        if not isinstance(node, ast.Dict):
-            continue
-        for key, value in zip(node.keys, node.values):
-            if not (isinstance(key, ast.Constant) and key.value == "mqtt"):
-                continue
-            if not isinstance(value, ast.Dict):
-                continue
-            for nested_key, nested_value in zip(value.keys, value.values):
-                if not (
-                    isinstance(nested_key, ast.Constant)
-                    and str(nested_key.value).lower() in {"password", "pass", "pwd"}
-                    and isinstance(nested_value, ast.Constant)
-                    and isinstance(nested_value.value, str)
-                ):
-                    continue
-                findings.append(
-                    Finding(relative_path, nested_value.lineno, nested_value.value)
-                )
+        if isinstance(node, ast.Dict):
+            findings.extend(_mqtt_dict_node_passwords(node, relative_path))
     return findings
 
 

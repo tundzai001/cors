@@ -60,16 +60,7 @@ COMMIT;
 """
 
 
-def main(apply=False):
-    values = dotenv_values(ROOT / '.env')
-    url = urlsplit(os.getenv('DATABASE_URL') or values['DATABASE_URL'])
-    executable = shutil.which('psql') or r'C:\Program Files\PostgreSQL\18\bin\psql.exe'
-    env = os.environ.copy()
-    env.update(PGPASSWORD=unquote(url.password or ''), PGCLIENTENCODING='UTF8', PGCONNECT_TIMEOUT='8')
-    command = [executable, '-X', '-q', '-A', '-t', '-v', 'ON_ERROR_STOP=1',
-               '-h', url.hostname or 'localhost', '-p', str(url.port or 5432),
-               '-U', unquote(url.username or ''), '-d', unquote(url.path.lstrip('/'))]
-
+def _psql_runner(command, env):
     def run(sql, write=False):
         child_env = dict(env)
         if not write:
@@ -82,6 +73,19 @@ def main(apply=False):
             # Do not print connection strings or entire failing INSERT statements.
             raise RuntimeError('PostgreSQL command failed; transaction rolled back, exit=' + str(result.returncode))
         return result.stdout.decode('utf-8').strip()
+    return run
+
+
+def main(apply=False):
+    values = dotenv_values(ROOT / '.env')
+    url = urlsplit(os.getenv('DATABASE_URL') or values['DATABASE_URL'])
+    executable = shutil.which('psql') or r'C:\Program Files\PostgreSQL\18\bin\psql.exe'
+    env = os.environ.copy()
+    env.update(PGPASSWORD=unquote(url.password or ''), PGCLIENTENCODING='UTF8', PGCONNECT_TIMEOUT='8')
+    command = [executable, '-X', '-q', '-A', '-t', '-v', 'ON_ERROR_STOP=1',
+               '-h', url.hostname or 'localhost', '-p', str(url.port or 5432),
+               '-U', unquote(url.username or ''), '-d', unquote(url.path.lstrip('/'))]
+    run = _psql_runner(command, env)
 
     source_sql()
     snapshot = {table: run(f"SELECT md5(coalesce(string_agg(row_to_json(t)::text, '' ORDER BY code), '')) FROM public.{table} t;")
