@@ -242,25 +242,34 @@
         $('accuracy').textContent = `${data.accuracy_m == null ? '' : `Sai số công bố của phép đổi datum: ${data.accuracy_m} m; không phải độ chính xác điểm đo. `}${data.note}`;
         $('result').hidden = false; status(`Đã chuyển đổi ${data.points.length} điểm.`);
     }
+    function focusCoordinateSelection(side) {
+        if ($(side + '-region-field').hidden) {
+            $(side + '-projection').open = true;
+            $(side + '-meridian').focus();
+        } else {
+            $(side + '-region').focus();
+        }
+    }
+    function setOrthometricHeight(body, side, points) {
+        if (body[side + '_height'] !== 'orthometric') return;
+        const input = $(side + '-geoid');
+        if (!input.value.trim() || !Number.isFinite(Number(input.value))) {
+            $('height-options').open = true;
+            input.focus();
+            throw new Error('Nhập độ lệch geoid N để chuyển cao độ H.');
+        }
+        if (points[0].length !== 3) throw new Error('Nhập độ cao cho các điểm khi chọn chuyển cao độ H.');
+        body[side + '_geoid'] = Number(input.value);
+    }
     function buildConversionBody(points) {
         const body = { source: crs('source'), target: crs('target'), points };
         for (const side of sides) {
             if (!body[side]) {
-                if ($(side + '-region-field').hidden) { $(side + '-projection').open = true; $(side + '-meridian').focus(); }
-                else $(side + '-region').focus();
+                focusCoordinateSelection(side);
                 throw new Error(`Chọn vùng đo hoặc kinh tuyến cho ${side === 'source' ? 'hệ nguồn' : 'hệ đích'}.`);
             }
             body[side + '_height'] = $(side + '-height').value;
-            if (body[side + '_height'] === 'orthometric') {
-                const input = $(side + '-geoid');
-                if (!input.value.trim() || !Number.isFinite(Number(input.value))) {
-                    $('height-options').open = true;
-                    input.focus();
-                    throw new Error('Nhập độ lệch geoid N để chuyển cao độ H.');
-                }
-                if (points[0].length !== 3) throw new Error('Nhập độ cao cho các điểm khi chọn chuyển cao độ H.');
-                body[side + '_geoid'] = Number(input.value);
-            }
+            setOrthometricHeight(body, side, points);
         }
         return body;
     }
