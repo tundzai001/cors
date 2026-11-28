@@ -84,6 +84,28 @@
         });
     }
 
+    function syncSystemBadge(badge, enabled, running, available) {
+        if (!badge) return;
+        badge.className = 'badge';
+        let style = 'bg-secondary', text = 'Đã tắt';
+        if (!available) {
+            style = 'bg-warning text-dark'; text = 'Thiếu token';
+        } else if (enabled && running) {
+            style = 'bg-success'; text = 'Đang chạy';
+        } else if (enabled) {
+            style = 'bg-info text-dark'; text = 'Đã bật';
+        }
+        badge.classList.add(...style.split(' '));
+        badge.textContent = text;
+    }
+
+    function getSystemDescription(available, sdkAvailable, tokenConfigured) {
+        if (available) return 'Điều khiển cả Bot CORS Manager (Tun) và Bot TB CORS (Trường). Mỗi bot có liên kết và quyền riêng.';
+        if (!sdkAvailable) return 'Thiếu Zalo SDK trong môi trường hiện tại nên không thể bật bot.';
+        if (!tokenConfigured) return 'Chưa cấu hình token cho bot nào nên không thể bật hệ thống.';
+        return 'Bot chưa sẵn sàng để bật.';
+    }
+
     function syncSystemControls() {
         const section = document.getElementById('zalo-system-section');
         if (!section) return;
@@ -109,45 +131,12 @@
             toggle.checked = enabled;
             toggle.disabled = state.system.loading || (!available && !enabled);
         }
-
-        if (badge) {
-            badge.className = 'badge';
-            if (!available) {
-                badge.classList.add('bg-warning', 'text-dark');
-                badge.textContent = 'Thiếu token';
-            } else if (enabled && running) {
-                badge.classList.add('bg-success');
-                badge.textContent = 'Đang chạy';
-            } else if (enabled) {
-                badge.classList.add('bg-info', 'text-dark');
-                badge.textContent = 'Đã bật';
-            } else {
-                badge.classList.add('bg-secondary');
-                badge.textContent = 'Đã tắt';
-            }
-        }
-
-        if (label) {
-            label.textContent = enabled ? 'Hệ thống đang bật' : 'Hệ thống đang tắt';
-        }
-
-        if (description) {
-            if (available) {
-                description.textContent = 'Điều khiển cả Bot CORS Manager (Tun) và Bot TB CORS (Trường). Mỗi bot có liên kết và quyền riêng.';
-            } else if (!sdkAvailable) {
-                description.textContent = 'Thiếu Zalo SDK trong môi trường hiện tại nên không thể bật bot.';
-            } else if (!tokenConfigured) {
-                description.textContent = 'Chưa cấu hình token cho bot nào nên không thể bật hệ thống.';
-            } else {
-                description.textContent = 'Bot chưa sẵn sàng để bật.';
-            }
-        }
-
-        if (note) {
-            note.textContent = enabled
-                ? 'Khi tắt, webhook / polling và các lệnh bot sẽ dừng; khi bật, bot khởi động lại ngay nếu token hợp lệ.'
-                : 'Bot đang tắt. Các lệnh Zalo, OTP và webhook sẽ không hoạt động cho đến khi bật lại.';
-        }
+        syncSystemBadge(badge, enabled, running, available);
+        if (label) label.textContent = enabled ? 'Hệ thống đang bật' : 'Hệ thống đang tắt';
+        if (description) description.textContent = getSystemDescription(available, sdkAvailable, tokenConfigured);
+        if (note) note.textContent = enabled
+            ? 'Khi tắt, webhook / polling và các lệnh bot sẽ dừng; khi bật, bot khởi động lại ngay nếu token hợp lệ.'
+            : 'Bot đang tắt. Các lệnh Zalo, OTP và webhook sẽ không hoạt động cho đến khi bật lại.';
 
         if (refreshBtn) refreshBtn.disabled = state.system.loading;
         if (otpToggle) otpToggle.disabled = !enabled;
@@ -156,9 +145,7 @@
         if (groupCopy) groupCopy.disabled = !enabled;
 
         const otpStatus = document.getElementById('otp-status-text');
-        if (otpStatus && !state.otpStreaming) {
-            otpStatus.textContent = enabled ? 'Sẵn sàng' : 'Hệ thống đã tắt';
-        }
+        if (otpStatus && !state.otpStreaming) otpStatus.textContent = enabled ? 'Sẵn sàng' : 'Hệ thống đã tắt';
     }
 
     function corsCheckBadgeText(control) {
@@ -314,11 +301,17 @@
         };
     }
 
+    function bindingAdminActions(item, isPublic) {
+        if (!state.isAdmin) return '';
+        const corsOnlyButton = isPublic ? ''
+            : `<button class="btn btn-sm btn-outline-primary me-1" data-cors-only="${item.id}">Chỉ Cục</button>`;
+        const toggleClass = item.is_active ? 'btn-outline-warning' : 'btn-outline-success';
+        const toggleLabel = item.is_active ? 'Dừng gửi' : 'Cho gửi';
+        return `${corsOnlyButton}<button class="btn btn-sm ${toggleClass} me-1" data-toggle-sending="${item.id}" title="Bật/tắt toàn bộ phản hồi và cảnh báo cho chat này">${toggleLabel}</button>`;
+    }
+
     function bindingActions(item, isPublic) {
-        const adminActions = state.isAdmin
-            ? `${!isPublic ? `<button class="btn btn-sm btn-outline-primary me-1" data-cors-only="${item.id}">Chỉ Cục</button>` : ''}<button class="btn btn-sm ${item.is_active ? 'btn-outline-warning' : 'btn-outline-success'} me-1" data-toggle-sending="${item.id}" title="Bật/tắt toàn bộ phản hồi và cảnh báo cho chat này">${item.is_active ? 'Dừng gửi' : 'Cho gửi'}</button>`
-            : '';
-        return `${adminActions}<button class="btn btn-sm btn-outline-info me-1" data-edit="${item.id}" title="Cấu hình" aria-label="Cấu hình chat"><i class="bi bi-sliders"></i></button><button class="btn btn-sm btn-outline-danger" data-revoke="${item.id}" title="Xóa liên kết" aria-label="Xóa liên kết"><i class="bi bi-trash3"></i></button>`;
+        return `${bindingAdminActions(item, isPublic)}<button class="btn btn-sm btn-outline-info me-1" data-edit="${item.id}" title="Cấu hình" aria-label="Cấu hình chat"><i class="bi bi-sliders"></i></button><button class="btn btn-sm btn-outline-danger" data-revoke="${item.id}" title="Xóa liên kết" aria-label="Xóa liên kết"><i class="bi bi-trash3"></i></button>`;
     }
 
     function bindingNotification(item, isPublic) {
