@@ -1,6 +1,6 @@
 (() => {
     'use strict';
-    function parse(value, axis, mode = 'dd') {
+    function normalizeAngleInput(value, axis) {
         if (!['lat', 'lon'].includes(axis)) throw new Error('Trục tọa độ không hợp lệ.');
         let text = String(value).trim().toUpperCase().replace(/−/g, '-').replace(/,/g, '.');
         const prefix = text.match(/^([NSEW])\s*/);
@@ -16,24 +16,46 @@
         if (direction && explicitSign && (explicitSign === '-') !== 'SW'.includes(direction)) {
             throw new Error('Dấu tọa độ mâu thuẫn với hướng N/S/E/W.');
         }
-        const negative = direction ? 'SW'.includes(direction) : explicitSign === '-';
-        let degrees, minutes = 0, seconds = 0;
-        if (mode === 'dd') {
-            if (!/^[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:E[+-]?\d+)?$/.test(text)) throw new Error('Nhập độ thập phân hợp lệ.');
-            degrees = Math.abs(Number(text));
-        } else if (mode === 'dms') {
-            const match = text.match(/^[+-]?(\d{1,3})(?:\s*°\s*|\s+|:)(\d{1,2})(?:\s*['′’]\s*|\s+|:)(\d{1,2}(?:\.\d+)?)(?:\s*["″”])?$/);
-            if (!match) throw new Error('Nhập DMS như 22°20′40.1″N hoặc 22 20 40.1.');
-            [, degrees, minutes, seconds] = match.map(Number);
-        } else if (mode === 'packed_dms') {
-            if (!/^[+-]?\d+(?:\.\d+)?$/.test(text)) throw new Error('Nhập DMS gộp như 222040.1.');
-            const [whole, fraction = ''] = text.replace(/^[+-]/, '').split('.');
-            if (whole.length > (axis === 'lat' ? 6 : 7)) throw new Error('DMS gộp có quá nhiều chữ số.');
-            const digits = whole.padStart(axis === 'lat' ? 6 : 7, '0');
-            degrees = Number(digits.slice(0, -4));
-            minutes = Number(digits.slice(-4, -2));
-            seconds = Number(digits.slice(-2) + '.' + fraction);
-        } else throw new Error('Định dạng góc không hợp lệ.');
+        return {text, negative: direction ? 'SW'.includes(direction) : explicitSign === '-'};
+    }
+
+    function parseDecimalDegrees(text) {
+        if (!/^[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:E[+-]?\d+)?$/.test(text)) throw new Error('Nhập độ thập phân hợp lệ.');
+        return {degrees: Math.abs(Number(text)), minutes: 0, seconds: 0};
+    }
+
+    function parseDms(text) {
+        const match = text.match(/^[+-]?(\d{1,3})(?:\s*°\s*|\s+|:)(\d{1,2})(?:\s*['′’]\s*|\s+|:)(\d{1,2}(?:\.\d+)?)(?:\s*["″”])?$/);
+        if (!match) throw new Error('Nhập DMS như 22°20′40.1″N hoặc 22 20 40.1.');
+        return {degrees: Number(match[1]), minutes: Number(match[2]), seconds: Number(match[3])};
+    }
+
+    function parsePackedDms(text, axis) {
+        if (!/^[+-]?\d+(?:\.\d+)?$/.test(text)) throw new Error('Nhập DMS gộp như 222040.1.');
+        const [whole, fraction = ''] = text.replace(/^[+-]/, '').split('.');
+        const width = axis === 'lat' ? 6 : 7;
+        if (whole.length > width) throw new Error('DMS gộp có quá nhiều chữ số.');
+        const digits = whole.padStart(width, '0');
+        return {
+            degrees: Number(digits.slice(0, -4)),
+            minutes: Number(digits.slice(-4, -2)),
+            seconds: Number(digits.slice(-2) + '.' + fraction),
+        };
+    }
+
+    function parseAngleParts(text, axis, mode) {
+        const parsers = {
+            dd: () => parseDecimalDegrees(text),
+            dms: () => parseDms(text),
+            packed_dms: () => parsePackedDms(text, axis),
+        };
+        if (!parsers[mode]) throw new Error('Định dạng góc không hợp lệ.');
+        return parsers[mode]();
+    }
+
+    function parse(value, axis, mode = 'dd') {
+        const {text, negative} = normalizeAngleInput(value, axis);
+        const {degrees, minutes, seconds} = parseAngleParts(text, axis, mode);
         if (minutes >= 60 || seconds >= 60) throw new Error('Phút và giây phải nhỏ hơn 60.');
         const angle = degrees + minutes / 60 + seconds / 3600;
         if (!Number.isFinite(angle) || angle > (axis === 'lat' ? 90 : 180)) {

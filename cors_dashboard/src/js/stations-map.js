@@ -362,6 +362,99 @@
         `;
     }
 
+    function StationMapReferenceControls({
+        vngeonetHealth, showVngeonet, setShowVngeonet, referenceMeta, role, rtcmSaving,
+        toggleRtcmCheck, rtcmSaveError,
+    }) {
+        return <>
+            {vngeonetHealth?.map_status_enabled === true && <div className="form-check form-switch mb-2">
+                <input className="form-check-input" type="checkbox" checked={showVngeonet}
+                    onChange={event => setShowVngeonet(event.target.checked)} id="vngeonet-toggle"
+                    disabled={!window.VngeonetStations?.length} aria-describedby="vngeonet-help" />
+                <label className="form-check-label" htmlFor="vngeonet-toggle">CORS Cục · VNGEONET ({window.VngeonetStations?.length || 0})</label>
+                <div className="form-text" id="vngeonet-help">
+                    {window.VngeonetStations?.length ? `${referenceMeta.label} · ${referenceCheckLabel(vngeonetHealth)}` : 'Không tải được danh sách VNGEONET'}
+                </div>
+            </div>}
+            {role === 'admin' && vngeonetHealth?.map_status_enabled === true && <div className="mb-2">
+                <div className="form-check form-switch d-flex align-items-center gap-2" style={{minHeight: '44px'}}>
+                    <input className="form-check-input mt-0" type="checkbox" id="cors-cuc-rtcm-check"
+                        checked={vngeonetHealth?.rtcm_check_enabled === true}
+                        disabled={rtcmSaving || typeof vngeonetHealth?.rtcm_check_enabled !== 'boolean'}
+                        onChange={event => toggleRtcmCheck(event.target.checked)} aria-describedby="cors-cuc-rtcm-help" />
+                    <label className="form-check-label" htmlFor="cors-cuc-rtcm-check">Kiểm tra dữ liệu RTCM Cục</label>
+                </div>
+                <div className="form-text" id="cors-cuc-rtcm-help" role="status" aria-live="polite">
+                    {rtcmSaving ? 'Đang lưu…' : vngeonetHealth?.rtcm_check_enabled ? 'Đang bật · có dữ liệu mới báo hoạt động.' : 'Đang tắt · kiểm tra form đăng nhập như cũ.'}
+                </div>
+                {rtcmSaveError && <div className="small text-danger mt-1" role="alert">{rtcmSaveError}</div>}
+            </div>}
+        </>;
+    }
+
+    function StationMapDisplayFilters(props) {
+        const {
+            coverage, setCoverage, showRovers, setShowRovers, canViewRovers,
+            showIonosphere, setShowIonosphere, ionosphereInfo, showVietnamMask,
+            setShowVietnamMask, showProvinces, setShowProvinces,
+        } = props;
+        return <>
+            <div className="form-check form-switch mb-2">
+                <input className="form-check-input" type="checkbox" checked={coverage} onChange={event => setCoverage(event.target.checked)} id="coverage-toggle" />
+                <label className="form-check-label" htmlFor="coverage-toggle">Vùng phủ 20 km</label>
+            </div>
+            <div className="form-check form-switch mb-2">
+                <input className="form-check-input" type="checkbox" checked={showRovers} onChange={event => setShowRovers(event.target.checked)} id="rover-toggle" disabled={!canViewRovers} />
+                <label className="form-check-label" htmlFor="rover-toggle">Rovers</label>
+            </div>
+            <div className="form-check form-switch mb-2">
+                <input className="form-check-input" type="checkbox" checked={showIonosphere} onChange={event => setShowIonosphere(event.target.checked)} id="ionosphere-toggle" />
+                <label className="form-check-label d-flex align-items-center justify-content-between" htmlFor="ionosphere-toggle">
+                    <span>Tầng điện ly TEC</span>
+                    {ionosphereInfo && <span className={`badge ms-1 ${ionosphereInfo.is_stale ? 'bg-warning text-dark' : 'bg-success'}`} style={{fontSize: '0.65rem'}}>
+                        {ionosphereInfo.is_stale ? 'STALE' : 'LIVE'}
+                    </span>}
+                </label>
+            </div>
+            <div className="form-check form-switch mb-2">
+                <input className="form-check-input" type="checkbox" checked={showVietnamMask} onChange={event => setShowVietnamMask(event.target.checked)} id="mask-toggle" />
+                <label className="form-check-label" htmlFor="mask-toggle">Chỉ xem Việt Nam</label>
+            </div>
+            <div className="form-check form-switch mb-2">
+                <input className="form-check-input" type="checkbox" checked={showProvinces} onChange={event => setShowProvinces(event.target.checked)} id="provinces-toggle" />
+                <label className="form-check-label" htmlFor="provinces-toggle">Ranh giới Tỉnh/Thành</label>
+            </div>
+        </>;
+    }
+
+    function StationMapStatusFilters({ statusFilters, setStatusFilters }) {
+        const labels = {online: 'Trực tuyến', sleep: 'Sleep', offline: 'Mất kết nối', locked: 'Đã khóa'};
+        return <div className="station-map-status-filters">{Object.keys(labels).map(key => (
+            <div className="form-check" key={key}>
+                <input className="form-check-input" type="checkbox" checked={statusFilters[key]}
+                    onChange={event => setStatusFilters({...statusFilters, [key]: event.target.checked})} id={`filter-${key}`} />
+                <label className="form-check-label" htmlFor={`filter-${key}`}>{labels[key]}</label>
+            </div>
+        ))}</div>;
+    }
+
+    function StationMapFilterPanel(props) {
+        const { filterOpen, useOrbitView, devices, showStations, setShowStations, vngeonetHealth,
+            role, referenceMeta, rtcmSaving, toggleRtcmCheck, rtcmSaveError, statusFilters, setStatusFilters } = props;
+        if (!filterOpen || useOrbitView) return null;
+        return <div className="station-map-filter-panel" id="station-map-filters">
+            <div className="station-map-panel-title">Bộ lọc bản đồ</div>
+            <div className="form-check form-switch mb-2">
+                <input className="form-check-input" type="checkbox" checked={showStations} onChange={event => setShowStations(event.target.checked)} id="station-toggle" />
+                <label className="form-check-label" htmlFor="station-toggle">Base của mình ({devices.length})</label>
+            </div>
+            <StationMapReferenceControls {...props} vngeonetHealth={vngeonetHealth} role={role}
+                referenceMeta={referenceMeta} rtcmSaving={rtcmSaving} toggleRtcmCheck={toggleRtcmCheck} rtcmSaveError={rtcmSaveError} />
+            <StationMapDisplayFilters {...props} />
+            <StationMapStatusFilters statusFilters={statusFilters} setStatusFilters={setStatusFilters} />
+        </div>;
+    }
+
     function AllStationsMap({ devices = [], currentUser = null }) {
         const mapEl = useRef(null);
         const mapRef = useRef(null);
@@ -1353,70 +1446,35 @@
                     </div>
                 </div>
 
-                {filterOpen && !useOrbitView && (
-                    <div className="station-map-filter-panel" id="station-map-filters">
-                        <div className="station-map-panel-title">Bộ lọc bản đồ</div>
-                        <div className="form-check form-switch mb-2">
-                            <input className="form-check-input" type="checkbox" checked={showStations} onChange={(e) => setShowStations(e.target.checked)} id="station-toggle" />
-                            <label className="form-check-label" htmlFor="station-toggle">Base của mình ({devices.length})</label>
-                        </div>
-                        {vngeonetHealth?.map_status_enabled === true && <div className="form-check form-switch mb-2">
-                            <input className="form-check-input" type="checkbox" checked={showVngeonet}
-                                onChange={e => setShowVngeonet(e.target.checked)} id="vngeonet-toggle"
-                                disabled={!window.VngeonetStations?.length} aria-describedby="vngeonet-help" />
-                            <label className="form-check-label" htmlFor="vngeonet-toggle">CORS Cục · VNGEONET ({window.VngeonetStations?.length || 0})</label>
-                            <div className="form-text" id="vngeonet-help">
-                                {window.VngeonetStations?.length ? (vngeonetHealth?.map_status_enabled === true ? `${referenceMeta.label} · ${referenceCheckLabel(vngeonetHealth)}` : '') : 'Không tải được danh sách VNGEONET'}
-                            </div>
-                        </div>}
-                        {role === 'admin' && vngeonetHealth?.map_status_enabled === true && <div className="mb-2">
-                            <div className="form-check form-switch d-flex align-items-center gap-2" style={{minHeight: '44px'}}>
-                                <input className="form-check-input mt-0" type="checkbox" id="cors-cuc-rtcm-check"
-                                    checked={vngeonetHealth?.rtcm_check_enabled === true}
-                                    disabled={rtcmSaving || typeof vngeonetHealth?.rtcm_check_enabled !== 'boolean'}
-                                    onChange={event => toggleRtcmCheck(event.target.checked)} aria-describedby="cors-cuc-rtcm-help" />
-                                <label className="form-check-label" htmlFor="cors-cuc-rtcm-check">Kiểm tra dữ liệu RTCM Cục</label>
-                            </div>
-                            <div className="form-text" id="cors-cuc-rtcm-help" role="status" aria-live="polite">
-                                {rtcmSaving ? 'Đang lưu…' : vngeonetHealth?.rtcm_check_enabled ? 'Đang bật · có dữ liệu mới báo hoạt động.' : 'Đang tắt · kiểm tra form đăng nhập như cũ.'}
-                            </div>
-                            {rtcmSaveError && <div className="small text-danger mt-1" role="alert">{rtcmSaveError}</div>}
-                        </div>}
-                        <div className="form-check form-switch mb-2">
-                            <input className="form-check-input" type="checkbox" checked={coverage} onChange={e => setCoverage(e.target.checked)} id="coverage-toggle" />
-                            <label className="form-check-label" htmlFor="coverage-toggle">Vùng phủ 20 km</label>
-                        </div>
-                        <div className="form-check form-switch mb-2">
-                            <input className="form-check-input" type="checkbox" checked={showRovers} onChange={(e) => setShowRovers(e.target.checked)} id="rover-toggle" disabled={!canViewRovers} />
-                            <label className="form-check-label" htmlFor="rover-toggle">Rovers</label>
-                        </div>
-                        <div className="form-check form-switch mb-2">
-                            <input className="form-check-input" type="checkbox" checked={showIonosphere} onChange={(e) => setShowIonosphere(e.target.checked)} id="ionosphere-toggle" />
-                            <label className="form-check-label d-flex align-items-center justify-content-between" htmlFor="ionosphere-toggle">
-                                <span>Tầng điện ly TEC</span>
-                                {ionosphereInfo && (
-                                    <span className={`badge ms-1 ${ionosphereInfo.is_stale ? 'bg-warning text-dark' : 'bg-success'}`} style={{ fontSize: '0.65rem' }}>
-                                        {ionosphereInfo.is_stale ? 'STALE' : 'LIVE'}
-                                    </span>
-                                )}
-                            </label>
-                        </div>
-                        <div className="form-check form-switch mb-2">
-                            <input className="form-check-input" type="checkbox" checked={showVietnamMask} onChange={(e) => setShowVietnamMask(e.target.checked)} id="mask-toggle" />
-                            <label className="form-check-label" htmlFor="mask-toggle">Chỉ xem Việt Nam</label>
-                        </div>
-                        <div className="form-check form-switch mb-2">
-                            <input className="form-check-input" type="checkbox" checked={showProvinces} onChange={(e) => setShowProvinces(e.target.checked)} id="provinces-toggle" />
-                            <label className="form-check-label" htmlFor="provinces-toggle">Ranh giới Tỉnh/Thành</label>
-                        </div>
-                        <div className="station-map-status-filters">{['online', 'sleep', 'offline', 'locked'].map(key => (
-                            <div className="form-check" key={key}>
-                                <input className="form-check-input" type="checkbox" checked={statusFilters[key]} onChange={(e) => setStatusFilters({ ...statusFilters, [key]: e.target.checked })} id={`filter-${key}`} />
-                                <label className="form-check-label" htmlFor={`filter-${key}`}>{{ online: 'Trực tuyến', sleep: 'Sleep', offline: 'Mất kết nối', locked: 'Đã khóa' }[key]}</label>
-                            </div>
-                        ))}</div>
-                    </div>
-                )}
+                <StationMapFilterPanel
+                    filterOpen={filterOpen}
+                    useOrbitView={useOrbitView}
+                    devices={devices}
+                    showStations={showStations}
+                    setShowStations={setShowStations}
+                    showVngeonet={showVngeonet}
+                    setShowVngeonet={setShowVngeonet}
+                    vngeonetHealth={vngeonetHealth}
+                    referenceMeta={referenceMeta}
+                    role={role}
+                    rtcmSaving={rtcmSaving}
+                    toggleRtcmCheck={toggleRtcmCheck}
+                    rtcmSaveError={rtcmSaveError}
+                    coverage={coverage}
+                    setCoverage={setCoverage}
+                    showRovers={showRovers}
+                    setShowRovers={setShowRovers}
+                    canViewRovers={canViewRovers}
+                    showIonosphere={showIonosphere}
+                    setShowIonosphere={setShowIonosphere}
+                    ionosphereInfo={ionosphereInfo}
+                    showVietnamMask={showVietnamMask}
+                    setShowVietnamMask={setShowVietnamMask}
+                    showProvinces={showProvinces}
+                    setShowProvinces={setShowProvinces}
+                    statusFilters={statusFilters}
+                    setStatusFilters={setStatusFilters}
+                />
 
                 {searchOpen && !useOrbitView && (
                     <div className="station-map-search-panel" id="station-map-search">

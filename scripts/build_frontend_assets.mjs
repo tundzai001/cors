@@ -7,7 +7,7 @@ const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const source = 'cors_dashboard/src';
 const publicRoot = 'cors_dashboard/frontend';
 const jsx = [
-    'react-components.js', 'operations-view.js', 'dashboard-forms.js', 'dashboard-list.js',
+    'react-components.js', 'operations-view.js', 'dashboard-list.js',
     'dashboard-live.js', 'dashboard-detail.js', 'stations-map.js',
     'homepage-enterprise.v2.js', 'enterprise-station-detail.js',
     'blog-system.js', 'api-docs.js', 'advanced-features.js',
@@ -37,7 +37,7 @@ function build(args) {
 
 // Classic scripts share globals across files. Keep their top-level names intact.
 const plain = readdirSync(resolve(root, source, 'js'))
-    .filter(name => name.endsWith('.js') && name !== 'rovers-global.js' && !jsx.includes(name));
+    .filter(name => name.endsWith('.js') && name !== 'rovers-global.js' && name !== 'dashboard-forms.js' && !jsx.includes(name));
 build([
     ...plain.map(name => `${source}/js/${name}`),
     `--outdir=${jsDist}`, '--out-extension:.js=.min.js',
@@ -51,6 +51,14 @@ build([
     '--minify-syntax', '--minify-whitespace',
 ]);
 for (const name of jsx) rmSync(resolve(root, jsDist, name), { force: true });
+
+build([
+    `${source}/js/dashboard-forms.js`, `--outfile=${jsDist}/dashboard-forms.min.js`,
+    '--bundle', '--loader:.js=jsx', '--format=iife',
+    '--jsx-factory=React.createElement', '--jsx-fragment=React.Fragment',
+    '--minify-syntax', '--minify-whitespace',
+]);
+rmSync(resolve(root, jsDist, 'dashboard-forms.js'), { force: true });
 
 build([
     `${source}/js/rovers-global.js`, '--format=iife',
