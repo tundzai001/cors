@@ -1054,6 +1054,65 @@ function formatRfDelta(delta) {
     return `${sign}${delta} dB-Hz`;
 }
 
+const RfMonitorBlockDetails = memo(function RfMonitorBlockDetails({blocks}) {
+    return (
+        <>
+        {blocks.length > 0 && <details className="mb-3"><summary className="small py-2" style={{minHeight:44}}>Biến động từng khối RF trong 10 phút</summary>
+            <div className="table-responsive" tabIndex={0} role="region" aria-label="Biến động từng khối RF"><table className="table table-sm small" style={{minWidth:520}}>
+                <thead><tr><th>Khối</th><th>Cảnh báo / mẫu</th><th>Mức mạnh</th><th>Nhiễu nền</th><th>AGC</th><th>jamInd</th></tr></thead>
+                <tbody>{blocks.map(row=><tr key={row[0]}><td className="text-nowrap">RF {row[0]} (ID {row[1]})</td><td>{row[3]+row[4]} / {row[2]}</td><td>{row[4]}</td><td>{row[5]}–{row[6]}</td><td>{row[7]}–{row[8]}</td><td>{row[9]}–{row[10]}</td></tr>)}</tbody>
+            </table></div>
+            <p className="small text-muted mb-0">Thấp nhất–cao nhất trong các lần đọc. Giá trị thô, không phải dBm hay ngưỡng kết luận nguồn nhiễu. Khối giữ theo thứ tự chip trả về.</p>
+        </details>}
+        </>
+    );
+});
+
+const RfMonitorSampleDetails = memo(function RfMonitorSampleDetails({model, report, age, samples, levels, colors, duration, clock}) {
+    return (
+        <>
+        {samples.length ? <>
+            <div className="d-flex flex-wrap gap-3 small mb-2"><span>● Không cảnh báo</span><span>▲ Cảnh báo</span><span>◆ Mức mạnh</span></div>
+            <svg viewBox="0 0 600 105" role="img" aria-label={`${samples.length} mẫu RF trong 10 phút; các khoảng trống không có mẫu`} style={{width:'100%',height:'auto',minHeight:100,maxHeight:150}}>
+                {[2,1,0].map(level => <line key={level} x1="10" x2="590" y1={20+(2-level)*30} y2={20+(2-level)*30} stroke="currentColor" opacity="0.12" />)}
+                {samples.map(([offset,level,delta],index) => {
+                    const x=10+(model.fixed ? (report.last_sample_at-offset-report.window_started_at)/600 : 1-(age+offset)/600)*580, y=20+(2-level)*30;
+                    return <g key={index} fill={colors[level]}><title>{clock(offset)} · {levels[level]}{delta === null ? '' : ` · ΔC/N₀ ${delta} dB-Hz`}</title>
+                        {level === 0 ? <circle cx={x} cy={y} r="4" /> : <path d={level === 1 ? `M${x} ${y-5}l5 10h-10z` : `M${x} ${y-6}l6 6l-6 6l-6-6z`} />}
+                        {delta !== null && delta <= -3 && <circle cx={x} cy={y} r="8" fill="none" stroke="currentColor" />}
+                    </g>;
+                })}
+            </svg>
+            <div className="d-flex justify-content-between small text-muted mb-2"><span>{model.fixed ? 'Bắt đầu' : '−10 phút'}</span><span>{model.fixed ? '+5 phút' : '−5 phút'}</span><span>{model.fixed ? '+10 phút' : 'Hiện tại'}</span></div>
+            <p className="small text-muted mb-2">Mỗi dấu là một lần đọc. Khoảng trống: không có mẫu. Vòng ngoài: C/N₀ giảm.</p>
+            <details><summary className="small py-2" style={{minHeight:44}}>Xem mẫu và cách tính</summary>
+                <div className="table-responsive" tabIndex={0} role="region" aria-label="Biến động C/N₀ từng mẫu; cuộn ngang để xem đủ"><table className="table table-sm small" style={{minWidth:600}}><caption className="visually-hidden">Các mẫu RF đã thu trong cửa sổ</caption><thead><tr><th>Thời điểm</th><th>RF</th><th>ΔC/N₀ trung vị</th><th>Thấp / cao nhất</th><th>Vệ tinh thay đổi</th></tr></thead>
+                    <tbody>{samples.map(([offset,level,delta,matched,changed,minimum,maximum],index)=><tr key={index}><td className="font-monospace text-nowrap">{clock(offset)}</td><td>{levels[level]}</td><td>{formatRfDelta(delta)}</td><td className="text-nowrap">{minimum == null ? '—' : `${minimum} / ${maximum} dB-Hz`}</td><td>{delta === null || matched == null ? '—' : `${changed} / ${matched}`}</td></tr>)}</tbody></table></div>
+                <p className="small text-muted d-sm-none mb-1">Vuốt ngang để xem đủ các cột.</p>
+                <p className="small text-muted mb-0">C/N₀ giảm: trung vị giảm từ 3 dB-Hz trên ít nhất 4 vệ tinh trùng nhau giữa hai lần đọc. {report?.quality_comparisons || 0} cặp mẫu đủ dữ liệu đối chiếu.</p>
+                <p className="small text-muted mb-0">Trung vị bằng 0 vẫn có thể có vệ tinh tăng hoặc giảm. Cùng thời điểm dữ liệu hoặc thiếu mẫu: không tính Δ.</p>
+            </details>
+        </> : <p className="small text-muted mb-0">Chưa có lịch sử từng mẫu. Số đếm phía trên vẫn cập nhật khi nhận báo cáo.</p>}
+        </>
+    );
+});
+
+const RfMonitorHistoryDetails = memo(function RfMonitorHistoryDetails({history, report, hour}) {
+    return (
+        <>
+            {history.length ? <>
+                <p className="small text-muted">Lưu tại Pi, giữ qua lần khởi động lại. Báo cáo mới nhất: {hour(report.history_24h.last_sample_at)}.</p>
+                <p className="small">{history.reduce((sum,row)=>sum+row[1],0)} mẫu đã lưu · {history.reduce((sum,row)=>sum+row[2],0)} mẫu cảnh báo</p>
+                <div className="table-responsive" tabIndex={0} role="region" aria-label="Lịch sử RF theo giờ; cuộn ngang để xem đủ"><table className="table table-sm small" style={{minWidth:480}}><caption className="visually-hidden">Tổng hợp RF theo giờ trong 24 giờ gần nhất</caption>
+                    <thead><tr><th>Giờ bắt đầu</th><th>Mẫu</th><th>Cảnh báo</th><th>Mức mạnh</th><th>Kèm C/N₀ giảm</th></tr></thead>
+                    <tbody>{history.map(row=><tr key={row[0]}><td className="text-nowrap">{hour(row[0])}</td><td>{row[1]}</td><td>{row[2]} / {row[1]}<div className="progress mt-1" style={{height:4}}><div className="progress-bar bg-warning" style={{width:`${row[1] ? row[2]/row[1]*100 : 0}%`}} /></div></td><td>{row[3]}</td><td>{row[5] ? row[4] : '—'}</td></tr>)}</tbody>
+                </table></div>
+                <p className="small text-muted mb-0">Đếm theo mẫu đã thu, không phải thời lượng nhiễu liên tục. Không có mẫu thì không suy ra trạng thái RF.</p>
+            </> : <p className="small text-muted mb-0">Chưa có lịch sử đã lưu.</p>}
+        </>
+    );
+});
+
 function RfMonitorOverview({model}) {
     const {report,elapsed,age,samples} = model;
     const duration = seconds => `${Math.floor(seconds / 60).toString().padStart(2,'0')}:${Math.floor(seconds % 60).toString().padStart(2,'0')}`;
@@ -1089,46 +1148,11 @@ function RfMonitorOverview({model}) {
             <strong className="d-block">{getRfSampleSummary(report)}</strong>
             <span className="text-muted">{getRfQualitySummary(report)} Chưa xác định nguồn phát hoặc sai số tọa độ.</span>
         </div>}
-        {blocks.length > 0 && <details className="mb-3"><summary className="small py-2" style={{minHeight:44}}>Biến động từng khối RF trong 10 phút</summary>
-            <div className="table-responsive" tabIndex={0} role="region" aria-label="Biến động từng khối RF"><table className="table table-sm small" style={{minWidth:520}}>
-                <thead><tr><th>Khối</th><th>Cảnh báo / mẫu</th><th>Mức mạnh</th><th>Nhiễu nền</th><th>AGC</th><th>jamInd</th></tr></thead>
-                <tbody>{blocks.map(row=><tr key={row[0]}><td className="text-nowrap">RF {row[0]} (ID {row[1]})</td><td>{row[3]+row[4]} / {row[2]}</td><td>{row[4]}</td><td>{row[5]}–{row[6]}</td><td>{row[7]}–{row[8]}</td><td>{row[9]}–{row[10]}</td></tr>)}</tbody>
-            </table></div>
-            <p className="small text-muted mb-0">Thấp nhất–cao nhất trong các lần đọc. Giá trị thô, không phải dBm hay ngưỡng kết luận nguồn nhiễu. Khối giữ theo thứ tự chip trả về.</p>
-        </details>}
-        {samples.length ? <>
-            <div className="d-flex flex-wrap gap-3 small mb-2"><span>● Không cảnh báo</span><span>▲ Cảnh báo</span><span>◆ Mức mạnh</span></div>
-            <svg viewBox="0 0 600 105" role="img" aria-label={`${samples.length} mẫu RF trong 10 phút; các khoảng trống không có mẫu`} style={{width:'100%',height:'auto',minHeight:100,maxHeight:150}}>
-                {[2,1,0].map(level => <line key={level} x1="10" x2="590" y1={20+(2-level)*30} y2={20+(2-level)*30} stroke="currentColor" opacity="0.12" />)}
-                {samples.map(([offset,level,delta],index) => {
-                    const x=10+(model.fixed ? (report.last_sample_at-offset-report.window_started_at)/600 : 1-(age+offset)/600)*580, y=20+(2-level)*30;
-                    return <g key={index} fill={colors[level]}><title>{clock(offset)} · {levels[level]}{delta === null ? '' : ` · ΔC/N₀ ${delta} dB-Hz`}</title>
-                        {level === 0 ? <circle cx={x} cy={y} r="4" /> : <path d={level === 1 ? `M${x} ${y-5}l5 10h-10z` : `M${x} ${y-6}l6 6l-6 6l-6-6z`} />}
-                        {delta !== null && delta <= -3 && <circle cx={x} cy={y} r="8" fill="none" stroke="currentColor" />}
-                    </g>;
-                })}
-            </svg>
-            <div className="d-flex justify-content-between small text-muted mb-2"><span>{model.fixed ? 'Bắt đầu' : '−10 phút'}</span><span>{model.fixed ? '+5 phút' : '−5 phút'}</span><span>{model.fixed ? '+10 phút' : 'Hiện tại'}</span></div>
-            <p className="small text-muted mb-2">Mỗi dấu là một lần đọc. Khoảng trống: không có mẫu. Vòng ngoài: C/N₀ giảm.</p>
-            <details><summary className="small py-2" style={{minHeight:44}}>Xem mẫu và cách tính</summary>
-                <div className="table-responsive" tabIndex={0} role="region" aria-label="Biến động C/N₀ từng mẫu; cuộn ngang để xem đủ"><table className="table table-sm small" style={{minWidth:600}}><caption className="visually-hidden">Các mẫu RF đã thu trong cửa sổ</caption><thead><tr><th>Thời điểm</th><th>RF</th><th>ΔC/N₀ trung vị</th><th>Thấp / cao nhất</th><th>Vệ tinh thay đổi</th></tr></thead>
-                    <tbody>{samples.map(([offset,level,delta,matched,changed,minimum,maximum],index)=><tr key={index}><td className="font-monospace text-nowrap">{clock(offset)}</td><td>{levels[level]}</td><td>{formatRfDelta(delta)}</td><td className="text-nowrap">{minimum == null ? '—' : `${minimum} / ${maximum} dB-Hz`}</td><td>{delta === null || matched == null ? '—' : `${changed} / ${matched}`}</td></tr>)}</tbody></table></div>
-                <p className="small text-muted d-sm-none mb-1">Vuốt ngang để xem đủ các cột.</p>
-                <p className="small text-muted mb-0">C/N₀ giảm: trung vị giảm từ 3 dB-Hz trên ít nhất 4 vệ tinh trùng nhau giữa hai lần đọc. {report?.quality_comparisons || 0} cặp mẫu đủ dữ liệu đối chiếu.</p>
-                <p className="small text-muted mb-0">Trung vị bằng 0 vẫn có thể có vệ tinh tăng hoặc giảm. Cùng thời điểm dữ liệu hoặc thiếu mẫu: không tính Δ.</p>
-            </details>
-        </> : <p className="small text-muted mb-0">Chưa có lịch sử từng mẫu. Số đếm phía trên vẫn cập nhật khi nhận báo cáo.</p>}
+        <RfMonitorBlockDetails blocks={blocks} />
+        <RfMonitorSampleDetails model={model} report={report} age={age} samples={samples} levels={levels} colors={colors} duration={duration} clock={clock} />
         <details className="mt-3 border-top pt-2"><summary className="py-2" style={{minHeight:44}}>Lịch sử 24 giờ</summary>
             {report?.history_error && <p className="small text-warning" role="status">Không lưu được lịch sử tại Pi. Các mẫu trực tiếp vẫn được hiển thị.</p>}
-            {history.length ? <>
-                <p className="small text-muted">Lưu tại Pi, giữ qua lần khởi động lại. Báo cáo mới nhất: {hour(report.history_24h.last_sample_at)}.</p>
-                <p className="small">{history.reduce((sum,row)=>sum+row[1],0)} mẫu đã lưu · {history.reduce((sum,row)=>sum+row[2],0)} mẫu cảnh báo</p>
-                <div className="table-responsive" tabIndex={0} role="region" aria-label="Lịch sử RF theo giờ; cuộn ngang để xem đủ"><table className="table table-sm small" style={{minWidth:480}}><caption className="visually-hidden">Tổng hợp RF theo giờ trong 24 giờ gần nhất</caption>
-                    <thead><tr><th>Giờ bắt đầu</th><th>Mẫu</th><th>Cảnh báo</th><th>Mức mạnh</th><th>Kèm C/N₀ giảm</th></tr></thead>
-                    <tbody>{history.map(row=><tr key={row[0]}><td className="text-nowrap">{hour(row[0])}</td><td>{row[1]}</td><td>{row[2]} / {row[1]}<div className="progress mt-1" style={{height:4}}><div className="progress-bar bg-warning" style={{width:`${row[1] ? row[2]/row[1]*100 : 0}%`}} /></div></td><td>{row[3]}</td><td>{row[5] ? row[4] : '—'}</td></tr>)}</tbody>
-                </table></div>
-                <p className="small text-muted mb-0">Đếm theo mẫu đã thu, không phải thời lượng nhiễu liên tục. Không có mẫu thì không suy ra trạng thái RF.</p>
-            </> : <p className="small text-muted mb-0">Chưa có lịch sử đã lưu.</p>}
+            <RfMonitorHistoryDetails history={history} report={report} hour={hour} />
         </details>
     </div>;
 }
@@ -1184,33 +1208,40 @@ const SecuritySignalPanel = memo(function SecuritySignalPanel({security, securit
     );
 });
 
+const UnicoreAgcDetails = memo(function UnicoreAgcDetails({agc, reference}) {
+    if (!agc) return <p className="small text-muted mb-0">Chưa có AGC mới từ UM.</p>;
+    return <div className="rf-band border rounded p-3">
+        <h6>AGCA · {Math.floor(agc.age_seconds)} giây trước</h6>
+        <dl className="mb-0" style={{display:'grid',gridTemplateColumns:'minmax(0, 1fr) auto',gap:'4px 12px'}}>
+            {[0,1,2,5,6,7].map((index, order) => <React.Fragment key={index}>
+                <dt className="fw-normal text-muted">ANT{order < 3 ? 1 : 2} · {['L1','L2','L5'][order % 3]}</dt>
+                <dd className="mb-0">{agc.values[index] === -1 ? 'Kênh không hợp lệ' : agc.values[index]}
+                    {reference?.unicore?.agc?.values[index] >= 0 && <small className="text-muted"> · mốc: {reference.unicore.agc.values[index]}</small>}
+                </dd>
+            </React.Fragment>)}
+        </dl>
+    </div>;
+});
+
+const UnicoreJammingDetails = memo(function UnicoreJammingDetails({jamming}) {
+    if (!jamming) return <p className="small text-muted mb-0">Chưa có cảnh báo CW mới từ UM; chưa thể kết luận.</p>;
+    return <div className="rf-band border rounded p-3">
+        <h6>{jamming.source === 'unicore_freqjamstatusa' ? 'FREQJAMSTATUSA' : 'JAMSTATUSA'} · {Math.floor(jamming.age_seconds)} giây trước</h6>
+        {jamming.flags.map((flag, index) => <div className="d-flex flex-wrap gap-2 align-items-center mb-1" key={index}>
+            <strong>{jamming.flags.length === 3 ? ['L1','L2','L5'][index] : 'CW tổng'}</strong>
+            <span className={`badge ${['bg-success','bg-warning text-dark','bg-danger'][flag]}`}>{['Không báo nhiễu CW','Có nhiễu CW','Nhiễu CW mạnh'][flag]}</span>
+            <span>{jamming.ratios[index]} / 255</span>
+        </div>)}
+    </div>;
+});
+
 const UnicoreRfDetails = memo(function UnicoreRfDetails({unicore, um, reference}) {
-    return (
-        <>
-            {unicore && <div className="d-grid gap-2 mb-2">
-                {um?.agc ? <div className="rf-band border rounded p-3">
-                    <h6>AGCA · {Math.floor(um.agc.age_seconds)} giây trước</h6>
-                    <dl className="mb-0" style={{display:'grid',gridTemplateColumns:'minmax(0, 1fr) auto',gap:'4px 12px'}}>
-                        {[0,1,2,5,6,7].map((index, order) => <React.Fragment key={index}>
-                            <dt className="fw-normal text-muted">ANT{order < 3 ? 1 : 2} · {['L1','L2','L5'][order % 3]}</dt>
-                            <dd className="mb-0">{um.agc.values[index] === -1 ? 'Kênh không hợp lệ' : um.agc.values[index]}
-                                {reference?.unicore?.agc?.values[index] >= 0 && <small className="text-muted"> · mốc: {reference.unicore.agc.values[index]}</small>}
-                            </dd>
-                        </React.Fragment>)}
-                    </dl>
-                </div> : <p className="small text-muted mb-0">Chưa có AGC mới từ UM.</p>}
-                {um?.jamming ? <div className="rf-band border rounded p-3">
-                    <h6>{um.jamming.source === 'unicore_freqjamstatusa' ? 'FREQJAMSTATUSA' : 'JAMSTATUSA'} · {Math.floor(um.jamming.age_seconds)} giây trước</h6>
-                    {um.jamming.flags.map((flag, index) => <div className="d-flex flex-wrap gap-2 align-items-center mb-1" key={index}>
-                        <strong>{um.jamming.flags.length === 3 ? ['L1','L2','L5'][index] : 'CW tổng'}</strong>
-                        <span className={`badge ${['bg-success','bg-warning text-dark','bg-danger'][flag]}`}>{['Không báo nhiễu CW','Có nhiễu CW','Nhiễu CW mạnh'][flag]}</span>
-                        <span>{um.jamming.ratios[index]} / 255</span>
-                    </div>)}
-                </div> : <p className="small text-muted mb-0">Chưa có cảnh báo CW mới từ UM; chưa thể kết luận.</p>}
-                <p className="small text-muted mb-0">AGC UM: 0–255; −1 là kênh không hợp lệ. So sánh cùng thiết bị và anten, không áp ngưỡng u-blox. Chưa có dữ liệu phổ RF từ UM.</p>
-            </div>}
-        </>
-    );
+    if (!unicore) return null;
+    return <div className="d-grid gap-2 mb-2">
+        <UnicoreAgcDetails agc={um?.agc} reference={reference} />
+        <UnicoreJammingDetails jamming={um?.jamming} />
+        <p className="small text-muted mb-0">AGC UM: 0–255; −1 là kênh không hợp lệ. So sánh cùng thiết bị và anten, không áp ngưỡng u-blox. Chưa có dữ liệu phổ RF từ UM.</p>
+    </div>;
 });
 
 const UbxRfDetails = memo(function UbxRfDetails({rf, receiver, stateNames}) {
