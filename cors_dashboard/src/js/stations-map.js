@@ -49,45 +49,48 @@
         return inside;
     }
 
-    function pointInGeometry(pt, geom) {
-        if (!geom || !geom.coordinates) return false;
-        if (geom.type === 'Polygon') {
-            const coords = geom.coordinates;
-            if (!coords[0] || !pointInRing(pt, coords[0])) return false;
-            for (let i = 1; i < coords.length; i++) {
-                if (pointInRing(pt, coords[i])) return false;
-            }
-            return true;
+    function pointInPolygon(pt, rings) {
+        if (!rings[0] || !pointInRing(pt, rings[0])) return false;
+        for (let i = 1; i < rings.length; i++) {
+            if (pointInRing(pt, rings[i])) return false;
         }
-        if (geom.type === 'MultiPolygon') {
-            for (let p = 0; p < geom.coordinates.length; p++) {
-                const coords = geom.coordinates[p];
-                if (coords[0] && pointInRing(pt, coords[0])) {
-                    let inHole = false;
-                    for (let i = 1; i < coords.length; i++) {
-                        if (pointInRing(pt, coords[i])) { inHole = true; break; }
-                    }
-                    if (!inHole) return true;
-                }
-            }
-            return false;
+        return true;
+    }
+
+    function pointInMultiPolygon(pt, polygons) {
+        for (const rings of polygons) {
+            if (pointInPolygon(pt, rings)) return true;
         }
         return false;
     }
 
-    function getCoords(device) {
+    function pointInGeometry(pt, geom) {
+        if (!geom || !geom.coordinates) return false;
+        if (geom.type === 'Polygon') return pointInPolygon(pt, geom.coordinates);
+        if (geom.type === 'MultiPolygon') return pointInMultiPolygon(pt, geom.coordinates);
+        return false;
+    }
+
+    function getReceiverCoords(device) {
         const readback = device?.system_info?.receiver_base_readback;
         const online = !['offline', 'lost'].includes(String(device?.status || '').toLowerCase())
             && !window.CorsDashboardShared?.isDeviceStaleOffline?.(device);
-        if (online && readback?.state === 'ok' && Number(readback.age_seconds) <= 60) {
-            const position = window.CorsReceiverCoordinates?.fromReceiver(readback.bestpos, true);
-            const coords = position && normalizeCoords(position.lat, position.lon);
-            if (coords) return { ...coords, source: position.isBaseFixed
-                ? 'Receiver · tọa độ Base đã chốt'
-                : position.positionType === 'SURVEY-IN-ESTIMATE'
-                    ? 'Receiver · tọa độ Survey-In ước tính'
-                    : 'Receiver · vị trí tạm SINGLE, chưa chốt Survey-In' };
+        if (!online || readback?.state !== 'ok' || !(Number(readback.age_seconds) <= 60)) return null;
+
+        const position = window.CorsReceiverCoordinates?.fromReceiver(readback.bestpos, true);
+        const coords = position && normalizeCoords(position.lat, position.lon);
+        if (!coords) return null;
+
+        let source = 'Receiver · vị trí tạm SINGLE, chưa chốt Survey-In';
+        if (position.isBaseFixed) {
+            source = 'Receiver · tọa độ Base đã chốt';
+        } else if (position.positionType === 'SURVEY-IN-ESTIMATE') {
+            source = 'Receiver · tọa độ Survey-In ước tính';
         }
+        return { ...coords, source };
+    }
+
+    function getSavedCoords(device) {
         const cfg = device?.base_config || {};
         const cfgCoords = cfg.coords || {};
         const candidates = [
@@ -105,6 +108,10 @@
                 ? 'Tọa độ đã lưu · chưa có kết quả Survey-In mới' : 'Tọa độ đã lưu' };
         }
         return null;
+    }
+
+    function getCoords(device) {
+        return getReceiverCoords(device) || getSavedCoords(device);
     }
 
     function effectiveStatus(device) {
@@ -246,6 +253,12 @@
         '96': { region: 'Đồng bằng sông Cửu Long', type: 'Tỉnh', wards: 64 },
     };
 
+    function getProvinceStationStatusColor(status) {
+        if (['online', 'streaming'].includes(status)) return '#22c55e';
+        if (status === 'sleep') return '#38bdf8';
+        return '#ef4444';
+    }
+
     function provincePopupHtml(feature, stations) {
         const p = feature.properties || {};
         const meta = PROVINCE_METADATA[p.code] || {};
@@ -266,7 +279,7 @@
             ? `<div class="station-map-popup-bases mt-2 pt-2 border-top border-secondary border-opacity-25" style="max-height:85px;overflow-y:auto;font-size:0.72rem;">
                 <div class="fw-bold text-muted mb-1" style="font-size:0.68rem;">Danh sách trạm Base trong địa bàn:</div>
                 ${inProvince.map(s => {
-                    const statusColor = ['online', 'streaming'].includes(s.status) ? '#22c55e' : s.status === 'sleep' ? '#38bdf8' : '#ef4444';
+                    const statusColor = getProvinceStationStatusColor(s.status);
                     return `<span class="badge me-1 mb-1" style="background:rgba(255,255,255,0.08);color:#f8fafc;border:1px solid ${statusColor};">
                         <span style="display:inline-block;width:6px;height:6px;border-radius:50%;background:${statusColor};margin-right:4px;"></span>${escapeHtml(s.device.name || s.device.serial)}
                     </span>`;
