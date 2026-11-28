@@ -52,28 +52,63 @@
         if ($(side + '-width').value === '6') return 'EPSG:' + (vn ? ($(side + '-zone').value === '48' ? 3405 : 3406) : ($(side + '-zone').value === '48' ? 32648 : 32649));
         return catalog.systems.find(s => s.projection?.zone_width === 3 && s.projection.central_meridian === Number($(side + '-meridian').value))?.id || '';
     }
+    function getAnglePlaceholder(column) {
+        if (angleMode === 'dms') return column === 0 ? '105°53′25.8″E' : '22°20′40.1″N';
+        if (angleMode === 'packed_dms') return column === 0 ? '1055325.8' : '222040.1';
+        return '';
+    }
+    function updatePointInput(row, input, rowIndex, rowCount, column, names, needsThird) {
+        const pointPrefix = rowCount > 1 ? `Điểm ${rowIndex + 1} · ` : '';
+        const optionalSuffix = column === 2 && !needsThird ? ' · tùy chọn' : '';
+        row.querySelector(`label[for="${input.id}"]`).textContent = `${pointPrefix}${names[column]}${optionalSuffix}`;
+        input.required = column < 2 || needsThird;
+        input.min = ''; input.max = '';
+        if (format('source') === 'geographic' && column < 2) {
+            input.type = 'text'; input.inputMode = angleMode === 'dms' ? 'text' : 'decimal';
+            input.setAttribute('aria-describedby', 'angle-help');
+            input.placeholder = getAnglePlaceholder(column);
+            input.min = column === 0 ? '-180' : '-90'; input.max = column === 0 ? '180' : '90';
+            return;
+        }
+        input.type = 'number'; input.inputMode = 'decimal'; input.placeholder = '';
+        input.removeAttribute('aria-describedby');
+    }
     function pointLabels() {
         const names = labels('source'), needsThird = sides.some(side => format(side) === 'geocentric');
         const rows = [...$('point-rows').children];
-        rows.forEach((row, i) => {
+        rows.forEach((row, rowIndex) => {
             row.querySelectorAll('input').forEach((input, column) => {
-                row.querySelector(`label[for="${input.id}"]`).textContent = `${rows.length > 1 ? `Điểm ${i + 1} · ` : ''}${names[column]}${column === 2 && !needsThird ? ' · tùy chọn' : ''}`;
-                input.required = column < 2 || needsThird;
-                input.min = ''; input.max = '';
-                if (format('source') === 'geographic' && column < 2) {
-                    input.type = 'text'; input.inputMode = angleMode === 'dms' ? 'text' : 'decimal';
-                    input.setAttribute('aria-describedby', 'angle-help');
-                    input.placeholder = angleMode === 'dms'
-                        ? column === 0 ? '105°53′25.8″E' : '22°20′40.1″N'
-                        : angleMode === 'packed_dms' ? column === 0 ? '1055325.8' : '222040.1' : '';
-                    input.min = column === 0 ? '-180' : '-90'; input.max = column === 0 ? '180' : '90';
-                } else {
-                    input.type = 'number'; input.inputMode = 'decimal'; input.placeholder = '';
-                    input.removeAttribute('aria-describedby');
-                }
+                updatePointInput(row, input, rowIndex, rows.length, column, names, needsThird);
             });
-            row.querySelector('.remove-point').setAttribute('aria-label', `Xóa điểm ${i + 1}`);
+            row.querySelector('.remove-point').setAttribute('aria-label', `Xóa điểm ${rowIndex + 1}`);
         });
+    }
+    function getProjectionSummary(side, projected, projection) {
+        if (projected) {
+            if (!projection) return 'Chọn vùng đo cũ để xác định kinh tuyến trục.';
+            return `Kinh tuyến ${degrees(projection.central_meridian)} · múi ${projection.zone_width}° · k₀ = ${String(projection.scale_factor).replace('.', ',')}`;
+        }
+        if (format(side) !== 'geographic') return 'XYZ địa tâm · Ba tọa độ không gian, đơn vị mét.';
+        if (side === 'source' && angleMode !== 'dd') return 'Kinh độ, vĩ độ theo độ – phút – giây; chuẩn hóa sang độ thập phân khi chuyển đổi.';
+        return 'Kinh độ, vĩ độ theo độ thập phân.';
+    }
+    function updateHeightOptions() {
+        const ecef = sides.some(side => format(side) === 'geocentric');
+        $('height-options').hidden = ecef;
+        if (ecef) sides.forEach(side => { $(side + '-height').value = 'ellipsoidal'; $(side + '-geoid-field').hidden = true; });
+        $('height-help').textContent = ecef
+            ? 'XYZ địa tâm cần đủ ba tọa độ. Khi đổi từ kinh độ/vĩ độ sang XYZ, cần nhập cả độ cao h.'
+            : 'Bỏ trống độ cao nếu chỉ đổi tọa độ ngang. Đơn vị độ cao là mét.';
+    }
+    function updateAngleHelp() {
+        $('angle-input').hidden = $('angle-help').hidden = format('source') !== 'geographic';
+        if (angleMode === 'dms') {
+            $('angle-help').textContent = 'Nhập từng góc hoặc dán cả cặp: 22°20′40.1″N 105°53′25.8″E. N/S là vĩ độ, E/W là kinh độ.';
+        } else if (angleMode === 'packed_dms') {
+            $('angle-help').textContent = 'DMS gộp: 222040.1 = 22°20′40.1″; 1055325.8 = 105°53′25.8″. Phút và giây nhỏ hơn 60.';
+        } else {
+            $('angle-help').textContent = 'Độ thập phân, ví dụ 105.890500 và 22.344472. Có thể dán cả cặp DMS có hướng N/S, E/W vào một ô.';
+        }
     }
     function update(side) {
         const vn = $(side + '-datum').value === 'VN2000';
@@ -87,23 +122,10 @@
         $(side + '-zone-field').hidden = tm3;
         $(side).value = crs(side);
         const selected = catalog.systems.find(s => s.id === $(side).value);
-        const projection = selected?.projection;
-        $(side + '-summary').textContent = projected
-            ? projection ? `Kinh tuyến ${degrees(projection.central_meridian)} · múi ${projection.zone_width}° · k₀ = ${String(projection.scale_factor).replace('.', ',')}` : 'Chọn vùng đo cũ để xác định kinh tuyến trục.'
-            : format(side) === 'geographic'
-            ? side === 'source' && angleMode !== 'dd' ? 'Kinh độ, vĩ độ theo độ – phút – giây; chuẩn hóa sang độ thập phân khi chuyển đổi.' : 'Kinh độ, vĩ độ theo độ thập phân.'
-            : 'XYZ địa tâm · Ba tọa độ không gian, đơn vị mét.';
+        $(side + '-summary').textContent = getProjectionSummary(side, projected, selected?.projection);
         $(side + '-formats').open = format(side) !== (vn ? 'projected' : 'geographic');
-        const ecef = sides.some(s => format(s) === 'geocentric');
-        $('height-options').hidden = ecef;
-        if (ecef) sides.forEach(s => { $(s + '-height').value = 'ellipsoidal'; $(s + '-geoid-field').hidden = true; });
-        $('height-help').textContent = ecef ? 'XYZ địa tâm cần đủ ba tọa độ. Khi đổi từ kinh độ/vĩ độ sang XYZ, cần nhập cả độ cao h.' : 'Bỏ trống độ cao nếu chỉ đổi tọa độ ngang. Đơn vị độ cao là mét.';
-        $('angle-input').hidden = $('angle-help').hidden = format('source') !== 'geographic';
-        $('angle-help').textContent = angleMode === 'dms'
-            ? 'Nhập từng góc hoặc dán cả cặp: 22°20′40.1″N 105°53′25.8″E. N/S là vĩ độ, E/W là kinh độ.'
-            : angleMode === 'packed_dms'
-            ? 'DMS gộp: 222040.1 = 22°20′40.1″; 1055325.8 = 105°53′25.8″. Phút và giây nhỏ hơn 60.'
-            : 'Độ thập phân, ví dụ 105.890500 và 22.344472. Có thể dán cả cặp DMS có hướng N/S, E/W vào một ô.';
+        updateHeightOptions();
+        updateAngleHelp();
         pointLabels();
     }
     function applyRegion(side) {
@@ -220,25 +242,33 @@
         $('accuracy').textContent = `${data.accuracy_m == null ? '' : `Sai số công bố của phép đổi datum: ${data.accuracy_m} m; không phải độ chính xác điểm đo. `}${data.note}`;
         $('result').hidden = false; status(`Đã chuyển đổi ${data.points.length} điểm.`);
     }
+    function buildConversionBody(points) {
+        const body = { source: crs('source'), target: crs('target'), points };
+        for (const side of sides) {
+            if (!body[side]) {
+                if ($(side + '-region-field').hidden) { $(side + '-projection').open = true; $(side + '-meridian').focus(); }
+                else $(side + '-region').focus();
+                throw new Error(`Chọn vùng đo hoặc kinh tuyến cho ${side === 'source' ? 'hệ nguồn' : 'hệ đích'}.`);
+            }
+            body[side + '_height'] = $(side + '-height').value;
+            if (body[side + '_height'] === 'orthometric') {
+                const input = $(side + '-geoid');
+                if (!input.value.trim() || !Number.isFinite(Number(input.value))) {
+                    $('height-options').open = true;
+                    input.focus();
+                    throw new Error('Nhập độ lệch geoid N để chuyển cao độ H.');
+                }
+                if (points[0].length !== 3) throw new Error('Nhập độ cao cho các điểm khi chọn chuyển cao độ H.');
+                body[side + '_geoid'] = Number(input.value);
+            }
+        }
+        return body;
+    }
     $('converter').addEventListener('input', event => { event.target.removeAttribute('aria-invalid'); invalidate(); });
     $('converter').addEventListener('submit', async event => {
         event.preventDefault(); invalidate();
         try {
-            const points = parsePoints(), body = { source: crs('source'), target: crs('target'), points };
-            for (const side of sides) {
-                if (!body[side]) {
-                    if ($(side + '-region-field').hidden) { $(side + '-projection').open = true; $(side + '-meridian').focus(); }
-                    else $(side + '-region').focus();
-                    throw new Error(`Chọn vùng đo hoặc kinh tuyến cho ${side === 'source' ? 'hệ nguồn' : 'hệ đích'}.`);
-                }
-                body[side + '_height'] = $(side + '-height').value;
-                if (body[side + '_height'] === 'orthometric') {
-                    const input = $(side + '-geoid');
-                    if (!input.value.trim() || !Number.isFinite(Number(input.value))) { $('height-options').open = true; input.focus(); throw new Error('Nhập độ lệch geoid N để chuyển cao độ H.'); }
-                    if (points[0].length !== 3) throw new Error('Nhập độ cao cho các điểm khi chọn chuyển cao độ H.');
-                    body[side + '_geoid'] = Number(input.value);
-                }
-            }
+            const points = parsePoints(), body = buildConversionBody(points);
             busy(true); status('Đang chuyển đổi tọa độ và độ cao…');
             showResult(await request('/api/coordinates/convert', body));
         } catch (error) { status(error.name === 'AbortError' ? 'Máy chủ chưa phản hồi. Thử lại.' : error.message, true); }
