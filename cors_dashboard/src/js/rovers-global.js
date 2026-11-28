@@ -2112,6 +2112,183 @@ function createRoverRowElement(r) {
         </article>`;
     }
 
+    function renderRoverHistoryData(body, data, username, selectedDate) {
+        const autoPointIntervalSeconds = Number(data.fixed_point_auto_interval_seconds) || 120;
+        const autoPointIntervalLabel = autoPointIntervalSeconds % 60 === 0
+            ? `${autoPointIntervalSeconds / 60} phút`
+            : `${autoPointIntervalSeconds} giây`;
+        const autoSaveFixedPointsEnabled = data.auto_save_fixed_points === true;
+        const events = data.events || [];
+        const statuses = data.caster_status || [];
+        const connections = statuses.flatMap(item => item.active_connections || []);
+        const sessions = data.sessions || [];
+        const historyPointsBySession = new Map(sessions.map(session => [String(session.id), Array.isArray(session.points) ? session.points : []]));
+        const totalSessions = Number(data.total_sessions) || 0;
+        const receiverCount = Number(data.receiver_count) || 0;
+        const totalPages = Number(data.total_pages) || 0;
+        const currentPage = Number(data.page) || 1;
+        const isAdmin = String(currentUser?.role || '').toLowerCase() === 'admin';
+        const accountName = escapeHtml(data.account?.username || data.username || username);
+        const sessionHistoryHtml = sessions.length
+            ? sessions.map(session => renderRoverHistorySessionHtml(session, {
+                isAdmin,
+                selectedDate,
+                currentPage,
+                autoSaveFixedPointsEnabled,
+                autoPointIntervalLabel,
+            })).join('')
+            : '<div class="rover-history-empty"><i class="bi bi-clock-history" aria-hidden="true"></i><span>Chưa có phiên nào được ghi nhận.</span></div>';
+        const eventHistoryHtml = events.length ? events.map(item => {
+            const level = String(item.severity || item.type || '').toLowerCase();
+            const tone = ['critical', 'error', 'danger'].includes(level) ? 'danger'
+                : level === 'warning' ? 'warning'
+                : level === 'success' ? 'success' : 'info';
+            const labels = { critical: 'Khẩn cấp', error: 'Lỗi', danger: 'Lỗi', warning: 'Cảnh báo', success: 'Thành công', info: 'Thông tin' };
+            return `<article class="rover-history-event is-${tone}">
+                <span class="rover-history-event-time"><i class="bi bi-clock" aria-hidden="true"></i>${formatDateTime(item.timestamp)}</span>
+                <div class="rover-history-event-copy"><strong>${escapeHtml(labels[level] || item.type || 'Thông tin')}</strong><p>${escapeHtml(item.message || '')}</p></div>
+            </article>`;
+        }).join('') : '<div class="rover-history-empty"><i class="bi bi-inbox" aria-hidden="true"></i><span>Chưa có sự kiện nào được ghi nhận.</span></div>';
+
+        body.innerHTML = `
+            <div class="row g-3 rover-history-summary" aria-label="Tổng quan Rover">
+                <div class="col-6 col-xl-3"><div class="rover-history-stat"><div><span>Tên tài khoản</span><strong title="${accountName}">${accountName}</strong></div><i class="bi bi-person-vcard" aria-hidden="true"></i></div></div>
+                <div class="col-6 col-xl-3"><div class="rover-history-stat"><div><span>Phiên hoạt động</span><strong>${connections.length}</strong></div><i class="bi bi-activity" aria-hidden="true"></i></div></div>
+                <div class="col-6 col-xl-3"><div class="rover-history-stat"><div><span>Số receiver</span><strong>${receiverCount}</strong></div><i class="bi bi-router" aria-hidden="true"></i></div></div>
+                <div class="col-6 col-xl-3"><div class="rover-history-stat"><div><span>Tổng số phiên</span><strong>${totalSessions}</strong></div><i class="bi bi-clock-history" aria-hidden="true"></i></div></div>
+            </div>
+            <form class="rover-history-filter" id="rover-history-filter">
+                <div class="rover-history-filter-fields">
+                    <label for="rover-history-date">Lọc phiên theo ngày<input id="rover-history-date" type="date" value="${escapeHtml(selectedDate)}"></label>
+                    <button class="rover-history-action-button" type="submit"><i class="bi bi-funnel" aria-hidden="true"></i><span>Lọc</span></button>
+                    <button class="rover-history-action-button" type="button" id="rover-history-clear-date"><i class="bi bi-calendar3" aria-hidden="true"></i><span>Tất cả ngày</span></button>
+                </div>
+                <span class="rover-history-filter-summary">${selectedDate ? `Ngày ${escapeHtml(selectedDate)}` : 'Tất cả ngày'} · ${totalSessions} phiên · ${receiverCount} receiver</span>
+            </form>
+            <section class="rover-history-section" aria-labelledby="rover-history-sessions-title">
+                <div class="rover-history-section-heading">
+                    <div>
+                        <h6 id="rover-history-sessions-title"><i class="bi bi-geo-alt" aria-hidden="true"></i>Vị trí cuối theo phiên</h6>
+                        <p>Tọa độ gần nhất rover gửi trong mỗi phiên kết nối.</p>
+                    </div>
+                    <span class="rover-history-count">${totalSessions} phiên · ${receiverCount} receiver</span>
+                </div>
+                <div class="rover-history-session-list">${sessionHistoryHtml}</div>
+                ${roverHistoryPaginationHtml(totalPages, currentPage, username, selectedDate)}
+            </section>
+            <section class="rover-history-section" aria-labelledby="rover-history-events-title">
+                <div class="rover-history-section-heading">
+                    <div>
+                        <h6 id="rover-history-events-title"><i class="bi bi-activity" aria-hidden="true"></i>Sự kiện gần đây</h6>
+                        <p>Hoạt động mới nhất được ghi nhận cho rover này.</p>
+                    </div>
+                </div>
+                <div class="rover-history-event-list">${eventHistoryHtml}</div>
+            </section>
+        `;
+        body.scrollTop = 0;
+        body.setAttribute('aria-busy', 'false');
+        body.querySelector('#rover-history-filter')?.addEventListener('submit', event => {
+            event.preventDefault();
+            handleRoverHistory({ currentTarget: { dataset: { username, date: body.querySelector('#rover-history-date')?.value || '', page: '1' } } }).catch(error => console.error('handleRoverHistory failed:', error));
+        });
+        body.querySelector('#rover-history-clear-date')?.addEventListener('click', () => {
+            handleRoverHistory({ currentTarget: { dataset: { username, date: '', page: '1' } } }).catch(error => console.error('handleRoverHistory failed:', error));
+        });
+        body.querySelectorAll('.rover-history-page-button').forEach(button => {
+            button.addEventListener('click', () => handleRoverHistory({ currentTarget: { dataset: button.dataset } }));
+        });
+        body.querySelectorAll('.rover-history-show-route').forEach(button => {
+            button.addEventListener('click', () => {
+                const pointsSection = button.closest('.rover-history-points');
+                const mapPanel = pointsSection?.querySelector('.rover-history-session-map');
+                const mapCanvas = mapPanel?.querySelector('.rover-history-session-map-canvas');
+                if (!mapPanel || !mapCanvas) return;
+                mapPanel.hidden = !mapPanel.hidden;
+                button.setAttribute('aria-expanded', String(!mapPanel.hidden));
+                if (mapPanel.hidden) return;
+
+                const sessionId = String(button.dataset.sessionId || '');
+                const map = roverHistorySessionMaps.get(sessionId)
+                    || renderRoverHistorySessionMap(sessionId, mapCanvas, historyPointsBySession.get(sessionId) || []);
+                requestAnimationFrame(() => {
+                    map?.invalidateSize();
+                    mapPanel.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+                });
+            });
+        });
+        body.querySelectorAll('.rover-history-copy').forEach(button => {
+            button.addEventListener('click', async () => {
+                try {
+                    await navigator.clipboard.writeText(button.dataset.copyValue || '');
+                    showToast('Đã sao chép tọa độ', 'success');
+                } catch {
+                    showToast('Không thể sao chép tọa độ trên trình duyệt này.', 'danger');
+                }
+            });
+        });
+        body.querySelectorAll('.rover-history-delete-session').forEach(button => {
+            button.addEventListener('click', async () => {
+                const sessionId = button.dataset.sessionId;
+                const ok = await window.CorsUI.confirmAction({
+                    title: 'Xóa phiên Rover',
+                    message: 'Phiên này và toàn bộ điểm đo đã lưu bên trong sẽ bị xóa vĩnh viễn.',
+                    confirmText: 'Xóa phiên',
+                    tone: 'danger'
+                });
+                if (!ok) return;
+                const buttonContent = button.innerHTML;
+                button.disabled = true;
+                button.innerHTML = '<span class="spinner-border spinner-border-sm" aria-hidden="true"></span><span>Đang xóa…</span>';
+                try {
+                    const response = await apiFetchRaw(window.ApiRoutes.rovers.historySession(username, sessionId), {
+                        method: 'DELETE',
+                        headers: API_HEADERS
+                    });
+                    const result = await response.json().catch(() => ({}));
+                    if (!response.ok) throw new Error(result.detail || `Không xóa được phiên (${response.status}).`);
+                    showToast('Đã xóa phiên Rover.', 'success');
+                    await handleRoverHistory({ currentTarget: { dataset: { username, date: button.dataset.date, page: button.dataset.page } } });
+                } catch (error) {
+                    button.disabled = false;
+                    button.innerHTML = buttonContent;
+                    showToast(error.message, 'danger');
+                }
+            });
+        });
+        body.querySelectorAll('.rover-history-delete-point').forEach(button => {
+            button.addEventListener('click', async () => {
+                const pointId = button.dataset.pointId;
+                const sessionId = button.dataset.sessionId;
+                const ok = await window.CorsUI.confirmAction({
+                    title: 'Xóa điểm FIX',
+                    message: 'Điểm đo này sẽ bị xóa vĩnh viễn khỏi phiên Rover.',
+                    confirmText: 'Xóa điểm',
+                    tone: 'danger'
+                });
+                if (!ok) return;
+                const buttonContent = button.innerHTML;
+                button.disabled = true;
+                button.innerHTML = '<span class="spinner-border spinner-border-sm" aria-hidden="true"></span><span>Đang xóa…</span>';
+                try {
+                    const sessionUrl = window.ApiRoutes.rovers.historySession(username, sessionId);
+                    const response = await apiFetchRaw(`${sessionUrl}/points/${encodeURIComponent(pointId)}`, {
+                        method: 'DELETE',
+                        headers: API_HEADERS
+                    });
+                    const result = await response.json().catch(() => ({}));
+                    if (!response.ok) throw new Error(result.detail || `Không xóa được điểm (${response.status}).`);
+                    showToast('Đã xóa điểm FIX.', 'success');
+                    await handleRoverHistory({ currentTarget: { dataset: { username, date: button.dataset.date, page: button.dataset.page } } });
+                } catch (error) {
+                    button.disabled = false;
+                    button.innerHTML = buttonContent;
+                    showToast(error.message, 'danger');
+                }
+            });
+        });
+    }
+
     async function handleRoverHistory(e) {
         const username = e.currentTarget.dataset.username;
         if (!username) return;
@@ -2138,180 +2315,7 @@ function createRoverRowElement(r) {
             if (requestId !== roverHistoryRequest) return;
             if (!response.ok) throw new Error(data.detail || `Không tải được lịch sử (${response.status}).`);
             if (body) {
-                const autoPointIntervalSeconds = Number(data.fixed_point_auto_interval_seconds) || 120;
-                const autoPointIntervalLabel = autoPointIntervalSeconds % 60 === 0
-                    ? `${autoPointIntervalSeconds / 60} phút`
-                    : `${autoPointIntervalSeconds} giây`;
-                const autoSaveFixedPointsEnabled = data.auto_save_fixed_points === true;
-                const events = data.events || [];
-                const statuses = data.caster_status || [];
-                const connections = statuses.flatMap(item => item.active_connections || []);
-                const sessions = data.sessions || [];
-                const historyPointsBySession = new Map(sessions.map(session => [String(session.id), Array.isArray(session.points) ? session.points : []]));
-                const totalSessions = Number(data.total_sessions) || 0;
-                const receiverCount = Number(data.receiver_count) || 0;
-                const totalPages = Number(data.total_pages) || 0;
-                const currentPage = Number(data.page) || 1;
-                const isAdmin = String(currentUser?.role || '').toLowerCase() === 'admin';
-                const accountName = escapeHtml(data.account?.username || data.username || username);
-                const sessionHistoryHtml = sessions.length
-                    ? sessions.map(session => renderRoverHistorySessionHtml(session, {
-                        isAdmin,
-                        selectedDate,
-                        currentPage,
-                        autoSaveFixedPointsEnabled,
-                        autoPointIntervalLabel,
-                    })).join('')
-                    : '<div class="rover-history-empty"><i class="bi bi-clock-history" aria-hidden="true"></i><span>Chưa có phiên nào được ghi nhận.</span></div>';
-                const eventHistoryHtml = events.length ? events.map(item => {
-                    const level = String(item.severity || item.type || '').toLowerCase();
-                    const tone = ['critical', 'error', 'danger'].includes(level) ? 'danger'
-                        : level === 'warning' ? 'warning'
-                        : level === 'success' ? 'success' : 'info';
-                    const labels = { critical: 'Khẩn cấp', error: 'Lỗi', danger: 'Lỗi', warning: 'Cảnh báo', success: 'Thành công', info: 'Thông tin' };
-                    return `<article class="rover-history-event is-${tone}">
-                        <span class="rover-history-event-time"><i class="bi bi-clock" aria-hidden="true"></i>${formatDateTime(item.timestamp)}</span>
-                        <div class="rover-history-event-copy"><strong>${escapeHtml(labels[level] || item.type || 'Thông tin')}</strong><p>${escapeHtml(item.message || '')}</p></div>
-                    </article>`;
-                }).join('') : '<div class="rover-history-empty"><i class="bi bi-inbox" aria-hidden="true"></i><span>Chưa có sự kiện nào được ghi nhận.</span></div>';
-
-                body.innerHTML = `
-                    <div class="row g-3 rover-history-summary" aria-label="Tổng quan Rover">
-                        <div class="col-6 col-xl-3"><div class="rover-history-stat"><div><span>Tên tài khoản</span><strong title="${accountName}">${accountName}</strong></div><i class="bi bi-person-vcard" aria-hidden="true"></i></div></div>
-                        <div class="col-6 col-xl-3"><div class="rover-history-stat"><div><span>Phiên hoạt động</span><strong>${connections.length}</strong></div><i class="bi bi-activity" aria-hidden="true"></i></div></div>
-                        <div class="col-6 col-xl-3"><div class="rover-history-stat"><div><span>Số receiver</span><strong>${receiverCount}</strong></div><i class="bi bi-router" aria-hidden="true"></i></div></div>
-                        <div class="col-6 col-xl-3"><div class="rover-history-stat"><div><span>Tổng số phiên</span><strong>${totalSessions}</strong></div><i class="bi bi-clock-history" aria-hidden="true"></i></div></div>
-                    </div>
-                    <form class="rover-history-filter" id="rover-history-filter">
-                        <div class="rover-history-filter-fields">
-                            <label for="rover-history-date">Lọc phiên theo ngày<input id="rover-history-date" type="date" value="${escapeHtml(selectedDate)}"></label>
-                            <button class="rover-history-action-button" type="submit"><i class="bi bi-funnel" aria-hidden="true"></i><span>Lọc</span></button>
-                            <button class="rover-history-action-button" type="button" id="rover-history-clear-date"><i class="bi bi-calendar3" aria-hidden="true"></i><span>Tất cả ngày</span></button>
-                        </div>
-                        <span class="rover-history-filter-summary">${selectedDate ? `Ngày ${escapeHtml(selectedDate)}` : 'Tất cả ngày'} · ${totalSessions} phiên · ${receiverCount} receiver</span>
-                    </form>
-                    <section class="rover-history-section" aria-labelledby="rover-history-sessions-title">
-                        <div class="rover-history-section-heading">
-                            <div>
-                                <h6 id="rover-history-sessions-title"><i class="bi bi-geo-alt" aria-hidden="true"></i>Vị trí cuối theo phiên</h6>
-                                <p>Tọa độ gần nhất rover gửi trong mỗi phiên kết nối.</p>
-                            </div>
-                            <span class="rover-history-count">${totalSessions} phiên · ${receiverCount} receiver</span>
-                        </div>
-                        <div class="rover-history-session-list">${sessionHistoryHtml}</div>
-                        ${roverHistoryPaginationHtml(totalPages, currentPage, username, selectedDate)}
-                    </section>
-                    <section class="rover-history-section" aria-labelledby="rover-history-events-title">
-                        <div class="rover-history-section-heading">
-                            <div>
-                                <h6 id="rover-history-events-title"><i class="bi bi-activity" aria-hidden="true"></i>Sự kiện gần đây</h6>
-                                <p>Hoạt động mới nhất được ghi nhận cho rover này.</p>
-                            </div>
-                        </div>
-                        <div class="rover-history-event-list">${eventHistoryHtml}</div>
-                    </section>
-                `;
-                body.scrollTop = 0;
-                body.setAttribute('aria-busy', 'false');
-                body.querySelector('#rover-history-filter')?.addEventListener('submit', event => {
-                    event.preventDefault();
-                    handleRoverHistory({ currentTarget: { dataset: { username, date: body.querySelector('#rover-history-date')?.value || '', page: '1' } } }).catch(error => console.error('handleRoverHistory failed:', error));
-                });
-                body.querySelector('#rover-history-clear-date')?.addEventListener('click', () => {
-                    handleRoverHistory({ currentTarget: { dataset: { username, date: '', page: '1' } } }).catch(error => console.error('handleRoverHistory failed:', error));
-                });
-                body.querySelectorAll('.rover-history-page-button').forEach(button => {
-                    button.addEventListener('click', () => handleRoverHistory({ currentTarget: { dataset: button.dataset } }));
-                });
-                body.querySelectorAll('.rover-history-show-route').forEach(button => {
-                    button.addEventListener('click', () => {
-                        const pointsSection = button.closest('.rover-history-points');
-                        const mapPanel = pointsSection?.querySelector('.rover-history-session-map');
-                        const mapCanvas = mapPanel?.querySelector('.rover-history-session-map-canvas');
-                        if (!mapPanel || !mapCanvas) return;
-                        mapPanel.hidden = !mapPanel.hidden;
-                        button.setAttribute('aria-expanded', String(!mapPanel.hidden));
-                        if (mapPanel.hidden) return;
-
-                        const sessionId = String(button.dataset.sessionId || '');
-                        const map = roverHistorySessionMaps.get(sessionId)
-                            || renderRoverHistorySessionMap(sessionId, mapCanvas, historyPointsBySession.get(sessionId) || []);
-                        requestAnimationFrame(() => {
-                            map?.invalidateSize();
-                            mapPanel.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
-                        });
-                    });
-                });
-                body.querySelectorAll('.rover-history-copy').forEach(button => {
-                    button.addEventListener('click', async () => {
-                        try {
-                            await navigator.clipboard.writeText(button.dataset.copyValue || '');
-                            showToast('Đã sao chép tọa độ', 'success');
-                        } catch {
-                            showToast('Không thể sao chép tọa độ trên trình duyệt này.', 'danger');
-                        }
-                    });
-                });
-                body.querySelectorAll('.rover-history-delete-session').forEach(button => {
-                    button.addEventListener('click', async () => {
-                        const sessionId = button.dataset.sessionId;
-                        const ok = await window.CorsUI.confirmAction({
-                            title: 'Xóa phiên Rover',
-                            message: 'Phiên này và toàn bộ điểm đo đã lưu bên trong sẽ bị xóa vĩnh viễn.',
-                            confirmText: 'Xóa phiên',
-                            tone: 'danger'
-                        });
-                        if (!ok) return;
-                        const buttonContent = button.innerHTML;
-                        button.disabled = true;
-                        button.innerHTML = '<span class="spinner-border spinner-border-sm" aria-hidden="true"></span><span>Đang xóa…</span>';
-                        try {
-                            const response = await apiFetchRaw(window.ApiRoutes.rovers.historySession(username, sessionId), {
-                                method: 'DELETE',
-                                headers: API_HEADERS
-                            });
-                            const result = await response.json().catch(() => ({}));
-                            if (!response.ok) throw new Error(result.detail || `Không xóa được phiên (${response.status}).`);
-                            showToast('Đã xóa phiên Rover.', 'success');
-                            await handleRoverHistory({ currentTarget: { dataset: { username, date: button.dataset.date, page: button.dataset.page } } });
-                        } catch (error) {
-                            button.disabled = false;
-                            button.innerHTML = buttonContent;
-                            showToast(error.message, 'danger');
-                        }
-                    });
-                });
-                body.querySelectorAll('.rover-history-delete-point').forEach(button => {
-                    button.addEventListener('click', async () => {
-                        const pointId = button.dataset.pointId;
-                        const sessionId = button.dataset.sessionId;
-                        const ok = await window.CorsUI.confirmAction({
-                            title: 'Xóa điểm FIX',
-                            message: 'Điểm đo này sẽ bị xóa vĩnh viễn khỏi phiên Rover.',
-                            confirmText: 'Xóa điểm',
-                            tone: 'danger'
-                        });
-                        if (!ok) return;
-                        const buttonContent = button.innerHTML;
-                        button.disabled = true;
-                        button.innerHTML = '<span class="spinner-border spinner-border-sm" aria-hidden="true"></span><span>Đang xóa…</span>';
-                        try {
-                            const sessionUrl = window.ApiRoutes.rovers.historySession(username, sessionId);
-                            const response = await apiFetchRaw(`${sessionUrl}/points/${encodeURIComponent(pointId)}`, {
-                                method: 'DELETE',
-                                headers: API_HEADERS
-                            });
-                            const result = await response.json().catch(() => ({}));
-                            if (!response.ok) throw new Error(result.detail || `Không xóa được điểm (${response.status}).`);
-                            showToast('Đã xóa điểm FIX.', 'success');
-                            await handleRoverHistory({ currentTarget: { dataset: { username, date: button.dataset.date, page: button.dataset.page } } });
-                        } catch (error) {
-                            button.disabled = false;
-                            button.innerHTML = buttonContent;
-                            showToast(error.message, 'danger');
-                        }
-                    });
-                });
+                renderRoverHistoryData(body, data, username, selectedDate);
             }
         } catch (error) {
             if (requestId !== roverHistoryRequest) return;
@@ -2401,118 +2405,116 @@ function createRoverRowElement(r) {
         }
     }
 
+    function mergeRoverTableRows() {
+        const merged = allRovers.map(rover => ({
+            ...rover,
+            type: 'db',
+            caster_infos: getCasterInfosForUsername(rover.username)
+        }));
+        casterUsers.forEach(user => {
+            const exists = allRovers.some(rover => normalizeUsername(rover.username) === normalizeUsername(user.username));
+            if (exists) return;
+            merged.push({
+                username: user.username,
+                password: user.password || '',
+                type: 'unknown',
+                caster_info: user,
+                mountpoints: user.mountpoints.join(';'),
+                base_name: 'Caster Only User',
+                is_active: false
+            });
+        });
+        return merged;
+    }
+
+    function matchesRoverSearch(rover, searchTerm) {
+        return rover.username.toLowerCase().includes(searchTerm)
+            || (rover.base_serial && rover.base_serial.toLowerCase().includes(searchTerm))
+            || (rover.base_name && rover.base_name.toLowerCase().includes(searchTerm));
+    }
+
+    function matchesRoverStation(rover, stationFilter) {
+        if (!stationFilter) return true;
+        const device = allDevices.find(item => item.serial === stationFilter);
+        const serialMatches = rover.base_serial && rover.base_serial.split(',').map(value => value.trim()).includes(stationFilter);
+        const mountpoints = (rover.mountpoints || '').split(';').map(value => value.trim().toLowerCase());
+        const mountpointMatches = device?.mountpoint && mountpoints.includes(device.mountpoint.toLowerCase());
+        return Boolean(serialMatches || mountpointMatches);
+    }
+
+    function roverStatusMatchesFilter(rover, statusFilter) {
+        const infos = rover.caster_infos || (rover.caster_info ? [rover.caster_info] : []);
+        const isBlocked = infos.some(info => info?.is_blocked);
+        const isOnline = infos.some(info => info?.nclient > 0);
+        const liveExpiry = infos.find(info => info?.status != null && Number.isFinite(Number(info.status)));
+        const isExpired = liveExpiry
+            ? Number(liveExpiry.status) <= 0 || (
+                Number(liveExpiry.status) < 315360000 && Number(liveExpiry.expiry_deadline) <= Date.now() / 1000
+            )
+            : Boolean(rover.expires_at && Number(rover.expires_at) <= Date.now() / 1000);
+        const matches = {
+            active: isOnline,
+            blocked: isBlocked,
+            expired: isExpired,
+            standby: !isOnline && !isBlocked && !isExpired
+        };
+        const statusMatches = statusFilter ? matches[statusFilter] ?? true : true;
+        return statusMatches && (!showExpiringSoonOnly || isRoverExpiringSoon(rover));
+    }
+
+    function updateRoverTableCounts(merged, filtered) {
+        const counts = {
+            'displayed-count': filtered.length,
+            'total-rovers': merged.length,
+            'stat-total': merged.length,
+            'stat-indb': allRovers.length,
+            'stat-unknown': merged.filter(rover => rover.type === 'unknown').length,
+            'stat-blocked': merged.filter(rover => (rover.caster_infos || [rover.caster_info]).some(info => info?.is_blocked)).length
+        };
+        Object.entries(counts).forEach(([id, value]) => {
+            const element = document.getElementById(id);
+            if (element) element.textContent = value;
+        });
+    }
+
+    function bindRoverTableActions() {
+        document.querySelectorAll('.delete-btn').forEach(button => button.onclick = handleDeleteRover);
+        document.querySelectorAll('.edit-btn').forEach(button => button.onclick = handleEditRover);
+        document.querySelectorAll('.caster-block-btn').forEach(button => button.onclick = handleBlockUser);
+        document.querySelectorAll('.caster-unblock-btn').forEach(button => button.onclick = handleUnblockUser);
+        document.querySelectorAll('.caster-delete-btn').forEach(button => button.onclick = handleDeleteCasterUser);
+        document.querySelectorAll('.rover-history-btn').forEach(button => button.onclick = handleRoverHistory);
+        bindRoverSelectionEvents();
+        updateRoverBulkToolbar();
+    }
+
     // === UNIFIED RENDER TABLE ===
     function renderTable() {
         const tbody = document.getElementById('rovers-table-body');
         if (!tbody) return;
-
         currentRenderedConnectionKeys = new Set();
-
-        const searchTerm = document.getElementById('search-box')?.value.toLowerCase() || '';
-        const stationFilter = document.getElementById('filter-station')?.value || '';
-        const statusFilter = document.getElementById('filter-status')?.value || '';
-
         tbody.innerHTML = '';
-
-        // 1. Prepare merged data
-        let mergedData = allRovers.map(r => ({
-            ...r,
-            type: 'db',
-            caster_infos: getCasterInfosForUsername(r.username)
-        }));
-
-        casterUsers.forEach(cu => {
-            if (!allRovers.find(r => normalizeUsername(r.username) === normalizeUsername(cu.username))) {
-                mergedData.push({
-                    username: cu.username,
-                    password: cu.password || '',
-                    type: 'unknown',
-                    caster_info: cu,
-                    mountpoints: cu.mountpoints.join(';'),
-                    base_name: 'Caster Only User',
-                    is_active: false
-                });
-            }
-        });
-        latestMergedRovers = mergedData;
-
-        // 2. Filtering
-        const filtered = mergedData.filter(r => {
-            const matchSearch = r.username.toLowerCase().includes(searchTerm) || 
-                                (r.base_serial && r.base_serial.toLowerCase().includes(searchTerm)) ||
-                                (r.base_name && r.base_name.toLowerCase().includes(searchTerm));
-            
-            // 🔥 FIXED: Lọc trạm Base thông minh cho cả DB và Unknown Rover
-            let matchStation = true;
-            if (stationFilter) {
-                const targetDevice = allDevices.find(d => d.serial === stationFilter);
-                const hasSerialMatch = r.base_serial && r.base_serial.split(',').map(s => s.trim()).includes(stationFilter);
-                
-                const allowedMps = (r.mountpoints || '').split(';').map(m => m.trim().toLowerCase());
-                const hasMpMatch = targetDevice && targetDevice.mountpoint && allowedMps.includes(targetDevice.mountpoint.toLowerCase());
-                
-                matchStation = hasSerialMatch || hasMpMatch;
-            }
-            
-            // 🔥 FIXED: Lọc trạng thái (Status) chính xác cho cả DB và Unknown Rover
-            const infos = r.caster_infos || (r.caster_info ? [r.caster_info] : []);
-            const isBlocked = infos.some(i => i?.is_blocked);
-            const isOnline = infos.some(i => i?.nclient > 0);
-            
-            const liveExpiry = infos.find(i => i?.status != null && Number.isFinite(Number(i.status)));
-            const isExpired = liveExpiry
-                ? Number(liveExpiry.status) <= 0 || (
-                    Number(liveExpiry.status) < 315360000 && Number(liveExpiry.expiry_deadline) <= Date.now() / 1000
-                )
-                : Boolean(r.expires_at && Number(r.expires_at) <= Date.now() / 1000);
-            
-            let matchStatus = true;
-            if (statusFilter === 'active') matchStatus = isOnline;
-            else if (statusFilter === 'blocked') matchStatus = isBlocked;
-            else if (statusFilter === 'expired') matchStatus = isExpired;
-            else if (statusFilter === 'standby') matchStatus = !isOnline && !isBlocked && !isExpired;
-            if (showExpiringSoonOnly) matchStatus = matchStatus && isRoverExpiringSoon(r);
-
-            return matchSearch && matchStation && matchStatus;
-        });
-
-        // 3. Update Counts & Stats
-        if (document.getElementById('displayed-count')) document.getElementById('displayed-count').textContent = filtered.length;
-        if (document.getElementById('total-rovers')) document.getElementById('total-rovers').textContent = mergedData.length;
-
-        // Premium Stats
-        if (document.getElementById('stat-total')) document.getElementById('stat-total').textContent = mergedData.length;
-        if (document.getElementById('stat-indb')) document.getElementById('stat-indb').textContent = allRovers.length;
-        if (document.getElementById('stat-unknown')) document.getElementById('stat-unknown').textContent = mergedData.filter(r => r.type === 'unknown').length;
-        if (document.getElementById('stat-blocked')) document.getElementById('stat-blocked').textContent = mergedData.filter(r => (r.caster_infos || [r.caster_info]).some(i => i?.is_blocked)).length;
-
-
-        if (filtered.length === 0) {
-            tbody.innerHTML = `<tr><td colspan="11" class="text-center py-5 text-muted">Không tìm thấy dữ liệu phù hợp.</td></tr>`;
+        const filters = {
+            search: document.getElementById('search-box')?.value.toLowerCase() || '',
+            station: document.getElementById('filter-station')?.value || '',
+            status: document.getElementById('filter-status')?.value || ''
+        };
+        const merged = mergeRoverTableRows();
+        latestMergedRovers = merged;
+        const filtered = merged.filter(rover => matchesRoverSearch(rover, filters.search)
+            && matchesRoverStation(rover, filters.station)
+            && roverStatusMatchesFilter(rover, filters.status));
+        updateRoverTableCounts(merged, filtered);
+        if (!filtered.length) {
+            tbody.innerHTML = '<tr><td colspan="11" class="text-center py-5 text-muted">Không tìm thấy dữ liệu phù hợp.</td></tr>';
             updateRoverBulkToolbar();
             return;
         }
-
-        // 4. Render Rows
-        filtered.forEach(r => {
-            tbody.appendChild(createRoverRowElement(r));
-        });
-
-        for (const key of Array.from(connectionClockCache.keys())) {
-            if (!currentRenderedConnectionKeys.has(key)) {
-                connectionClockCache.delete(key);
-            }
+        filtered.forEach(rover => tbody.appendChild(createRoverRowElement(rover)));
+        for (const key of connectionClockCache.keys()) {
+            if (!currentRenderedConnectionKeys.has(key)) connectionClockCache.delete(key);
         }
-
-        // Re-bind events
-        document.querySelectorAll('.delete-btn').forEach(btn => btn.onclick = handleDeleteRover);
-        document.querySelectorAll('.edit-btn').forEach(btn => btn.onclick = handleEditRover);
-        document.querySelectorAll('.caster-block-btn').forEach(btn => btn.onclick = handleBlockUser);
-        document.querySelectorAll('.caster-unblock-btn').forEach(btn => btn.onclick = handleUnblockUser);
-        document.querySelectorAll('.caster-delete-btn').forEach(btn => btn.onclick = handleDeleteCasterUser);
-        document.querySelectorAll('.rover-history-btn').forEach(btn => btn.onclick = handleRoverHistory);
-        bindRoverSelectionEvents();
-        updateRoverBulkToolbar();
+        bindRoverTableActions();
     }
 
     function findRoverForEdit(id, username) {

@@ -723,6 +723,74 @@
         }
 
         // Open persistent Station Detail Card with decoded GNSS satellite telemetry & live tracking rays
+        getStationTrackingData(dev, coords, now, gmst) {
+            const satLib = window.satellite;
+            const obsGd = {
+                latitude: coords.lat * (Math.PI / 180.0),
+                longitude: coords.lon * (Math.PI / 180.0),
+                height: 0.05,
+            };
+            const stationPosition = window.Globe3DMath.latLonAltToVector3(coords.lat, coords.lon, 4);
+            const trackedSats = [];
+            const constCounts = { gps: 0, galileo: 0, beidou: 0, glonass: 0, qzss: 0 };
+            const liveRtcmSatellites = window.GnssSatelliteOverlay?.getLiveRtcmSatellites(dev) || [];
+            const matchedRtcmKeys = new Set();
+            this.satelliteMeshes.forEach(({ mesh, satItem }) => {
+                if (!satItem?.satrec) return;
+                try {
+                    const position = satLib.propagate(satItem.satrec, now)?.position;
+                    if (!position) return;
+                    const positionEcf = satLib.eciToEcf(position, gmst);
+                    const look = satLib.ecfToLookAngles(obsGd, positionEcf);
+                    const elevation = look.elevation * (180.0 / Math.PI);
+                    const azimuth = ((look.azimuth * (180.0 / Math.PI)) + 360) % 360;
+                    const overlay = window.GnssSatelliteOverlay;
+                    const liveRtcmSat = overlay?.getLiveRtcmSatellite(satItem, dev, liveRtcmSatellites) || null;
+                    const rtcmKey = overlay?.getRtcmSatelliteKey(satItem);
+                    if (!liveRtcmSat || !rtcmKey || matchedRtcmKeys.has(rtcmKey)) return;
+                    matchedRtcmKeys.add(rtcmKey);
+                    trackedSats.push({ satItem, elDeg: elevation, azDeg: azimuth, mesh, liveRtcmSat });
+                    constCounts[satItem.constellationKey] = (constCounts[satItem.constellationKey] || 0) + 1;
+                } catch (error) {
+                    // Ignore satellites whose orbit propagation fails for this frame.
+                }
+            });
+            trackedSats.sort((left, right) => right.elDeg - left.elDeg);
+            return {
+                stationPosition,
+                trackedSats,
+                constCounts,
+                liveRtcmSatellites,
+                hasLiveRtcm: liveRtcmSatellites.length > 0,
+                matchedRtcmKeys,
+            };
+        }
+
+        drawStationTrackingRays(trackedSats, stationPosition, THREE, isAvailable) {
+            if (!isAvailable) return;
+            trackedSats.forEach(({ satItem, elDeg, mesh }) => {
+                const constellation = CONSTELLATIONS[satItem.constellationKey] || CONSTELLATIONS.gps;
+                const geometry = new THREE.BufferGeometry().setFromPoints([stationPosition, mesh.position]);
+                const material = new THREE.LineBasicMaterial({
+                    color: constellation.color,
+                    transparent: true,
+                    opacity: Math.min(0.65, Math.max(0.25, elDeg / 60.0)),
+                    blending: THREE.AdditiveBlending,
+                });
+                this.stationTrackingGroup.add(new THREE.Line(geometry, material));
+            });
+        }
+
+        findUnmatchedRtcmCodes(liveRtcmSatellites, matchedRtcmKeys) {
+            return liveRtcmSatellites
+                .filter(satellite => {
+                    const key = window.GnssSatelliteOverlay?.getRtcmSatelliteKey(satellite);
+                    return !key || !matchedRtcmKeys.has(key);
+                })
+                .slice(0, 8)
+                .map(satellite => window.GnssSatelliteOverlay?.getRtcmSatelliteCode(satellite) || satellite.id);
+        }
+
         openStationCard(stationItem, coords) {
             if (!this.detailCardEl) return;
             this.restoreSelectedStationCard = false;
@@ -740,73 +808,18 @@
             disposeGroup(this.stationTrackingGroup);
             this.selectedSatellite = null;
 
-            const Math3D = window.Globe3DMath;
             const satLib = window.satellite;
             const THREE = window.THREE;
             const now = new Date();
             const gmst = satLib.gstime(now);
+            const tracking = this.getStationTrackingData(dev, coords, now, gmst);
+            const { stationPosition, trackedSats, constCounts, liveRtcmSatellites, hasLiveRtcm, matchedRtcmKeys } = tracking;
 
-            const obsGd = {
-                latitude: coords.lat * (Math.PI / 180.0),
-                longitude: coords.lon * (Math.PI / 180.0),
-                height: 0.05,
-            };
-            const stnPos3D = Math3D.latLonAltToVector3(coords.lat, coords.lon, 4);
 
-            // A station tracks only fresh RTCM observations matched to a loaded orbit.
-            const trackedSats = [];
-            const constCounts = { gps: 0, galileo: 0, beidou: 0, glonass: 0, qzss: 0 };
-            const liveRtcmSatellites = window.GnssSatelliteOverlay?.getLiveRtcmSatellites(dev) || [];
-            const hasLiveRtcm = liveRtcmSatellites.length > 0;
-            const matchedRtcmKeys = new Set();
-
-            this.satelliteMeshes.forEach(({ mesh, satItem }) => {
-                if (!satItem?.satrec) return;
-                try {
-                    const posVel = satLib.propagate(satItem.satrec, now);
-                    if (posVel && posVel.position) {
-                        const posEcf = satLib.eciToEcf(posVel.position, gmst);
-                        const look = satLib.ecfToLookAngles(obsGd, posEcf);
-                        const elDeg = look.elevation * (180.0 / Math.PI);
-                        const azDeg = ((look.azimuth * (180.0 / Math.PI)) + 360) % 360;
-                        const overlay = window.GnssSatelliteOverlay;
-                        const liveRtcmSat = overlay?.getLiveRtcmSatellite(satItem, dev, liveRtcmSatellites) || null;
-                        const rtcmKey = overlay?.getRtcmSatelliteKey(satItem);
-                        if (liveRtcmSat && rtcmKey && !matchedRtcmKeys.has(rtcmKey)) {
-                            matchedRtcmKeys.add(rtcmKey);
-                            trackedSats.push({ satItem, elDeg, azDeg, mesh, liveRtcmSat });
-                            constCounts[satItem.constellationKey] = (constCounts[satItem.constellationKey] || 0) + 1;
-                        }
-                    }
-                } catch (e) {}
-            });
-
-            // Sort by elevation descending (highest overhead satellites first)
-            trackedSats.sort((a, b) => b.elDeg - a.elDeg);
-
-            // Draw luminous reception signal rays from station to each tracked satellite (only if station is online or sleep)
-            if (isOnline || isSleep) {
-                trackedSats.forEach(({ satItem, elDeg, mesh }) => {
-                    const cfg = CONSTELLATIONS[satItem.constellationKey] || CONSTELLATIONS.gps;
-                    const rayGeo = new THREE.BufferGeometry().setFromPoints([stnPos3D, mesh.position]);
-                    const rayMat = new THREE.LineBasicMaterial({
-                        color: cfg.color,
-                        transparent: true,
-                        opacity: Math.min(0.65, Math.max(0.25, elDeg / 60.0)),
-                        blending: THREE.AdditiveBlending,
-                    });
-                    this.stationTrackingGroup.add(new THREE.Line(rayGeo, rayMat));
-                });
-            }
+            this.drawStationTrackingRays(trackedSats, stationPosition, THREE, isOnline || isSleep);
 
             const totalTracked = trackedSats.length;
-            const unmatchedRtcmCodes = liveRtcmSatellites
-                .filter(sat => {
-                    const key = window.GnssSatelliteOverlay?.getRtcmSatelliteKey(sat);
-                    return !key || !matchedRtcmKeys.has(key);
-                })
-                .slice(0, 8)
-                .map(sat => window.GnssSatelliteOverlay?.getRtcmSatelliteCode(sat) || sat.id);
+            const unmatchedRtcmCodes = this.findUnmatchedRtcmCodes(liveRtcmSatellites, matchedRtcmKeys);
 
             // Generate satellite chips HTML (clickable to view satellite orbit!)
             const satChipsHtml = trackedSats.slice(0, 24).map(({ satItem, elDeg, liveRtcmSat }) => {

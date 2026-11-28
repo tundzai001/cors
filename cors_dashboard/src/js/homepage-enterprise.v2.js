@@ -266,6 +266,98 @@ const ParticleField = () => {
             });
         }
 
+        const updateParticle = particle => {
+            if (mouse.x !== null && mouse.y !== null) {
+                const dx = particle.x - mouse.x;
+                const dy = particle.y - mouse.y;
+                const distance = Math.sqrt(dx * dx + dy * dy);
+                if (distance < mouse.radius) {
+                    const force = (mouse.radius - distance) / mouse.radius;
+                    const angle = Math.atan2(dy, dx);
+                    particle.vx += Math.cos(angle) * force * 0.55;
+                    particle.vy += Math.sin(angle) * force * 0.55;
+                }
+            }
+            particle.vx = particle.vx * 0.98 + (Math.random() - 0.5) * 0.015;
+            particle.vy = particle.vy * 0.98 + (Math.random() - 0.5) * 0.015;
+            const speed = Math.sqrt(particle.vx * particle.vx + particle.vy * particle.vy);
+            if (speed > 0.7) {
+                particle.vx = particle.vx / speed * 0.7;
+                particle.vy = particle.vy / speed * 0.7;
+            }
+            particle.x += particle.vx;
+            particle.y += particle.vy;
+            if (particle.x < 0) { particle.x = 0; particle.vx *= -1; }
+            else if (particle.x > width) { particle.x = width; particle.vx *= -1; }
+            if (particle.y < 0) { particle.y = 0; particle.vy *= -1; }
+            else if (particle.y > height) { particle.y = height; particle.vy *= -1; }
+            ctx.beginPath();
+            ctx.arc(particle.x, particle.y, particle.radius, 0, Math.PI * 2);
+            ctx.fillStyle = 'rgba(0, 242, 255, 0.75)';
+            ctx.fill();
+        };
+
+        const updateSpatialGrid = (particleCount, cellSize) => {
+            const columns = Math.max(1, Math.ceil(width / cellSize));
+            const rows = Math.max(1, Math.ceil(height / cellSize));
+            if (columns !== gridColumns || rows !== gridRows || cellSize !== gridCellSize) {
+                gridColumns = columns;
+                gridRows = rows;
+                gridCellSize = cellSize;
+                spatialGrid = Array.from({ length: gridColumns * gridRows }, () => []);
+            } else {
+                spatialGrid.forEach(bucket => { bucket.length = 0; });
+            }
+            for (let index = 0; index < particleCount; index++) {
+                const particle = particles[index];
+                const cellX = Math.min(gridColumns - 1, Math.max(0, Math.floor(particle.x / cellSize)));
+                const cellY = Math.min(gridRows - 1, Math.max(0, Math.floor(particle.y / cellSize)));
+                spatialGrid[cellY * gridColumns + cellX].push(index);
+            }
+        };
+
+        const addConnection = (index, particle, neighborIndex, maxDistance) => {
+            if (neighborIndex <= index) return;
+            const neighbor = particles[neighborIndex];
+            const dx = particle.x - neighbor.x;
+            const dy = particle.y - neighbor.y;
+            const distanceSquared = dx * dx + dy * dy;
+            if (distanceSquared >= maxDistance * maxDistance) return;
+            const ratio = Math.sqrt(distanceSquared) / maxDistance;
+            const bucket = Math.min(3, Math.floor((1 - ratio) * 4));
+            lineBuckets[bucket].push(particle.x, particle.y, neighbor.x, neighbor.y);
+        };
+
+        const collectNearbyConnections = (index, particle, cellSize) => {
+            const cellX = Math.min(gridColumns - 1, Math.max(0, Math.floor(particle.x / cellSize)));
+            const cellY = Math.min(gridRows - 1, Math.max(0, Math.floor(particle.y / cellSize)));
+            for (let offsetX = -1; offsetX <= 1; offsetX++) {
+                for (let offsetY = -1; offsetY <= 1; offsetY++) {
+                    const nearbyX = cellX + offsetX;
+                    const nearbyY = cellY + offsetY;
+                    if (nearbyX < 0 || nearbyX >= gridColumns || nearbyY < 0 || nearbyY >= gridRows) continue;
+                    const neighbors = spatialGrid[nearbyY * gridColumns + nearbyX];
+                    for (let neighborIndex = 0; neighborIndex < neighbors.length; neighborIndex++) {
+                        addConnection(index, particle, neighbors[neighborIndex], cellSize);
+                    }
+                }
+            }
+        };
+
+        const drawConnections = () => {
+            ctx.lineWidth = 0.55;
+            lineBuckets.forEach((lines, bucketIndex) => {
+                if (!lines.length) return;
+                ctx.beginPath();
+                for (let index = 0; index < lines.length; index += 4) {
+                    ctx.moveTo(lines[index], lines[index + 1]);
+                    ctx.lineTo(lines[index + 2], lines[index + 3]);
+                }
+                ctx.strokeStyle = `rgba(0, 242, 255, ${((bucketIndex + 0.5) / 4) * 0.35})`;
+                ctx.stroke();
+            });
+        };
+
         const animate = () => {
             if (!active) {
                 animationFrameId = null;
@@ -279,126 +371,15 @@ const ParticleField = () => {
             }
             lastFrameAt = now;
             ctx.clearRect(0, 0, width, height);
-            const activeParticleCount = Math.max(
-                8,
-                Math.min(particles.length, Number(performanceSettings.particleCount || 18))
-            );
+            const activeParticleCount = Math.max(8, Math.min(particles.length, Number(performanceSettings.particleCount || 18)));
             const maxDistance = performanceSettings.tier === 'high' ? 140 : performanceSettings.tier === 'balanced' ? 115 : 88;
-
-            // Update and draw particles
-            for (let i = 0; i < activeParticleCount; i++) {
-                const p = particles[i];
-
-                // Mouse repel effect
-                if (mouse.x !== null && mouse.y !== null) {
-                    const dx = p.x - mouse.x;
-                    const dy = p.y - mouse.y;
-                    const dist = Math.sqrt(dx * dx + dy * dy);
-                    if (dist < mouse.radius) {
-                        const force = (mouse.radius - dist) / mouse.radius;
-                        const angle = Math.atan2(dy, dx);
-                        const pushX = Math.cos(angle) * force * 0.55;
-                        const pushY = Math.sin(angle) * force * 0.55;
-                        p.vx += pushX;
-                        p.vy += pushY;
-                    }
-                }
-
-                // Drag/frictional damping
-                p.vx *= 0.98;
-                p.vy *= 0.98;
-
-                // Drift noise
-                p.vx += (Math.random() - 0.5) * 0.015;
-                p.vy += (Math.random() - 0.5) * 0.015;
-
-                // Cap speed
-                const speed = Math.sqrt(p.vx * p.vx + p.vy * p.vy);
-                const maxSpeed = 0.7;
-                if (speed > maxSpeed) {
-                    p.vx = (p.vx / speed) * maxSpeed;
-                    p.vy = (p.vy / speed) * maxSpeed;
-                }
-
-                p.x += p.vx;
-                p.y += p.vy;
-
-                // Bounce on boundaries
-                if (p.x < 0) { p.x = 0; p.vx *= -1; }
-                else if (p.x > width) { p.x = width; p.vx *= -1; }
-                if (p.y < 0) { p.y = 0; p.vy *= -1; }
-                else if (p.y > height) { p.y = height; p.vy *= -1; }
-
-                // Draw dot
-                ctx.beginPath();
-                ctx.arc(p.x, p.y, p.radius, 0, Math.PI * 2);
-                ctx.fillStyle = 'rgba(0, 242, 255, 0.75)';
-                ctx.fill();
-            }
-
-            // Draw connections through a spatial grid. This keeps the same
-            // particle density while avoiding a full O(n^2) scan every frame.
-            const cellSize = maxDistance;
-            const nextColumns = Math.max(1, Math.ceil(width / cellSize));
-            const nextRows = Math.max(1, Math.ceil(height / cellSize));
-            if (nextColumns !== gridColumns || nextRows !== gridRows || cellSize !== gridCellSize) {
-                gridColumns = nextColumns;
-                gridRows = nextRows;
-                gridCellSize = cellSize;
-                spatialGrid = Array.from({ length: gridColumns * gridRows }, () => []);
-            } else {
-                spatialGrid.forEach(bucket => { bucket.length = 0; });
-            }
-            for (let i = 0; i < activeParticleCount; i++) {
-                const p = particles[i];
-                const cellX = Math.min(gridColumns - 1, Math.max(0, Math.floor(p.x / cellSize)));
-                const cellY = Math.min(gridRows - 1, Math.max(0, Math.floor(p.y / cellSize)));
-                spatialGrid[cellY * gridColumns + cellX].push(i);
-            }
-
-            // Four alpha buckets reduce hundreds of canvas stroke calls to at
-            // most four without changing the visible distance fade.
+            for (let index = 0; index < activeParticleCount; index++) updateParticle(particles[index]);
+            updateSpatialGrid(activeParticleCount, maxDistance);
             lineBuckets.forEach(bucket => { bucket.length = 0; });
-            const maxDistanceSquared = maxDistance * maxDistance;
-            for (let i = 0; i < activeParticleCount; i++) {
-                const p1 = particles[i];
-                const cellX = Math.min(gridColumns - 1, Math.max(0, Math.floor(p1.x / cellSize)));
-                const cellY = Math.min(gridRows - 1, Math.max(0, Math.floor(p1.y / cellSize)));
-                for (let offsetX = -1; offsetX <= 1; offsetX++) {
-                    for (let offsetY = -1; offsetY <= 1; offsetY++) {
-                        const nearbyX = cellX + offsetX;
-                        const nearbyY = cellY + offsetY;
-                        if (nearbyX < 0 || nearbyX >= gridColumns || nearbyY < 0 || nearbyY >= gridRows) continue;
-                        const nearby = spatialGrid[nearbyY * gridColumns + nearbyX];
-                        for (let nearbyIndex = 0; nearbyIndex < nearby.length; nearbyIndex++) {
-                            const j = nearby[nearbyIndex];
-                            if (j <= i) continue;
-                            const p2 = particles[j];
-                            const dx = p1.x - p2.x;
-                            const dy = p1.y - p2.y;
-                            const distanceSquared = dx * dx + dy * dy;
-                            if (distanceSquared >= maxDistanceSquared) continue;
-                            const distanceRatio = Math.sqrt(distanceSquared) / maxDistance;
-                            const alphaBucket = Math.min(3, Math.floor((1 - distanceRatio) * 4));
-                            lineBuckets[alphaBucket].push(p1.x, p1.y, p2.x, p2.y);
-                        }
-                    }
-                }
+            for (let index = 0; index < activeParticleCount; index++) {
+                collectNearbyConnections(index, particles[index], maxDistance);
             }
-
-            ctx.lineWidth = 0.55;
-            lineBuckets.forEach((lines, bucketIndex) => {
-                if (!lines.length) return;
-                ctx.beginPath();
-                for (let index = 0; index < lines.length; index += 4) {
-                    ctx.moveTo(lines[index], lines[index + 1]);
-                    ctx.lineTo(lines[index + 2], lines[index + 3]);
-                }
-                const alpha = ((bucketIndex + 0.5) / 4) * 0.35;
-                ctx.strokeStyle = `rgba(0, 242, 255, ${alpha})`;
-                ctx.stroke();
-            });
-
+            drawConnections();
             animationFrameId = !motionEnabled || performanceSettings.reducedMotion ? null : requestAnimationFrame(animate);
         };
 
@@ -1415,6 +1396,518 @@ const useCounter = (targetStr, duration = 1600) => {
 /* ============================================================
    CINEMATIC SCROLL ENGINE (VIP PRO) - FULL EDITION v2
    ============================================================ */
+function setupCinematicHero() {
+    const hero = document.querySelector('.hero-section');
+    const mapImg = document.querySelector('.vietnam-map-bg');
+    const mapWrapper = document.querySelector('.hero-map-wrapper');
+    if (!hero) return false;
+
+    // ========== HERO ENTRANCE (one-time on load) ==========
+    gsap.fromTo('.hero-badge', { y: 30, opacity: 0 }, { y: 0, opacity: 1, duration: 0.8, ease: 'power3.out' });
+    gsap.fromTo('.hero-title', { y: 50, opacity: 0 }, { y: 0, opacity: 1, duration: 1, delay: 0.15, ease: 'power4.out' });
+    gsap.fromTo('.hero-subtitle', { y: 40, opacity: 0 }, { y: 0, opacity: 1, duration: 0.8, delay: 0.3, ease: 'power3.out' });
+    gsap.fromTo('.hero-actions', { y: 30, opacity: 0 }, { y: 0, opacity: 1, duration: 0.7, delay: 0.45, ease: 'power3.out' });
+    if (mapImg) {
+        mapImg.style.animation = 'none';
+        gsap.fromTo(mapImg,
+            { scale: 0.5, opacity: 0 },
+            { scale: 1, opacity: 0.88, duration: 1.4, delay: 0.3, ease: 'power2.out' }
+        );
+    }
+
+    // ========== HERO SCROLL-OUT (no pin, just fade) ==========
+    gsap.to('.hero-section .container', {
+        scrollTrigger: { trigger: '.hero-section', start: 'top top', end: 'bottom top', scrub: true },
+        y: -24, opacity: 0.42, ease: 'none'
+    });
+    if (mapWrapper) {
+        const compactMap = window.innerWidth <= 991;
+        const getMapTarget = (axis) => {
+            const slot = document.querySelector('.network-map-slot');
+            if (!slot || !mapWrapper) return 0;
+            const slotRect = slot.getBoundingClientRect();
+            const mapRect = mapWrapper.getBoundingClientRect();
+            const slotCenterX = slotRect.left + window.scrollX + slotRect.width / 2;
+            const slotCenterY = slotRect.top + window.scrollY + slotRect.height / 2;
+            const mapCenterX = mapRect.left + window.scrollX + mapRect.width / 2;
+            const mapCenterY = mapRect.top + window.scrollY + mapRect.height / 2;
+            return axis === 'x' ? slotCenterX - mapCenterX : slotCenterY - mapCenterY;
+        };
+
+        gsap.fromTo(mapWrapper,
+            { x: 0, y: 0, scale: 1, opacity: compactMap ? 0.42 : 1 },
+            {
+                scrollTrigger: {
+                    trigger: '.hero-section',
+                    start: 'top top',
+                    endTrigger: '.network-map-section',
+                    end: 'center center',
+                    scrub: 1,
+                    invalidateOnRefresh: true
+                },
+                x: () => getMapTarget('x'),
+                y: () => getMapTarget('y'),
+                scale: 0.78,
+                opacity: compactMap ? 0.92 : 0.96,
+                ease: 'power1.inOut',
+                immediateRender: false
+            }
+        );
+
+        // Fade out subtly after leaving network section
+        gsap.to(mapWrapper, {
+            scrollTrigger: {
+                trigger: '.network-map-section',
+                start: 'bottom center',
+                end: 'bottom top',
+                scrub: 1,
+                invalidateOnRefresh: true
+            },
+            opacity: 0,
+            scale: 0.7,
+            ease: 'none'
+        });
+    }
+
+
+return true;
+
+}
+
+function setupCinematicFlyingObjects() {
+    // ========== FLYING SATELLITES (orbit around network-map section) ==========
+    const sats = gsap.utils.toArray('.flying-satellite');
+    sats.forEach((sat, i) => {
+        gsap.fromTo(sat,
+            { x: i % 2 === 0 ? '-12vw' : '12vw', y: i % 3 === 0 ? '-8vh' : '8vh', rotation: -12, opacity: 0.45 },
+            {
+                x: i % 2 === 0 ? '18vw' : '-18vw',
+                y: i % 3 === 0 ? '12vh' : '-12vh',
+                rotation: i % 2 === 0 ? 24 : -24,
+                opacity: 0.95,
+                ease: 'none',
+                scrollTrigger: { trigger: '.network-map-section', start: 'top bottom', end: 'bottom top', scrub: 1 }
+            }
+        );
+    });
+
+    // ========== VIETNAM FLAG PARALLAX ==========
+    const flagEl = document.querySelector('.flying-flag');
+    if (flagEl) {
+        gsap.fromTo(flagEl,
+            { y: '30px', opacity: 0, scale: 0.6 },
+            {
+                y: '-10px', opacity: 1, scale: 1,
+                ease: 'none',
+                scrollTrigger: { trigger: '.network-map-section', start: 'top bottom', end: 'center center', scrub: 1 }
+            }
+        );
+}
+
+
+}
+
+function setupCinematicMapAndStats() {
+    // ========== NETWORK MAP SECTION ==========
+    gsap.from('.network-map-section .section-title', {
+        scrollTrigger: { trigger: '.network-map-section', start: 'top 80%', toggleActions: 'play none none reverse' },
+        y: 50, opacity: 0, duration: 0.8
+    });
+    gsap.utils.toArray('.network-map-section .station-info-card').forEach((card, i) => {
+        gsap.from(card, {
+            scrollTrigger: { trigger: card, start: 'top 90%', toggleActions: 'play none none reverse' },
+            x: -60, opacity: 0, duration: 0.7, delay: i * 0.1, ease: 'power3.out'
+        });
+    });
+
+    // ========== STATS ==========
+    const statCards = gsap.utils.toArray('.landing-stat-card');
+    statCards.forEach((card, i) => {
+        const fromX = i % 2 === 0 ? -80 : 80;
+        gsap.from(card, {
+            scrollTrigger: { trigger: card, start: 'top 88%', toggleActions: 'play none none reverse' },
+            x: fromX, y: 40, opacity: 0, scale: 0.85, rotateY: i % 2 === 0 ? 10 : -10,
+            duration: 0.9, delay: i * 0.12, ease: 'power3.out'
+        });
+    });
+
+    // ========== FEATURES ==========
+    const featureCards = gsap.utils.toArray('.landing-feature-card-wrapper');
+    if (featureCards.length) {
+        const featureHeader = document.querySelector('.landing-features .text-center');
+        const featureInners = gsap.utils.toArray('.landing-feature-card-inner');
+        const featureIcons = gsap.utils.toArray('.landing-feature-card-front .landing-feature-icon');
+        const featureScans = gsap.utils.toArray('.feature-card-scan');
+        const featureLines = gsap.utils.toArray('.feature-signal-line');
+
+        gsap.set(featureCards, { autoAlpha: 1, transformPerspective: 1200, transformOrigin: 'center bottom' });
+        gsap.set(featureInners, { transformPerspective: 1200, transformOrigin: 'center center' });
+        gsap.set(featureScans, { xPercent: -150, opacity: 0 });
+        gsap.set(featureLines, { scaleX: 0, transformOrigin: 'left center' });
+
+        const featureTimeline = gsap.timeline({
+            scrollTrigger: {
+                trigger: '.landing-features',
+                start: 'top 88%',
+                toggleActions: 'play none none none',
+                once: true
+            }
+        });
+
+        if (featureHeader) {
+            featureTimeline.from(featureHeader, {
+                y: 80,
+                opacity: 0,
+                duration: 0.8,
+                ease: 'power3.out'
+            }, 0);
+        }
+
+        featureTimeline
+            .fromTo(featureCards, {
+                y: 120,
+                autoAlpha: 0,
+                scale: 0.84,
+                rotateX: 18,
+                rotateZ: (i) => i % 2 === 0 ? -2.5 : 2.5
+            }, {
+                autoAlpha: 1,
+                y: 0,
+                scale: 1,
+                rotateX: 0,
+                rotateZ: 0,
+                stagger: 0.18,
+                duration: 1.2,
+                ease: 'power4.out'
+            }, 0.18)
+            .from(featureInners, {
+                y: 28,
+                stagger: 0.18,
+                duration: 1,
+                ease: 'power3.out'
+            }, 0.28)
+            .from(featureIcons, {
+                scale: 0.55,
+                rotate: -18,
+                opacity: 0,
+                stagger: 0.18,
+                duration: 0.7,
+                ease: 'back.out(1.8)'
+            }, 0.52)
+            .to(featureLines, {
+                scaleX: 1,
+                stagger: 0.18,
+                duration: 0.7,
+                ease: 'power2.inOut'
+            }, 0.62)
+            .to(featureScans, {
+                xPercent: 260,
+                opacity: 1,
+                stagger: 0.18,
+                duration: 0.65,
+                ease: 'power2.inOut'
+            }, 0.68)
+            .to(featureScans, {
+                opacity: 0,
+                stagger: 0.18,
+                duration: 0.25,
+                ease: 'power1.out'
+            }, 1.12);
+
+        featureTimeline.set(featureInners, { clearProps: 'filter' });
+
+        gsap.to('.feature-orbit-left', {
+            y: -70,
+            rotation: 22,
+            ease: 'none',
+            scrollTrigger: {
+                trigger: '.landing-features',
+                start: 'top bottom',
+                end: 'bottom top',
+                scrub: 1.2
+            }
+        });
+        gsap.to('.feature-orbit-right', {
+            y: -110,
+            rotation: -28,
+            ease: 'none',
+            scrollTrigger: {
+                trigger: '.landing-features',
+                start: 'top bottom',
+                end: 'bottom top',
+                scrub: 1.2
+            }
+        });
+}
+
+
+}
+
+function setupCinematicHowItWorks() {
+    // ========== HOW IT WORKS ==========
+    const hiwSteps = gsap.utils.toArray('.hiw-step');
+    if (hiwSteps.length) {
+        gsap.from('.hiw-section .section-title', {
+            scrollTrigger: { trigger: '.hiw-section', start: 'top 80%', toggleActions: 'play none none reverse' },
+            y: 50, opacity: 0, duration: 0.8
+        });
+        gsap.from('.hiw-section .section-sub', {
+            scrollTrigger: { trigger: '.hiw-section', start: 'top 78%', toggleActions: 'play none none reverse' },
+            y: 30, opacity: 0, duration: 0.7, delay: 0.15
+        });
+        hiwSteps.forEach((step, i) => {
+            const content = step.querySelector('.hiw-step-content');
+            const num = step.querySelector('.hiw-step-number');
+            const fromX = i % 2 === 0 ? -120 : 120;
+            if (content) gsap.from(content, {
+                scrollTrigger: { trigger: step, start: 'top 82%', toggleActions: 'play none none reverse' },
+                x: fromX, opacity: 0, duration: 1, ease: 'power3.out'
+            });
+            if (num) gsap.from(num, {
+                scrollTrigger: { trigger: step, start: 'top 85%', toggleActions: 'play none none reverse' },
+                scale: 0, rotation: 180, opacity: 0, duration: 0.7, ease: 'back.out(2)'
+            });
+        });
+}
+
+
+}
+
+function setupCinematicLiveData() {
+    // ========== LIVE DATA ==========
+    const liveBars = gsap.utils.toArray('.livedata-bar');
+    if (liveBars.length) {
+        gsap.from('.livedata-section .section-title', {
+            scrollTrigger: { trigger: '.livedata-section', start: 'top 80%', toggleActions: 'play none none reverse' },
+            y: 50, opacity: 0, duration: 0.8
+        });
+        gsap.from(liveBars, {
+            scrollTrigger: { trigger: '.livedata-bars', start: 'top 90%', toggleActions: 'play none none reverse' },
+            scaleY: 0, opacity: 0, stagger: 0.03, duration: 0.5, ease: 'power2.out'
+        });
+        gsap.utils.toArray('.livedata-card').forEach((card, i) => {
+            gsap.from(card, {
+                scrollTrigger: { trigger: card, start: 'top 88%', toggleActions: 'play none none reverse' },
+                y: 60, opacity: 0, scale: 0.9, duration: 0.8, delay: i * 0.15, ease: 'power3.out'
+            });
+        });
+}
+
+
+}
+
+function setupCinematicTechMarquee() {
+    // ========== TECH MARQUEE ==========
+    gsap.from('.support-tech-title', {
+        scrollTrigger: { trigger: '.support-tech-section', start: 'top 88%', toggleActions: 'play none none none', once: true },
+        opacity: 0, y: 24, duration: 0.65, ease: 'power3.out'
+    });
+    gsap.from('.support-tech-marquee', {
+        scrollTrigger: { trigger: '.support-tech-section', start: 'top 84%', toggleActions: 'play none none none', once: true },
+        opacity: 0, duration: 0.5, ease: 'power2.out'
+    });
+    const techTrack = document.querySelector('.support-tech-track');
+    if (techTrack) {
+        gsap.killTweensOf(techTrack);
+        gsap.fromTo(techTrack,
+            { x: () => -(techTrack.scrollWidth / 2) },
+            {
+                x: 0,
+                duration: 24,
+                repeat: -1,
+                ease: 'none',
+                repeatRefresh: true
+            }
+        );
+}
+gsap.from('.support-tech-panel', {
+    scrollTrigger: { trigger: '.support-tech-section', start: 'top 82%', toggleActions: 'play none none none', once: true },
+    opacity: 0, y: 26, duration: 0.65, stagger: 0.1, ease: 'power3.out'
+});
+gsap.from('.support-tech-line', {
+    scrollTrigger: { trigger: '.support-tech-section', start: 'top 82%', toggleActions: 'play none none none', once: true },
+    scaleX: 0,
+    transformOrigin: 'left center',
+    duration: 0.8,
+    ease: 'power2.out'
+});
+// Horizontal scan line: sweep from left to right continuously
+const scanEl = document.querySelector('.support-tech-scan');
+const lineWrapEl = document.querySelector('.support-tech-line-wrap');
+if (scanEl && lineWrapEl) {
+    gsap.killTweensOf(scanEl);
+    gsap.fromTo(scanEl,
+        { x: -220, autoAlpha: 0.95 },
+        {
+            x: () => lineWrapEl.offsetWidth + 220,
+            duration: 1.9,
+            repeat: -1,
+            ease: 'none'
+        }
+    );
+}
+
+
+}
+
+function setupCinematicCallToAction() {
+    // ========== CTA ==========
+    const ctaBox = document.querySelector('.cta-box');
+    if (ctaBox) {
+        gsap.from(ctaBox, {
+            scrollTrigger: { trigger: ctaBox, start: 'top 85%', toggleActions: 'play none none none', once: true },
+            y: 70, opacity: 0, scale: 0.94, duration: 0.8, ease: 'power3.out'
+        });
+        gsap.from('.cta-title', {
+            scrollTrigger: { trigger: ctaBox, start: 'top 82%', toggleActions: 'play none none none', once: true },
+            y: 28, opacity: 0, duration: 0.6, delay: 0.08, ease: 'power3.out'
+        });
+        gsap.from('.cta-desc', {
+            scrollTrigger: { trigger: ctaBox, start: 'top 82%', toggleActions: 'play none none none', once: true },
+            y: 22, opacity: 0, duration: 0.6, delay: 0.14, ease: 'power3.out'
+        });
+        gsap.from('.cta-actions .btn-enterprise, .cta-actions .btn-outline-cyan', {
+            scrollTrigger: { trigger: ctaBox, start: 'top 82%', toggleActions: 'play none none none', once: true },
+            y: 18, opacity: 0, duration: 0.55, delay: 0.2, stagger: 0.08, ease: 'power2.out'
+        });
+}
+
+
+}
+
+function setupCinematicStationDirectory() {
+    // ========== STATION DIRECTORY ==========
+    const stationItems = gsap.utils.toArray('.station-dir-item');
+    if (stationItems.length) {
+        gsap.from(stationItems, {
+            scrollTrigger: { trigger: '.station-dir-item', start: 'top 90%', toggleActions: 'play none none reverse' },
+            x: -30, opacity: 0, stagger: 0.03, duration: 0.4, ease: 'power2.out'
+        });
+}
+
+
+}
+
+function setupCinematicFooterAndProgress() {
+    // ========== FOOTER ==========
+    gsap.from('.landing-footer', {
+        scrollTrigger: { trigger: '.landing-footer', start: 'top 95%', toggleActions: 'play none none reverse' },
+        y: 40, opacity: 0, duration: 0.8
+    });
+
+    // ========== SECTION DIVIDERS ==========
+    gsap.utils.toArray('.section-divider').forEach(div => {
+        gsap.from(div, {
+            scrollTrigger: { trigger: div, start: 'top 95%', toggleActions: 'play none none reverse' },
+            scaleX: 0, duration: 1.2, ease: 'power2.inOut'
+        });
+    });
+
+    // ========== PARALLAX BACKGROUND ==========
+    gsap.to('.landing-orb-1', { scrollTrigger: { scrub: true }, y: -200, ease: 'none' });
+    gsap.to('.landing-orb-2', { scrollTrigger: { scrub: true }, y: -120, ease: 'none' });
+    gsap.to('.landing-orb-3', { scrollTrigger: { scrub: true }, y: -280, ease: 'none' });
+    gsap.to('.landing-grid', { scrollTrigger: { scrub: true }, y: -80, ease: 'none' });
+
+    // ========== SCROLL PROGRESS BAR ==========
+    const progressFill = document.querySelector('.scroll-progress-fill');
+    if (progressFill) {
+        gsap.to(progressFill, {
+            height: '100%',
+            ease: 'none',
+            scrollTrigger: { trigger: document.body, start: 'top top', end: 'bottom bottom', scrub: 0.3 }
+        });
+}
+
+
+}
+
+function setupCinematicWhyChoose() {
+    // ========== WHY CHOOSE SECTION ==========
+    const whyCards = gsap.utils.toArray('.why-choose-card');
+    if (whyCards.length) {
+        const whyKicker = document.querySelector('.why-choose-kicker');
+        const whyTitle = document.querySelector('.why-choose-section .neon-title');
+        if (whyKicker) gsap.from(whyKicker, {
+            scrollTrigger: { trigger: '.why-choose-section', start: 'top 82%', toggleActions: 'play none none reverse' },
+            y: 30, opacity: 0, duration: 0.6, ease: 'power3.out'
+        });
+        if (whyTitle) gsap.from(whyTitle, {
+            scrollTrigger: { trigger: '.why-choose-section', start: 'top 80%', toggleActions: 'play none none reverse' },
+            y: 50, opacity: 0, duration: 0.8, delay: 0.1, ease: 'power3.out'
+        });
+        whyCards.forEach((card, i) => {
+            gsap.from(card, {
+                scrollTrigger: { trigger: card, start: 'top 88%', toggleActions: 'play none none reverse' },
+                y: 80, opacity: 0, scale: 0.88, rotateY: i === 1 ? 0 : (i === 0 ? 12 : -12),
+                duration: 1, delay: i * 0.15, ease: 'power3.out'
+            });
+        });
+        gsap.utils.toArray('.why-choose-number').forEach(num => {
+            gsap.from(num, {
+                scrollTrigger: { trigger: num, start: 'top 85%', toggleActions: 'play none none reverse' },
+                scale: 0.4, opacity: 0, duration: 0.9, ease: 'back.out(1.7)'
+            });
+        });
+        gsap.utils.toArray('.why-choose-icon').forEach((icon, i) => {
+            gsap.from(icon, {
+                scrollTrigger: { trigger: icon, start: 'top 88%', toggleActions: 'play none none reverse' },
+                scale: 0, rotation: -180, opacity: 0, duration: 0.7, delay: i * 0.12, ease: 'back.out(2)'
+            });
+        });
+}
+
+
+}
+
+function setupCinematicFlagRotation() {
+    // ========== FLAG STAR ROTATION ==========
+    gsap.to('.flag-star', {
+        rotation: 360, transformOrigin: '50% 50%',
+        duration: 20, repeat: -1, ease: 'none'
+    });
+    gsap.to('.flag-star-fly', {
+        rotation: -360, transformOrigin: '50% 50%',
+        duration: 16, repeat: -1, ease: 'none'
+    });
+
+
+}
+
+function setupCinematicMapLines() {
+    // ========== MAP CONNECTION LINES REVEAL ==========
+    gsap.utils.toArray('.map-data-line').forEach((line, i) => {
+        gsap.fromTo(line,
+            { opacity: 0 },
+            {
+                opacity: 1,
+                duration: 1.2,
+                delay: 1 + i * 0.3,
+                ease: 'power2.out',
+                scrollTrigger: { trigger: '.network-map-section', start: 'top 70%', toggleActions: 'play none none reverse' }
+            }
+        );
+    });
+
+
+}
+
+function setupCinematicRadar() {
+    // ========== MAP RADAR SWEEP REVEAL ==========
+    const radar = document.querySelector('.map-radar-sweep');
+    if (radar) {
+        gsap.fromTo(radar,
+            { opacity: 0, scale: 0.3 },
+            {
+                opacity: 0.5, scale: 1,
+                duration: 1.5,
+                ease: 'power2.out',
+                scrollTrigger: { trigger: '.network-map-section', start: 'top 75%', toggleActions: 'play none none reverse' }
+            }
+        );
+}
+}
+
 const useCinematicScroll = () => {
     React.useEffect(() => {
         const performanceProfile = window.CorsPerformance || {};
@@ -1441,465 +1934,19 @@ const useCinematicScroll = () => {
         const initTimer = setTimeout(() => {
             const landingScope = document.querySelector('.enterprise-homepage') || document.body;
             scrollContext = gsap.context(() => {
-            const hero = document.querySelector('.hero-section');
-            const mapImg = document.querySelector('.vietnam-map-bg');
-            const mapWrapper = document.querySelector('.hero-map-wrapper');
-            if (!hero) return;
-
-            // ========== HERO ENTRANCE (one-time on load) ==========
-            gsap.fromTo('.hero-badge', { y: 30, opacity: 0 }, { y: 0, opacity: 1, duration: 0.8, ease: 'power3.out' });
-            gsap.fromTo('.hero-title', { y: 50, opacity: 0 }, { y: 0, opacity: 1, duration: 1, delay: 0.15, ease: 'power4.out' });
-            gsap.fromTo('.hero-subtitle', { y: 40, opacity: 0 }, { y: 0, opacity: 1, duration: 0.8, delay: 0.3, ease: 'power3.out' });
-            gsap.fromTo('.hero-actions', { y: 30, opacity: 0 }, { y: 0, opacity: 1, duration: 0.7, delay: 0.45, ease: 'power3.out' });
-            if (mapImg) {
-                mapImg.style.animation = 'none';
-                gsap.fromTo(mapImg, 
-                    { scale: 0.5, opacity: 0 }, 
-                    { scale: 1, opacity: 0.88, duration: 1.4, delay: 0.3, ease: 'power2.out' }
-                );
-            }
-
-            // ========== HERO SCROLL-OUT (no pin, just fade) ==========
-            gsap.to('.hero-section .container', {
-                scrollTrigger: { trigger: '.hero-section', start: 'top top', end: 'bottom top', scrub: true },
-                y: -24, opacity: 0.42, ease: 'none'
-            });
-            if (mapWrapper) {
-                const compactMap = window.innerWidth <= 991;
-                const getMapTarget = (axis) => {
-                    const slot = document.querySelector('.network-map-slot');
-                    if (!slot || !mapWrapper) return 0;
-                    const slotRect = slot.getBoundingClientRect();
-                    const mapRect = mapWrapper.getBoundingClientRect();
-                    const slotCenterX = slotRect.left + window.scrollX + slotRect.width / 2;
-                    const slotCenterY = slotRect.top + window.scrollY + slotRect.height / 2;
-                    const mapCenterX = mapRect.left + window.scrollX + mapRect.width / 2;
-                    const mapCenterY = mapRect.top + window.scrollY + mapRect.height / 2;
-                    return axis === 'x' ? slotCenterX - mapCenterX : slotCenterY - mapCenterY;
-                };
-
-                gsap.fromTo(mapWrapper,
-                    { x: 0, y: 0, scale: 1, opacity: compactMap ? 0.42 : 1 },
-                    {
-                        scrollTrigger: { 
-                            trigger: '.hero-section', 
-                            start: 'top top', 
-                            endTrigger: '.network-map-section',
-                            end: 'center center',
-                            scrub: 1,
-                            invalidateOnRefresh: true
-                        },
-                        x: () => getMapTarget('x'),
-                        y: () => getMapTarget('y'),
-                        scale: 0.78,
-                        opacity: compactMap ? 0.92 : 0.96,
-                        ease: 'power1.inOut',
-                        immediateRender: false
-                    }
-                );
-
-                // Fade out subtly after leaving network section
-                gsap.to(mapWrapper, {
-                    scrollTrigger: {
-                        trigger: '.network-map-section',
-                        start: 'bottom center',
-                        end: 'bottom top',
-                        scrub: 1,
-                        invalidateOnRefresh: true
-                    },
-                    opacity: 0,
-                    scale: 0.7,
-                    ease: 'none'
-                });
-            }
-
-            // ========== FLYING SATELLITES (orbit around network-map section) ==========
-            const sats = gsap.utils.toArray('.flying-satellite');
-            sats.forEach((sat, i) => {
-                gsap.fromTo(sat,
-                    { x: i % 2 === 0 ? '-12vw' : '12vw', y: i % 3 === 0 ? '-8vh' : '8vh', rotation: -12, opacity: 0.45 },
-                    {
-                        x: i % 2 === 0 ? '18vw' : '-18vw',
-                        y: i % 3 === 0 ? '12vh' : '-12vh',
-                        rotation: i % 2 === 0 ? 24 : -24,
-                        opacity: 0.95,
-                        ease: 'none',
-                        scrollTrigger: { trigger: '.network-map-section', start: 'top bottom', end: 'bottom top', scrub: 1 }
-                    }
-                );
-            });
-
-            // ========== VIETNAM FLAG PARALLAX ==========
-            const flagEl = document.querySelector('.flying-flag');
-            if (flagEl) {
-                gsap.fromTo(flagEl,
-                    { y: '30px', opacity: 0, scale: 0.6 },
-                    {
-                        y: '-10px', opacity: 1, scale: 1,
-                        ease: 'none',
-                        scrollTrigger: { trigger: '.network-map-section', start: 'top bottom', end: 'center center', scrub: 1 }
-                    }
-                );
-            }
-
-            // ========== NETWORK MAP SECTION ==========
-            gsap.from('.network-map-section .section-title', {
-                scrollTrigger: { trigger: '.network-map-section', start: 'top 80%', toggleActions: 'play none none reverse' },
-                y: 50, opacity: 0, duration: 0.8
-            });
-            gsap.utils.toArray('.network-map-section .station-info-card').forEach((card, i) => {
-                gsap.from(card, {
-                    scrollTrigger: { trigger: card, start: 'top 90%', toggleActions: 'play none none reverse' },
-                    x: -60, opacity: 0, duration: 0.7, delay: i * 0.1, ease: 'power3.out'
-                });
-            });
-
-            // ========== STATS ==========
-            const statCards = gsap.utils.toArray('.landing-stat-card');
-            statCards.forEach((card, i) => {
-                const fromX = i % 2 === 0 ? -80 : 80;
-                gsap.from(card, {
-                    scrollTrigger: { trigger: card, start: 'top 88%', toggleActions: 'play none none reverse' },
-                    x: fromX, y: 40, opacity: 0, scale: 0.85, rotateY: i % 2 === 0 ? 10 : -10,
-                    duration: 0.9, delay: i * 0.12, ease: 'power3.out'
-                });
-            });
-
-            // ========== FEATURES ==========
-            const featureCards = gsap.utils.toArray('.landing-feature-card-wrapper');
-            if (featureCards.length) {
-                const featureHeader = document.querySelector('.landing-features .text-center');
-                const featureInners = gsap.utils.toArray('.landing-feature-card-inner');
-                const featureIcons = gsap.utils.toArray('.landing-feature-card-front .landing-feature-icon');
-                const featureScans = gsap.utils.toArray('.feature-card-scan');
-                const featureLines = gsap.utils.toArray('.feature-signal-line');
-
-                gsap.set(featureCards, { autoAlpha: 1, transformPerspective: 1200, transformOrigin: 'center bottom' });
-                gsap.set(featureInners, { transformPerspective: 1200, transformOrigin: 'center center' });
-                gsap.set(featureScans, { xPercent: -150, opacity: 0 });
-                gsap.set(featureLines, { scaleX: 0, transformOrigin: 'left center' });
-
-                const featureTimeline = gsap.timeline({
-                    scrollTrigger: {
-                        trigger: '.landing-features',
-                        start: 'top 88%',
-                        toggleActions: 'play none none none',
-                        once: true
-                    }
-                });
-
-                if (featureHeader) {
-                    featureTimeline.from(featureHeader, {
-                        y: 80,
-                        opacity: 0,
-                        duration: 0.8,
-                        ease: 'power3.out'
-                    }, 0);
-                }
-
-                featureTimeline
-                    .fromTo(featureCards, {
-                        y: 120,
-                        autoAlpha: 0,
-                        scale: 0.84,
-                        rotateX: 18,
-                        rotateZ: (i) => i % 2 === 0 ? -2.5 : 2.5
-                    }, {
-                        autoAlpha: 1,
-                        y: 0,
-                        scale: 1,
-                        rotateX: 0,
-                        rotateZ: 0,
-                        stagger: 0.18,
-                        duration: 1.2,
-                        ease: 'power4.out'
-                    }, 0.18)
-                    .from(featureInners, {
-                        y: 28,
-                        stagger: 0.18,
-                        duration: 1,
-                        ease: 'power3.out'
-                    }, 0.28)
-                    .from(featureIcons, {
-                        scale: 0.55,
-                        rotate: -18,
-                        opacity: 0,
-                        stagger: 0.18,
-                        duration: 0.7,
-                        ease: 'back.out(1.8)'
-                    }, 0.52)
-                    .to(featureLines, {
-                        scaleX: 1,
-                        stagger: 0.18,
-                        duration: 0.7,
-                        ease: 'power2.inOut'
-                    }, 0.62)
-                    .to(featureScans, {
-                        xPercent: 260,
-                        opacity: 1,
-                        stagger: 0.18,
-                        duration: 0.65,
-                        ease: 'power2.inOut'
-                    }, 0.68)
-                    .to(featureScans, {
-                        opacity: 0,
-                        stagger: 0.18,
-                        duration: 0.25,
-                        ease: 'power1.out'
-                    }, 1.12);
-
-                featureTimeline.set(featureInners, { clearProps: 'filter' });
-
-                gsap.to('.feature-orbit-left', {
-                    y: -70,
-                    rotation: 22,
-                    ease: 'none',
-                    scrollTrigger: {
-                        trigger: '.landing-features',
-                        start: 'top bottom',
-                        end: 'bottom top',
-                        scrub: 1.2
-                    }
-                });
-                gsap.to('.feature-orbit-right', {
-                    y: -110,
-                    rotation: -28,
-                    ease: 'none',
-                    scrollTrigger: {
-                        trigger: '.landing-features',
-                        start: 'top bottom',
-                        end: 'bottom top',
-                        scrub: 1.2
-                    }
-                });
-            }
-
-            // ========== HOW IT WORKS ==========
-            const hiwSteps = gsap.utils.toArray('.hiw-step');
-            if (hiwSteps.length) {
-                gsap.from('.hiw-section .section-title', {
-                    scrollTrigger: { trigger: '.hiw-section', start: 'top 80%', toggleActions: 'play none none reverse' },
-                    y: 50, opacity: 0, duration: 0.8
-                });
-                gsap.from('.hiw-section .section-sub', {
-                    scrollTrigger: { trigger: '.hiw-section', start: 'top 78%', toggleActions: 'play none none reverse' },
-                    y: 30, opacity: 0, duration: 0.7, delay: 0.15
-                });
-                hiwSteps.forEach((step, i) => {
-                    const content = step.querySelector('.hiw-step-content');
-                    const num = step.querySelector('.hiw-step-number');
-                    const fromX = i % 2 === 0 ? -120 : 120;
-                    if (content) gsap.from(content, {
-                        scrollTrigger: { trigger: step, start: 'top 82%', toggleActions: 'play none none reverse' },
-                        x: fromX, opacity: 0, duration: 1, ease: 'power3.out'
-                    });
-                    if (num) gsap.from(num, {
-                        scrollTrigger: { trigger: step, start: 'top 85%', toggleActions: 'play none none reverse' },
-                        scale: 0, rotation: 180, opacity: 0, duration: 0.7, ease: 'back.out(2)'
-                    });
-                });
-            }
-
-            // ========== LIVE DATA ==========
-            const liveBars = gsap.utils.toArray('.livedata-bar');
-            if (liveBars.length) {
-                gsap.from('.livedata-section .section-title', {
-                    scrollTrigger: { trigger: '.livedata-section', start: 'top 80%', toggleActions: 'play none none reverse' },
-                    y: 50, opacity: 0, duration: 0.8
-                });
-                gsap.from(liveBars, {
-                    scrollTrigger: { trigger: '.livedata-bars', start: 'top 90%', toggleActions: 'play none none reverse' },
-                    scaleY: 0, opacity: 0, stagger: 0.03, duration: 0.5, ease: 'power2.out'
-                });
-                gsap.utils.toArray('.livedata-card').forEach((card, i) => {
-                    gsap.from(card, {
-                        scrollTrigger: { trigger: card, start: 'top 88%', toggleActions: 'play none none reverse' },
-                        y: 60, opacity: 0, scale: 0.9, duration: 0.8, delay: i * 0.15, ease: 'power3.out'
-                    });
-                });
-            }
-
-            // ========== TECH MARQUEE ==========
-            gsap.from('.support-tech-title', {
-                scrollTrigger: { trigger: '.support-tech-section', start: 'top 88%', toggleActions: 'play none none none', once: true },
-                opacity: 0, y: 24, duration: 0.65, ease: 'power3.out'
-            });
-            gsap.from('.support-tech-marquee', {
-                scrollTrigger: { trigger: '.support-tech-section', start: 'top 84%', toggleActions: 'play none none none', once: true },
-                opacity: 0, duration: 0.5, ease: 'power2.out'
-            });
-            const techTrack = document.querySelector('.support-tech-track');
-            if (techTrack) {
-                gsap.killTweensOf(techTrack);
-                gsap.fromTo(techTrack,
-                    { x: () => -(techTrack.scrollWidth / 2) },
-                    {
-                        x: 0,
-                        duration: 24,
-                        repeat: -1,
-                        ease: 'none',
-                        repeatRefresh: true
-                    }
-                );
-            }
-            gsap.from('.support-tech-panel', {
-                scrollTrigger: { trigger: '.support-tech-section', start: 'top 82%', toggleActions: 'play none none none', once: true },
-                opacity: 0, y: 26, duration: 0.65, stagger: 0.1, ease: 'power3.out'
-            });
-            gsap.from('.support-tech-line', {
-                scrollTrigger: { trigger: '.support-tech-section', start: 'top 82%', toggleActions: 'play none none none', once: true },
-                scaleX: 0,
-                transformOrigin: 'left center',
-                duration: 0.8,
-                ease: 'power2.out'
-            });
-            // Horizontal scan line: sweep from left to right continuously
-            const scanEl = document.querySelector('.support-tech-scan');
-            const lineWrapEl = document.querySelector('.support-tech-line-wrap');
-            if (scanEl && lineWrapEl) {
-                gsap.killTweensOf(scanEl);
-                gsap.fromTo(scanEl,
-                    { x: -220, autoAlpha: 0.95 },
-                    {
-                        x: () => lineWrapEl.offsetWidth + 220,
-                        duration: 1.9,
-                        repeat: -1,
-                        ease: 'none'
-                    }
-                );
-            }
-
-            // ========== CTA ==========
-            const ctaBox = document.querySelector('.cta-box');
-            if (ctaBox) {
-                gsap.from(ctaBox, {
-                    scrollTrigger: { trigger: ctaBox, start: 'top 85%', toggleActions: 'play none none none', once: true },
-                    y: 70, opacity: 0, scale: 0.94, duration: 0.8, ease: 'power3.out'
-                });
-                gsap.from('.cta-title', {
-                    scrollTrigger: { trigger: ctaBox, start: 'top 82%', toggleActions: 'play none none none', once: true },
-                    y: 28, opacity: 0, duration: 0.6, delay: 0.08, ease: 'power3.out'
-                });
-                gsap.from('.cta-desc', {
-                    scrollTrigger: { trigger: ctaBox, start: 'top 82%', toggleActions: 'play none none none', once: true },
-                    y: 22, opacity: 0, duration: 0.6, delay: 0.14, ease: 'power3.out'
-                });
-                gsap.from('.cta-actions .btn-enterprise, .cta-actions .btn-outline-cyan', {
-                    scrollTrigger: { trigger: ctaBox, start: 'top 82%', toggleActions: 'play none none none', once: true },
-                    y: 18, opacity: 0, duration: 0.55, delay: 0.2, stagger: 0.08, ease: 'power2.out'
-                });
-            }
-
-            // ========== STATION DIRECTORY ==========
-            const stationItems = gsap.utils.toArray('.station-dir-item');
-            if (stationItems.length) {
-                gsap.from(stationItems, {
-                    scrollTrigger: { trigger: '.station-dir-item', start: 'top 90%', toggleActions: 'play none none reverse' },
-                    x: -30, opacity: 0, stagger: 0.03, duration: 0.4, ease: 'power2.out'
-                });
-            }
-
-            // ========== FOOTER ==========
-            gsap.from('.landing-footer', {
-                scrollTrigger: { trigger: '.landing-footer', start: 'top 95%', toggleActions: 'play none none reverse' },
-                y: 40, opacity: 0, duration: 0.8
-            });
-
-            // ========== SECTION DIVIDERS ==========
-            gsap.utils.toArray('.section-divider').forEach(div => {
-                gsap.from(div, {
-                    scrollTrigger: { trigger: div, start: 'top 95%', toggleActions: 'play none none reverse' },
-                    scaleX: 0, duration: 1.2, ease: 'power2.inOut'
-                });
-            });
-
-            // ========== PARALLAX BACKGROUND ==========
-            gsap.to('.landing-orb-1', { scrollTrigger: { scrub: true }, y: -200, ease: 'none' });
-            gsap.to('.landing-orb-2', { scrollTrigger: { scrub: true }, y: -120, ease: 'none' });
-            gsap.to('.landing-orb-3', { scrollTrigger: { scrub: true }, y: -280, ease: 'none' });
-            gsap.to('.landing-grid', { scrollTrigger: { scrub: true }, y: -80, ease: 'none' });
-
-            // ========== SCROLL PROGRESS BAR ==========
-            const progressFill = document.querySelector('.scroll-progress-fill');
-            if (progressFill) {
-                gsap.to(progressFill, {
-                    height: '100%',
-                    ease: 'none',
-                    scrollTrigger: { trigger: document.body, start: 'top top', end: 'bottom bottom', scrub: 0.3 }
-                });
-            }
-
-            // ========== WHY CHOOSE SECTION ==========
-            const whyCards = gsap.utils.toArray('.why-choose-card');
-            if (whyCards.length) {
-                const whyKicker = document.querySelector('.why-choose-kicker');
-                const whyTitle = document.querySelector('.why-choose-section .neon-title');
-                if (whyKicker) gsap.from(whyKicker, {
-                    scrollTrigger: { trigger: '.why-choose-section', start: 'top 82%', toggleActions: 'play none none reverse' },
-                    y: 30, opacity: 0, duration: 0.6, ease: 'power3.out'
-                });
-                if (whyTitle) gsap.from(whyTitle, {
-                    scrollTrigger: { trigger: '.why-choose-section', start: 'top 80%', toggleActions: 'play none none reverse' },
-                    y: 50, opacity: 0, duration: 0.8, delay: 0.1, ease: 'power3.out'
-                });
-                whyCards.forEach((card, i) => {
-                    gsap.from(card, {
-                        scrollTrigger: { trigger: card, start: 'top 88%', toggleActions: 'play none none reverse' },
-                        y: 80, opacity: 0, scale: 0.88, rotateY: i === 1 ? 0 : (i === 0 ? 12 : -12),
-                        duration: 1, delay: i * 0.15, ease: 'power3.out'
-                    });
-                });
-                gsap.utils.toArray('.why-choose-number').forEach(num => {
-                    gsap.from(num, {
-                        scrollTrigger: { trigger: num, start: 'top 85%', toggleActions: 'play none none reverse' },
-                        scale: 0.4, opacity: 0, duration: 0.9, ease: 'back.out(1.7)'
-                    });
-                });
-                gsap.utils.toArray('.why-choose-icon').forEach((icon, i) => {
-                    gsap.from(icon, {
-                        scrollTrigger: { trigger: icon, start: 'top 88%', toggleActions: 'play none none reverse' },
-                        scale: 0, rotation: -180, opacity: 0, duration: 0.7, delay: i * 0.12, ease: 'back.out(2)'
-                    });
-                });
-            }
-
-            // ========== FLAG STAR ROTATION ==========
-            gsap.to('.flag-star', {
-                rotation: 360, transformOrigin: '50% 50%',
-                duration: 20, repeat: -1, ease: 'none'
-            });
-            gsap.to('.flag-star-fly', {
-                rotation: -360, transformOrigin: '50% 50%',
-                duration: 16, repeat: -1, ease: 'none'
-            });
-
-            // ========== MAP CONNECTION LINES REVEAL ==========
-            gsap.utils.toArray('.map-data-line').forEach((line, i) => {
-                gsap.fromTo(line,
-                    { opacity: 0 },
-                    {
-                        opacity: 1,
-                        duration: 1.2,
-                        delay: 1 + i * 0.3,
-                        ease: 'power2.out',
-                        scrollTrigger: { trigger: '.network-map-section', start: 'top 70%', toggleActions: 'play none none reverse' }
-                    }
-                );
-            });
-
-            // ========== MAP RADAR SWEEP REVEAL ==========
-            const radar = document.querySelector('.map-radar-sweep');
-            if (radar) {
-                gsap.fromTo(radar,
-                    { opacity: 0, scale: 0.3 },
-                    {
-                        opacity: 0.5, scale: 1,
-                        duration: 1.5,
-                        ease: 'power2.out',
-                        scrollTrigger: { trigger: '.network-map-section', start: 'top 75%', toggleActions: 'play none none reverse' }
-                    }
-                );
-            }
+            if (!setupCinematicHero()) return;
+            setupCinematicFlyingObjects();
+            setupCinematicMapAndStats();
+            setupCinematicHowItWorks();
+            setupCinematicLiveData();
+            setupCinematicTechMarquee();
+            setupCinematicCallToAction();
+            setupCinematicStationDirectory();
+            setupCinematicFooterAndProgress();
+            setupCinematicWhyChoose();
+            setupCinematicFlagRotation();
+            setupCinematicMapLines();
+            setupCinematicRadar();
             }, landingScope);
         }, 500);
 

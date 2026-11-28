@@ -573,66 +573,71 @@
             }
         }
 
+        _advanceCameraTween(now) {
+            const wasAnimating = this.isTweening;
+            if (!wasAnimating) return false;
+            const progress = Math.min((now - this.tweenStartTime) / this.tweenDuration, 1.0);
+            const ease = progress * progress * progress * (progress * (progress * 6 - 15) + 10);
+            this.camera.position.lerpVectors(this.tweenStartPos, this.tweenEndPos, ease);
+            if (this.controls && this.tweenStartTarget && this.tweenEndTarget) {
+                this.controls.target.lerpVectors(this.tweenStartTarget, this.tweenEndTarget, ease);
+            }
+            if (progress >= 1.0) this.isTweening = false;
+            return wasAnimating;
+        }
+
+        _updateTrackedSatellite() {
+            if (!this.isTrackingSatellite || !this.satelliteLayer?.selectedSatellite || !this.controls) return false;
+            const record = this.satelliteLayer.satelliteMeshes.get(this.satelliteLayer.selectedSatellite.key);
+            if (!record?.mesh) return false;
+            const delta = record.mesh.position.clone().sub(this.controls.target);
+            if (delta.lengthSq() <= 0.000001) return false;
+            delta.multiplyScalar(0.2);
+            this.controls.target.add(delta);
+            this.camera.position.add(delta);
+            return true;
+        }
+
+        _handoffSurfaceView() {
+            if (this.isTweening || this.isTrackingSatellite || !this.onSurfaceView || this.camera.position.lengthSq() > 5.45 ** 2) return false;
+            const surface = this.getSurfaceView();
+            if (!surface) return false;
+            const handoff = this.onSurfaceView;
+            this.onSurfaceView = null;
+            handoff(surface);
+            return true;
+        }
+
+        _shouldSkipRender(now, cameraAnimating, cameraChanged) {
+            return !cameraAnimating && !cameraChanged && this.lastRenderAt !== null && now - this.lastRenderAt < 1000;
+        }
+
+        _renderFrame(now) {
+            if (!this.renderer || !this.scene || !this.camera) return;
+            this.renderer.render(this.scene, this.camera);
+            this.satelliteLayer?.updateSelectedLabel();
+            this.lastRenderAt = now;
+        }
+
         _animate(now) {
             this.animFrameId = null;
             if (!this.isActive || document.hidden) return;
             this.animFrameId = requestAnimationFrame(this._animate);
-            // Retina/120 Hz displays must not multiply idle WebGL work.
             const interval = 1000 / (this.isTweening ? 60 : 30);
             if (this.lastFrameAt !== null && now - this.lastFrameAt < interval - 0.5) return;
             this.lastFrameAt = now;
 
-            let cameraAnimating = this.isTweening;
-            if (this.isTweening) {
-                const progress = Math.min((now - this.tweenStartTime) / this.tweenDuration, 1.0);
-                const ease = progress * progress * progress * (progress * (progress * 6 - 15) + 10);
-                this.camera.position.lerpVectors(this.tweenStartPos, this.tweenEndPos, ease);
-                if (this.controls && this.tweenStartTarget && this.tweenEndTarget) {
-                    this.controls.target.lerpVectors(this.tweenStartTarget, this.tweenEndTarget, ease);
-                }
-                if (progress >= 1.0) this.isTweening = false;
-            }
-
-            // Keep station pin dots constant perceived pixel size at any zoom (IGS Network style)
+            const tweenAnimating = this._advanceCameraTween(now);
+            const trackingAnimating = this._updateTrackedSatellite();
+            const cameraAnimating = tweenAnimating || trackingAnimating;
             if (this.camera && this.satelliteLayer?.updateSpriteScales) {
                 this.satelliteLayer.updateSpriteScales(this.camera);
             }
-
-            // Camera Tracking Satellite
-            if (this.isTrackingSatellite && this.satelliteLayer?.selectedSatellite && this.controls) {
-                const satRec = this.satelliteLayer.satelliteMeshes.get(this.satelliteLayer.selectedSatellite.key);
-                if (satRec?.mesh) {
-                    const delta = satRec.mesh.position.clone().sub(this.controls.target);
-                    if (delta.lengthSq() > 0.000001) {
-                        delta.multiplyScalar(0.2);
-                        this.controls.target.add(delta);
-                        this.camera.position.add(delta);
-                        cameraAnimating = true;
-                    }
-                }
-            }
-
             const cameraChanged = this.controls?.update();
-            // OrbitControls limits distance to its target, which may be a
-            // satellite. Enforce a separate Earth-centered camera boundary.
             this._constrainCamera();
-            if (!this.isTweening && !this.isTrackingSatellite && this.onSurfaceView && this.camera.position.lengthSq() <= 5.45 ** 2) {
-                const surface = this.getSurfaceView();
-                if (surface) {
-                    const handoff = this.onSurfaceView;
-                    this.onSurfaceView = null;
-                    handoff(surface);
-                    return;
-                }
-            }
-            // Orbit propagation is 1 Hz. A stationary camera needs no duplicate
-            // frames between telemetry ticks; dragging/tweening stays at 30 FPS.
-            if (!cameraAnimating && !cameraChanged && this.lastRenderAt !== null && now - this.lastRenderAt < 1000) return;
-            if (this.renderer && this.scene && this.camera) {
-                this.renderer.render(this.scene, this.camera);
-                this.satelliteLayer?.updateSelectedLabel();
-                this.lastRenderAt = now;
-            }
+            if (this._handoffSurfaceView()) return;
+            if (this._shouldSkipRender(now, cameraAnimating, cameraChanged)) return;
+            this._renderFrame(now);
         }
 
         _constrainCamera() {

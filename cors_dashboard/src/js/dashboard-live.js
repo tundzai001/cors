@@ -1637,118 +1637,131 @@ const RtcmAntennaPanel = memo(function RtcmAntennaPanel({ device, liveDataAvaila
     );
 });
 
-const HardwareTelemetryPanel = memo(function HardwareTelemetryPanel({ device, liveDataAvailable, isReadonly4g }) {
+function getHardwareTelemetryState(device, liveDataAvailable) {
+    const savings = device.savings_stats || device.system_info?.savings_stats || {};
+    let isAwake = liveDataAvailable && device.status !== 'sleep';
+    if (savings.is_sleeping != null) {
+        isAwake = !savings.is_sleeping;
+    } else {
+        const config = device.service_config || {};
+        const streamActive = config.server1_stream_active !== undefined
+            ? config.server1_stream_active
+            : config.stream_active;
+        if (config.server1_enabled && streamActive != null) isAwake = Boolean(streamActive);
+    }
+    if (!liveDataAvailable) isAwake = false;
+    const rtcmBps = liveDataAvailable ? Number(
+        device.rtcm_input_bps
+        || device.ntrip_stats?.rtcm_input_bps
+        || device.ntrip_stats?.rtcm_in_bps
+        || device.mqtt_stats?.source_bps
+        || 0
+    ) : 0;
+    return {
+        savings,
+        isAwake,
+        rtcmBps,
+        telemetryBps: savings.telemetry_bps || 0,
+        currentVolts: device.system_info?.cpu?.core_volts || null
+    };
+}
+
+function HardwareTelemetryColumns({ isAwake, rtcmBps, telemetryBps, currentVolts }) {
+    const activeBackground = 'rgba(255,255,255,0.02)';
+    const awakeCardStyle = {
+        backgroundColor: isAwake ? 'rgba(25,135,84,0.1)' : activeBackground,
+        border: isAwake ? '1px solid #198754' : '1px solid transparent'
+    };
+    const sleepCardStyle = {
+        backgroundColor: isAwake ? activeBackground : 'rgba(13,202,240,0.1)',
+        border: isAwake ? '1px solid transparent' : '1px solid #0dcaf0'
+    };
+    const awakeColor = isAwake ? '#198754' : '#8b949e';
+    const sleepColor = isAwake ? '#8b949e' : '#0dcaf0';
+    const awakeNetwork = isAwake ? `${rtcmBps + telemetryBps} B/s` : '--';
+    const sleepNetwork = isAwake ? '--' : `${telemetryBps} B/s`;
+    const awakeVoltage = isAwake && currentVolts ? `${currentVolts}V` : '--';
+    const sleepVoltage = !isAwake && currentVolts ? `${currentVolts}V` : '--';
+    const awakePower = isAwake ? '3.5 W' : '--';
+    const sleepPower = isAwake ? '--' : '2.8 W';
     return (
-        <>
-            {/* HARDWARE & ECO SAVINGS PANEL */}
-            {!isReadonly4g && device.system_info && (
-                <div className="card mb-3 border-0" style={{ background: 'linear-gradient(135deg, rgba(13,110,253,0.08), rgba(32,201,151,0.08))', border: '1px solid rgba(13,110,253,0.25)' }}>
-                    <div className="card-header d-flex align-items-center border-0" style={{ background: 'transparent' }}>
-                        <i className="bi bi-cpu-fill me-2" style={{ color: '#0dcaf0' }}></i>
-                        <h6 className="mb-0 text-light">Hardware Telemetry & Eco Savings</h6>
-                        <span className="badge ms-auto" style={{ backgroundColor: 'rgba(13,202,240,0.15)', color: '#0dcaf0', fontSize: '0.7rem' }}>Aitogy.com.vn</span>
+        <div className="row g-2 mb-3">
+            <div className="col-6">
+                <div className="rounded p-2" style={awakeCardStyle}>
+                    <div className="fw-bold mb-2 text-center" style={{ color: awakeColor, fontSize: '0.85rem' }}>
+                        <i className="bi bi-broadcast me-1"></i> Trạng thái Thức
                     </div>
-                    <div className="card-body pt-0 pb-3 px-3">
-                        {(() => {
-                            const savings = device.savings_stats || device.system_info?.savings_stats || {};
-                            let isAwake = liveDataAvailable && (device.status !== "sleep");
-                            if (savings.is_sleeping !== undefined && savings.is_sleeping !== null) {
-                                isAwake = !savings.is_sleeping;
-                            } else {
-                                const cfg = device.service_config || {};
-                                if (cfg.server1_enabled) {
-                                    const s1Active = cfg.server1_stream_active !== undefined ? cfg.server1_stream_active : cfg.stream_active;
-                                    if (s1Active !== undefined && s1Active !== null) {
-                                        isAwake = !!s1Active;
-                                    }
-                                }
-                            }
-                            if (!liveDataAvailable) isAwake = false;
-
-                            const rtcmBps = liveDataAvailable ? Number(
-                                device.rtcm_input_bps ||
-                                device.ntrip_stats?.rtcm_input_bps ||
-                                device.ntrip_stats?.rtcm_in_bps ||
-                                device.mqtt_stats?.source_bps ||
-                                0
-                            ) : 0;
-                            const telemetryBps = savings.telemetry_bps || 0;
-                            const currentVolts = device.system_info?.cpu?.core_volts || null;
-
-                            return (
-                                <>
-                                    <div className="row g-2 mb-3">
-                                        {/* CỘT THỨC (AWAKE) */}
-                                        <div className="col-6">
-                                            <div className="rounded p-2" style={{ backgroundColor: isAwake ? 'rgba(25,135,84,0.1)' : 'rgba(255,255,255,0.02)', border: isAwake ? '1px solid #198754' : '1px solid transparent' }}>
-                                                <div className="fw-bold mb-2 text-center" style={{ color: isAwake ? '#198754' : '#8b949e', fontSize: '0.85rem' }}>
-                                                    <i className="bi bi-broadcast me-1"></i> Trạng thái Thức
-                                                </div>
-                                                <div className="d-flex justify-content-between mb-1" style={{ fontSize: '0.75rem' }}>
-                                                    <span className="text-muted">Mạng:</span>
-                                                    <span className="fw-bold text-light">{isAwake ? `${rtcmBps + telemetryBps} B/s` : '--'}</span>
-                                                </div>
-                                                <div className="d-flex justify-content-between mb-1" style={{ fontSize: '0.75rem' }}>
-                                                    <span className="text-muted">Điện áp:</span>
-                                                    <span className="fw-bold text-warning">{isAwake && currentVolts ? `${currentVolts}V` : '--'}</span>
-                                                </div>
-                                                <div className="d-flex justify-content-between" style={{ fontSize: '0.75rem' }}>
-                                                    <span className="text-muted">Công suất:</span>
-                                                    <span className="fw-bold text-success">{isAwake ? '3.5 W' : '--'}</span>
-                                                </div>
-                                            </div>
-                                        </div>
-
-                                        {/* CỘT NGỦ (SLEEP) */}
-                                        <div className="col-6">
-                                            <div className="rounded p-2" style={{ backgroundColor: !isAwake ? 'rgba(13,202,240,0.1)' : 'rgba(255,255,255,0.02)', border: !isAwake ? '1px solid #0dcaf0' : '1px solid transparent' }}>
-                                                <div className="fw-bold mb-2 text-center" style={{ color: !isAwake ? '#0dcaf0' : '#8b949e', fontSize: '0.85rem' }}>
-                                                    <i className="bi bi-moon-stars me-1"></i> Trạng thái Ngủ
-                                                </div>
-                                                <div className="d-flex justify-content-between mb-1" style={{ fontSize: '0.75rem' }}>
-                                                    <span className="text-muted">Mạng:</span>
-                                                    <span className="fw-bold text-light">{!isAwake ? `${telemetryBps} B/s` : '--'}</span>
-                                                </div>
-                                                <div className="d-flex justify-content-between mb-1" style={{ fontSize: '0.75rem' }}>
-                                                    <span className="text-muted">Điện áp:</span>
-                                                    <span className="fw-bold text-warning">{!isAwake && currentVolts ? `${currentVolts}V` : '--'}</span>
-                                                </div>
-                                                <div className="d-flex justify-content-between" style={{ fontSize: '0.75rem' }}>
-                                                    <span className="text-muted">Công suất:</span>
-                                                    <span className="fw-bold text-success">{!isAwake ? '2.8 W' : '--'}</span>
-                                                </div>
-                                            </div>
-                                        </div>
-                                    </div>
-
-                                    {(device.savings_stats || device.system_info?.savings_stats) && (() => {
-                                        const actualSavings = device.savings_stats || device.system_info?.savings_stats || {};
-                                        return (
-                                            <div className="rounded p-2 d-flex align-items-center justify-content-between" style={{ backgroundColor: 'rgba(25,135,84,0.12)', border: '1px solid rgba(25,135,84,0.3)' }}>
-                                                <div className="d-flex align-items-center">
-                                                    <i className="bi bi-shield-check fs-4 me-3" style={{ color: '#198754' }}></i>
-                                                    <div>
-                                                        <div style={{ fontSize: '0.7rem', color: '#8b949e', textTransform: 'uppercase' }}>Tích lũy tài nguyên đã tiết kiệm</div>
-                                                        <div className="fw-bold fs-5" style={{ color: '#198754', lineHeight: 1.2 }}>
-                                                            {((actualSavings.total_data_saved_bytes || 0) / 1048576).toFixed(2)} <span style={{fontSize: '0.65em'}}>MB</span>
-                                                        </div>
-                                                    </div>
-                                                </div>
-                                                <div className="text-end pe-2">
-                                                    <div className="fw-bold fs-5 text-warning" style={{ lineHeight: 1.2 }}>
-                                                        {actualSavings.total_saved_mwh ? actualSavings.total_saved_mwh.toFixed(1) : "0.0"} <span style={{fontSize: '0.65em'}}>mWh</span>
-                                                    </div>
-                                                </div>
-                                            </div>
-                                        );
-                                    })()}
-                                </>
-                            );
-                        })()}
+                    <div className="d-flex justify-content-between mb-1" style={{ fontSize: '0.75rem' }}>
+                        <span className="text-muted">Mạng:</span><span className="fw-bold text-light">{awakeNetwork}</span>
+                    </div>
+                    <div className="d-flex justify-content-between mb-1" style={{ fontSize: '0.75rem' }}>
+                        <span className="text-muted">Điện áp:</span><span className="fw-bold text-warning">{awakeVoltage}</span>
+                    </div>
+                    <div className="d-flex justify-content-between" style={{ fontSize: '0.75rem' }}>
+                        <span className="text-muted">Công suất:</span><span className="fw-bold text-success">{awakePower}</span>
                     </div>
                 </div>
-            )}
-        </>
+            </div>
+            <div className="col-6">
+                <div className="rounded p-2" style={sleepCardStyle}>
+                    <div className="fw-bold mb-2 text-center" style={{ color: sleepColor, fontSize: '0.85rem' }}>
+                        <i className="bi bi-moon-stars me-1"></i> Trạng thái Ngủ
+                    </div>
+                    <div className="d-flex justify-content-between mb-1" style={{ fontSize: '0.75rem' }}>
+                        <span className="text-muted">Mạng:</span><span className="fw-bold text-light">{sleepNetwork}</span>
+                    </div>
+                    <div className="d-flex justify-content-between mb-1" style={{ fontSize: '0.75rem' }}>
+                        <span className="text-muted">Điện áp:</span><span className="fw-bold text-warning">{sleepVoltage}</span>
+                    </div>
+                    <div className="d-flex justify-content-between" style={{ fontSize: '0.75rem' }}>
+                        <span className="text-muted">Công suất:</span><span className="fw-bold text-success">{sleepPower}</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+    );
+}
+
+function HardwareSavingsSummary({ savings }) {
+    if (!savings) return null;
+    const dataSavedMb = ((savings.total_data_saved_bytes || 0) / 1048576).toFixed(2);
+    const powerSaved = savings.total_saved_mwh ? savings.total_saved_mwh.toFixed(1) : '0.0';
+    return (
+        <div className="rounded p-2 d-flex align-items-center justify-content-between" style={{ backgroundColor: 'rgba(25,135,84,0.12)', border: '1px solid rgba(25,135,84,0.3)' }}>
+            <div className="d-flex align-items-center">
+                <i className="bi bi-shield-check fs-4 me-3" style={{ color: '#198754' }}></i>
+                <div>
+                    <div style={{ fontSize: '0.7rem', color: '#8b949e', textTransform: 'uppercase' }}>Tích lũy tài nguyên đã tiết kiệm</div>
+                    <div className="fw-bold fs-5" style={{ color: '#198754', lineHeight: 1.2 }}>
+                        {dataSavedMb} <span style={{ fontSize: '0.65em' }}>MB</span>
+                    </div>
+                </div>
+            </div>
+            <div className="text-end pe-2">
+                <div className="fw-bold fs-5 text-warning" style={{ lineHeight: 1.2 }}>
+                    {powerSaved} <span style={{ fontSize: '0.65em' }}>mWh</span>
+                </div>
+            </div>
+        </div>
+    );
+}
+
+const HardwareTelemetryPanel = memo(function HardwareTelemetryPanel({ device, liveDataAvailable, isReadonly4g }) {
+    if (isReadonly4g || !device.system_info) return null;
+    const telemetry = getHardwareTelemetryState(device, liveDataAvailable);
+    const hasSavings = device.savings_stats || device.system_info?.savings_stats;
+    return (
+        <div className="card mb-3 border-0" style={{ background: 'linear-gradient(135deg, rgba(13,110,253,0.08), rgba(32,201,151,0.08))', border: '1px solid rgba(13,110,253,0.25)' }}>
+            <div className="card-header d-flex align-items-center border-0" style={{ background: 'transparent' }}>
+                <i className="bi bi-cpu-fill me-2" style={{ color: '#0dcaf0' }}></i>
+                <h6 className="mb-0 text-light">Hardware Telemetry & Eco Savings</h6>
+                <span className="badge ms-auto" style={{ backgroundColor: 'rgba(13,202,240,0.15)', color: '#0dcaf0', fontSize: '0.7rem' }}>Aitogy.com.vn</span>
+            </div>
+            <div className="card-body pt-0 pb-3 px-3">
+                <HardwareTelemetryColumns {...telemetry} />
+                <HardwareSavingsSummary savings={hasSavings ? telemetry.savings : null} />
+            </div>
+        </div>
     );
 });
 
