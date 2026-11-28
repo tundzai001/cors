@@ -1056,6 +1056,140 @@ function RfMonitorOverview({model}) {
     </div>;
 }
 
+const ReceiverDiagnosticSummary = memo(function ReceiverDiagnosticSummary({device, receiver, interferenceConfig}) {
+    return (
+        <>
+            {!unicore && <div className="small border rounded p-2 mb-2" aria-label="Thông tin chip GNSS">
+                <div data-no-translate style={{overflowWrap:'anywhere'}}><strong>{receiver?.model || 'u-blox'}</strong> · Firmware: {receiver?.firmware || receiver?.software || 'Chưa đọc được'} · Protocol: {receiver?.protocol || 'Chưa đọc được'}</div>
+                <h6 className="mt-3 mb-2">Thông tin MON-VER đầy đủ</h6>
+                {receiver?.software ? <dl className="row g-2 mb-3" aria-label="MON-VER đầy đủ">
+                    {getReceiverVersionRows(receiver).map((row,index)=><React.Fragment key={index}>
+                        <dt className="col-sm-4 fw-normal text-muted" style={{overflowWrap:'anywhere'}}>{row.label}</dt>
+                        <dd className="col-sm-8 font-monospace mb-0" data-no-translate style={{overflowWrap:'anywhere',whiteSpace:'pre-wrap'}}>{row.value}</dd>
+                    </React.Fragment>)}
+                </dl> : <p className="text-muted mb-2" role="status">Chưa nhận được MON-VER mới. Các trường chỉ hiện khi chip trả lời.</p>}
+                {receiver?.itfm_supported === false ? <div className="small">
+                    <p className="mb-1 text-muted">Theo dõi nhiễu và giả mạo bằng SEC-SIG · Tự động tại Pi.</p>
+                    <p className="mb-1">Độ nhạy đã lưu: <strong>{device.base_config?.gnss_options?.jamming_sensitivity_high === false ? 'Thường' : 'Cao (mặc định)'}</strong> · Chip đọc lại: <strong>{getSensitivityLabel(receiver.jamming_sensitivity_high)}</strong></p>
+                    {receiver.sensitivity_error ? <p className="text-warning mb-0" data-no-translate>{receiver.sensitivity_error}</p> : receiver.jamming_sensitivity_high !== null && <p className={`mb-0 ${receiver.jamming_sensitivity_high === (device.base_config?.gnss_options?.jamming_sensitivity_high !== false) ? 'text-success' : 'text-warning'}`}>{receiver.jamming_sensitivity_high === (device.base_config?.gnss_options?.jamming_sensitivity_high !== false) ? 'Độ nhạy khớp cấu hình đã lưu.' : 'Độ nhạy chưa khớp cấu hình đã lưu.'}</p>}
+                </div> : <>
+                    <div>Cấu hình đã lưu: <strong>{getInterferenceDesiredLabel(interferenceConfig.desired)}</strong></div>
+                    <div>Chip đọc lại: <strong>{getInterferenceReadbackLabel(receiver?.itfm_enabled)}</strong> · {receiver ? `Đọc ${Math.floor(receiver.age_seconds)} giây trước` : 'Chờ phản hồi từ chip'}</div>
+                    <div className={interferenceConfig.tone} role="status">{interferenceConfig.label}</div>
+                </>}
+                {receiver?.firmware && /^HPG 1\.(?:0\d|1\d|2\d)(?:$|\s)/.test(receiver.firmware) && <div>Firmware trước HPG 1.30 có lỗi trùng ID khối RF đã được u-blox ghi nhận.</div>}
+                {(receiver?.error || receiver?.itfm_error) && <details><summary>Chi tiết đọc thông tin chip</summary><p className="mb-0" data-no-translate style={{overflowWrap:'anywhere'}}>{[receiver.error,receiver.itfm_error].filter(Boolean).join(' · ')}</p></details>}
+            </div>}
+        </>
+    );
+});
+
+const SecuritySignalPanel = memo(function SecuritySignalPanel({security, securityLog, receiver}) {
+    return (
+        <>
+            {(security || receiver?.itfm_supported === false) && <div className="border rounded p-3 mb-3" aria-label="An toàn tín hiệu SEC-SIG">
+                <h6 className="mb-2">Nhiễu và giả mạo tín hiệu · SEC-SIG</h6>
+                {security && !security.error ? <>
+                    <div className="row g-2 mb-2">
+                        <div className="col-sm-6"><span className="text-muted">Phát hiện nhiễu: </span><strong>{!security.jam_enabled ? 'Đang tắt' : ['Chưa xác định','Không báo nhiễu','Có nhiễu ảnh hưởng thu tín hiệu'][security.jam_state]}</strong></div>
+                        <div className="col-sm-6"><span className="text-muted">Phát hiện giả mạo: </span><strong>{!security.spoof_enabled ? 'Đang tắt' : ['Chưa xác định','Không báo giả mạo','Nghi ngờ giả mạo','Xác nhận giả mạo'][security.spoof_state]}</strong></div>
+                    </div>
+                    <p className="small text-muted mb-2">Đọc {Math.floor(security.age_seconds)} giây trước. Cờ cảnh báo do chip trả về.</p>
+                    <div className="d-flex flex-wrap gap-2">{security.frequencies.map(row=><span key={row.khz} className={`badge ${row.jammed ? 'bg-warning text-dark' : 'bg-secondary'}`} style={{whiteSpace:'normal'}}>{(row.khz/1000).toFixed(3)} MHz · {row.jammed ? 'Bị nhiễu' : 'Không báo nhiễu'}</span>)}</div>
+                    {!security.frequencies.length && <p className="small text-muted mb-0">Chip chưa trả tần số đủ dữ liệu đánh giá.</p>}
+                </> : <p className="small mb-0" role="status">{security?.error ? <>Chưa đọc được SEC-SIG: <span data-no-translate>{security.error}</span></> : 'Đang chờ phản hồi SEC-SIG mới từ Pi.'}</p>}
+                <details className="mt-2"><summary className="py-2" style={{minHeight:44}}>Nhật ký sự kiện trên chip · SEC-SIGLOG</summary>
+                    {renderSecurityLogEvents(securityLog)}
+                    <p className="small text-muted mb-0">Tối đa 16 sự kiện gần nhất; nhật ký chip xóa khi khởi động lại. Lịch sử thu mẫu tại Pi được giữ riêng trong 24 giờ.</p>
+                </details>
+            </div>}
+        </>
+    );
+});
+
+const UnicoreRfDetails = memo(function UnicoreRfDetails({unicore, um, reference}) {
+    return (
+        <>
+            {unicore && <div className="d-grid gap-2 mb-2">
+                {um?.agc ? <div className="rf-band border rounded p-3">
+                    <h6>AGCA · {Math.floor(um.agc.age_seconds)} giây trước</h6>
+                    <dl className="mb-0" style={{display:'grid',gridTemplateColumns:'minmax(0, 1fr) auto',gap:'4px 12px'}}>
+                        {[0,1,2,5,6,7].map((index, order) => <React.Fragment key={index}>
+                            <dt className="fw-normal text-muted">ANT{order < 3 ? 1 : 2} · {['L1','L2','L5'][order % 3]}</dt>
+                            <dd className="mb-0">{um.agc.values[index] === -1 ? 'Kênh không hợp lệ' : um.agc.values[index]}
+                                {reference?.unicore?.agc?.values[index] >= 0 && <small className="text-muted"> · mốc: {reference.unicore.agc.values[index]}</small>}
+                            </dd>
+                        </React.Fragment>)}
+                    </dl>
+                </div> : <p className="small text-muted mb-0">Chưa có AGC mới từ UM.</p>}
+                {um?.jamming ? <div className="rf-band border rounded p-3">
+                    <h6>{um.jamming.source === 'unicore_freqjamstatusa' ? 'FREQJAMSTATUSA' : 'JAMSTATUSA'} · {Math.floor(um.jamming.age_seconds)} giây trước</h6>
+                    {um.jamming.flags.map((flag, index) => <div className="d-flex flex-wrap gap-2 align-items-center mb-1" key={index}>
+                        <strong>{um.jamming.flags.length === 3 ? ['L1','L2','L5'][index] : 'CW tổng'}</strong>
+                        <span className={`badge ${['bg-success','bg-warning text-dark','bg-danger'][flag]}`}>{['Không báo nhiễu CW','Có nhiễu CW','Nhiễu CW mạnh'][flag]}</span>
+                        <span>{um.jamming.ratios[index]} / 255</span>
+                    </div>)}
+                </div> : <p className="small text-muted mb-0">Chưa có cảnh báo CW mới từ UM; chưa thể kết luận.</p>}
+                <p className="small text-muted mb-0">AGC UM: 0–255; −1 là kênh không hợp lệ. So sánh cùng thiết bị và anten, không áp ngưỡng u-blox. Chưa có dữ liệu phổ RF từ UM.</p>
+            </div>}
+        </>
+    );
+});
+
+const UbxRfDetails = memo(function UbxRfDetails({rf, receiver, stateNames}) {
+    return (
+        <>
+            {rf && <>
+                <p className="small text-muted mb-2">MON-RF · {Math.floor(rf.age_seconds)} giây trước{receiver?.itfm_supported === false ? ' · Chỉ số thu; cảnh báo nhiễu xem SEC-SIG phía trên.' : ''}</p>
+                {new Set(rf.blocks.map(b=>b.id)).size !== rf.blocks.length && <p className="small text-warning">Chip báo trùng ID khối RF; giữ đủ các khối theo thứ tự, chưa gán tên băng.</p>}
+                <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fit, minmax(min(100%, 280px), 1fr))',gap:12}}>
+                    {rf.blocks.map(block => <div className="rf-band border rounded p-3" key={block.index}>
+                        <div className="d-flex flex-wrap align-items-center gap-2 mb-2">
+                            <strong>{getRfBlockLabel(block, rf.blocks, receiver)}</strong>
+                            {receiver?.itfm_supported !== false && <span className={`badge ${['bg-secondary','bg-success','bg-warning text-dark','bg-danger'][block.jamming]}`}>{stateNames[block.jamming]}</span>}
+                        </div>
+                        <dl className="mb-0" style={{display:'grid',gridTemplateColumns:'minmax(0, 1fr) auto',gap:'4px 12px'}}>
+                            <dt className="fw-normal text-muted">Nhiễu nền (thô)</dt><dd className="mb-0">{block.noise}</dd>
+                            <dt className="fw-normal text-muted">AGC (thô)</dt><dd className="mb-0">{block.agc}{block.agc_valid ? ' / 8191' : ' · ngoài dải mô tả'}</dd>
+                            <dt className="fw-normal text-muted">Mức triệt nhiễu CW (0–255)</dt><dd className="mb-0">{block.cw}</dd>
+                            <dt className="fw-normal text-muted">Anten</dt><dd className="mb-0">{['Khởi tạo','Chưa xác định','OK','Ngắn mạch','Hở mạch'][block.antenna] || 'Chưa xác định'}</dd>
+                        </dl>
+                    </div>)}
+                </div>
+            </>}
+        </>
+    );
+});
+
+const RfSpectrumDetails = memo(function RfSpectrumDetails({spectrum, receiver, reference}) {
+    return (
+        <>
+            {spectrum && <>
+                <p className="small text-muted mb-2">MON-SPAN · {Math.floor(spectrum.age_seconds)} giây trước · Nét liền: hiện tại · Nét đứt: mốc so sánh</p>
+                <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fit, minmax(min(100%, 320px), 1fr))',gap:12}}>
+                {spectrum.blocks.map((block, index) => {
+                    const previous = reference?.spectrum?.blocks.find(b => b.center === block.center && b.span === block.span && b.resolution === block.resolution);
+                    const difference = compareSpectrum(block, previous);
+                    const frequency = bin => ((block.center + block.span * (bin - 127) / 256) / 1e6).toFixed(2);
+                    const points = bins => bins.map((value, i) => `${i * 2},${255 - value}`).join(' ');
+                    return <figure className="mb-2" key={index}>
+                        <figcaption className="small"><strong>{getRfFigureLabel(index, receiver)}</strong> · Tâm {(block.center / 1e6).toFixed(2)} MHz · Khuếch đại {block.pga} dB<br/>Mức phổ thô (0–255) · Bước {(block.resolution / 1e6).toFixed(2)} MHz</figcaption>
+                        <p className="small text-muted my-1">{getRfDifferenceText(previous, difference)}</p>
+                        <svg viewBox="0 0 510 255" role="img" aria-label={`Phổ GNSS quanh ${block.center / 1e6} MHz, mức phổ thô 0 đến 255`}
+                            style={{width:'100%',height:'auto',border:'1px solid var(--bs-border-color)',background:'var(--bs-tertiary-bg)'}}>
+                            {[0,64,128,192,255].map(value => <g key={value}><line x1="0" x2="510" y1={255-value} y2={255-value} stroke="currentColor" opacity="0.12"/><text x="3" y={Math.max(12,251-value)} fontSize="12" fill="currentColor">{value}</text></g>)}
+                            {difference && <polyline points={points(previous.bins)} fill="none" stroke="var(--bs-warning, #ffc107)" strokeWidth="2" strokeDasharray="6 4"/>}
+                            <polyline points={points(block.bins)} fill="none" stroke="var(--bs-info, #0dcaf0)" strokeWidth="2"/>
+                        </svg>
+                        <div className="d-flex justify-content-between small"><span>{frequency(0)} MHz</span><span>{frequency(255)} MHz</span></div>
+                        {previous && previous.pga !== block.pga && <p className="small text-warning mb-0">PGA đã đổi: {previous.pga} → {block.pga} dB; cần tính đến mức khuếch đại khi so sánh.</p>}
+                    </figure>;
+                })}</div>
+            </>}
+        </>
+    );
+});
+
 function RfDiagnostics({device, live, data}) {
     const esp32 = device.system_info?.gnss_rf_supported === false || /^esp_/i.test(device.serial || '');
     const [, refreshClock] = useState(0);
@@ -1110,119 +1244,25 @@ function RfDiagnostics({device, live, data}) {
                         onClick={exportReading}>Tải số liệu</button>
                 </div>
             </div>
-            {!unicore && <div className="small border rounded p-2 mb-2" aria-label="Thông tin chip GNSS">
-                <div data-no-translate style={{overflowWrap:'anywhere'}}><strong>{receiver?.model || 'u-blox'}</strong> · Firmware: {receiver?.firmware || receiver?.software || 'Chưa đọc được'} · Protocol: {receiver?.protocol || 'Chưa đọc được'}</div>
-                <h6 className="mt-3 mb-2">Thông tin MON-VER đầy đủ</h6>
-                {receiver?.software ? <dl className="row g-2 mb-3" aria-label="MON-VER đầy đủ">
-                    {getReceiverVersionRows(receiver).map((row,index)=><React.Fragment key={index}>
-                        <dt className="col-sm-4 fw-normal text-muted" style={{overflowWrap:'anywhere'}}>{row.label}</dt>
-                        <dd className="col-sm-8 font-monospace mb-0" data-no-translate style={{overflowWrap:'anywhere',whiteSpace:'pre-wrap'}}>{row.value}</dd>
-                    </React.Fragment>)}
-                </dl> : <p className="text-muted mb-2" role="status">Chưa nhận được MON-VER mới. Các trường chỉ hiện khi chip trả lời.</p>}
-                {receiver?.itfm_supported === false ? <div className="small">
-                    <p className="mb-1 text-muted">Theo dõi nhiễu và giả mạo bằng SEC-SIG · Tự động tại Pi.</p>
-                    <p className="mb-1">Độ nhạy đã lưu: <strong>{device.base_config?.gnss_options?.jamming_sensitivity_high === false ? 'Thường' : 'Cao (mặc định)'}</strong> · Chip đọc lại: <strong>{getSensitivityLabel(receiver.jamming_sensitivity_high)}</strong></p>
-                    {receiver.sensitivity_error ? <p className="text-warning mb-0" data-no-translate>{receiver.sensitivity_error}</p> : receiver.jamming_sensitivity_high !== null && <p className={`mb-0 ${receiver.jamming_sensitivity_high === (device.base_config?.gnss_options?.jamming_sensitivity_high !== false) ? 'text-success' : 'text-warning'}`}>{receiver.jamming_sensitivity_high === (device.base_config?.gnss_options?.jamming_sensitivity_high !== false) ? 'Độ nhạy khớp cấu hình đã lưu.' : 'Độ nhạy chưa khớp cấu hình đã lưu.'}</p>}
-                </div> : <>
-                    <div>Cấu hình đã lưu: <strong>{getInterferenceDesiredLabel(interferenceConfig.desired)}</strong></div>
-                    <div>Chip đọc lại: <strong>{getInterferenceReadbackLabel(receiver?.itfm_enabled)}</strong> · {receiver ? `Đọc ${Math.floor(receiver.age_seconds)} giây trước` : 'Chờ phản hồi từ chip'}</div>
-                    <div className={interferenceConfig.tone} role="status">{interferenceConfig.label}</div>
-                </>}
-                {receiver?.firmware && /^HPG 1\.(?:0\d|1\d|2\d)(?:$|\s)/.test(receiver.firmware) && <div>Firmware trước HPG 1.30 có lỗi trùng ID khối RF đã được u-blox ghi nhận.</div>}
-                {(receiver?.error || receiver?.itfm_error) && <details><summary>Chi tiết đọc thông tin chip</summary><p className="mb-0" data-no-translate style={{overflowWrap:'anywhere'}}>{[receiver.error,receiver.itfm_error].filter(Boolean).join(' · ')}</p></details>}
-            </div>}
+            <ReceiverDiagnosticSummary device={device} receiver={receiver} interferenceConfig={interferenceConfig} />
             <div className={`alert alert-${assessment.tone} mb-2`} role="status">
                 <strong className="d-block mb-1">{assessment.title}</strong>
                 <p className="mb-1">{assessment.reason}</p>
                 <p className="mb-0"><strong>Bước tiếp theo: </strong>{assessment.next}</p>
             </div>
-            {(security || receiver?.itfm_supported === false) && <div className="border rounded p-3 mb-3" aria-label="An toàn tín hiệu SEC-SIG">
-                <h6 className="mb-2">Nhiễu và giả mạo tín hiệu · SEC-SIG</h6>
-                {security && !security.error ? <>
-                    <div className="row g-2 mb-2">
-                        <div className="col-sm-6"><span className="text-muted">Phát hiện nhiễu: </span><strong>{!security.jam_enabled ? 'Đang tắt' : ['Chưa xác định','Không báo nhiễu','Có nhiễu ảnh hưởng thu tín hiệu'][security.jam_state]}</strong></div>
-                        <div className="col-sm-6"><span className="text-muted">Phát hiện giả mạo: </span><strong>{!security.spoof_enabled ? 'Đang tắt' : ['Chưa xác định','Không báo giả mạo','Nghi ngờ giả mạo','Xác nhận giả mạo'][security.spoof_state]}</strong></div>
-                    </div>
-                    <p className="small text-muted mb-2">Đọc {Math.floor(security.age_seconds)} giây trước. Cờ cảnh báo do chip trả về.</p>
-                    <div className="d-flex flex-wrap gap-2">{security.frequencies.map(row=><span key={row.khz} className={`badge ${row.jammed ? 'bg-warning text-dark' : 'bg-secondary'}`} style={{whiteSpace:'normal'}}>{(row.khz/1000).toFixed(3)} MHz · {row.jammed ? 'Bị nhiễu' : 'Không báo nhiễu'}</span>)}</div>
-                    {!security.frequencies.length && <p className="small text-muted mb-0">Chip chưa trả tần số đủ dữ liệu đánh giá.</p>}
-                </> : <p className="small mb-0" role="status">{security?.error ? <>Chưa đọc được SEC-SIG: <span data-no-translate>{security.error}</span></> : 'Đang chờ phản hồi SEC-SIG mới từ Pi.'}</p>}
-                <details className="mt-2"><summary className="py-2" style={{minHeight:44}}>Nhật ký sự kiện trên chip · SEC-SIGLOG</summary>
-                    {renderSecurityLogEvents(securityLog)}
-                    <p className="small text-muted mb-0">Tối đa 16 sự kiện gần nhất; nhật ký chip xóa khi khởi động lại. Lịch sử thu mẫu tại Pi được giữ riêng trong 24 giờ.</p>
-                </details>
-            </div>}
+            <SecuritySignalPanel security={security} securityLog={securityLog} receiver={receiver} />
             <p className="small text-muted mb-2">Giữ mẫu trước khi đổi vị trí anten hoặc tắt nguồn phát của mình, rồi so sánh. Mốc được chọn chưa chắc sạch nhiễu.</p>
             {readError && <details className="mb-2"><summary>Chi tiết lỗi đọc MON-RF</summary><p className="small mb-0" data-no-translate>{readError.error}</p></details>}
             {!unicore && <p className="small text-muted mb-2">Trạng thái RF: {rf ? `${Math.floor(rf.age_seconds)} giây trước` : 'Chưa có'} · Phổ: {spectrum ? `${Math.floor(spectrum.age_seconds)} giây trước` : 'Chưa có'}</p>}
             {rf && <p className="small text-muted mb-2">RF1 và RF2 là các khối xử lý tín hiệu vô tuyến bên trong chip, không phải tên cổng USB/UART hay số anten. Khi ID hợp lệ: 0 là L1, 1 là L2/L5 tùy model. Nếu trùng ID, số RF chỉ thứ tự khối trả về, chưa xác định được băng của từng khối.</p>}
             <details className="mt-2 rf-details"><summary className="mb-2">Xem chỉ số và phổ chi tiết</summary>
             {!hasData && <p className="text-muted mb-2" role="status">Chưa có dữ liệu RF mới. Cần agent hỗ trợ và chip trả lời; dữ liệu quá 45 giây không được dùng để kết luận.</p>}
-            {unicore && <div className="d-grid gap-2 mb-2">
-                {um?.agc ? <div className="rf-band border rounded p-3">
-                    <h6>AGCA · {Math.floor(um.agc.age_seconds)} giây trước</h6>
-                    <dl className="mb-0" style={{display:'grid',gridTemplateColumns:'minmax(0, 1fr) auto',gap:'4px 12px'}}>
-                        {[0,1,2,5,6,7].map((index, order) => <React.Fragment key={index}>
-                            <dt className="fw-normal text-muted">ANT{order < 3 ? 1 : 2} · {['L1','L2','L5'][order % 3]}</dt>
-                            <dd className="mb-0">{um.agc.values[index] === -1 ? 'Kênh không hợp lệ' : um.agc.values[index]}
-                                {reference?.unicore?.agc?.values[index] >= 0 && <small className="text-muted"> · mốc: {reference.unicore.agc.values[index]}</small>}
-                            </dd>
-                        </React.Fragment>)}
-                    </dl>
-                </div> : <p className="small text-muted mb-0">Chưa có AGC mới từ UM.</p>}
-                {um?.jamming ? <div className="rf-band border rounded p-3">
-                    <h6>{um.jamming.source === 'unicore_freqjamstatusa' ? 'FREQJAMSTATUSA' : 'JAMSTATUSA'} · {Math.floor(um.jamming.age_seconds)} giây trước</h6>
-                    {um.jamming.flags.map((flag, index) => <div className="d-flex flex-wrap gap-2 align-items-center mb-1" key={index}>
-                        <strong>{um.jamming.flags.length === 3 ? ['L1','L2','L5'][index] : 'CW tổng'}</strong>
-                        <span className={`badge ${['bg-success','bg-warning text-dark','bg-danger'][flag]}`}>{['Không báo nhiễu CW','Có nhiễu CW','Nhiễu CW mạnh'][flag]}</span>
-                        <span>{um.jamming.ratios[index]} / 255</span>
-                    </div>)}
-                </div> : <p className="small text-muted mb-0">Chưa có cảnh báo CW mới từ UM; chưa thể kết luận.</p>}
-                <p className="small text-muted mb-0">AGC UM: 0–255; −1 là kênh không hợp lệ. So sánh cùng thiết bị và anten, không áp ngưỡng u-blox. Chưa có dữ liệu phổ RF từ UM.</p>
-            </div>}
-            {rf && <>
-                <p className="small text-muted mb-2">MON-RF · {Math.floor(rf.age_seconds)} giây trước{receiver?.itfm_supported === false ? ' · Chỉ số thu; cảnh báo nhiễu xem SEC-SIG phía trên.' : ''}</p>
-                {new Set(rf.blocks.map(b=>b.id)).size !== rf.blocks.length && <p className="small text-warning">Chip báo trùng ID khối RF; giữ đủ các khối theo thứ tự, chưa gán tên băng.</p>}
-                <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fit, minmax(min(100%, 280px), 1fr))',gap:12}}>
-                    {rf.blocks.map(block => <div className="rf-band border rounded p-3" key={block.index}>
-                        <div className="d-flex flex-wrap align-items-center gap-2 mb-2">
-                            <strong>{getRfBlockLabel(block, rf.blocks, receiver)}</strong>
-                            {receiver?.itfm_supported !== false && <span className={`badge ${['bg-secondary','bg-success','bg-warning text-dark','bg-danger'][block.jamming]}`}>{stateNames[block.jamming]}</span>}
-                        </div>
-                        <dl className="mb-0" style={{display:'grid',gridTemplateColumns:'minmax(0, 1fr) auto',gap:'4px 12px'}}>
-                            <dt className="fw-normal text-muted">Nhiễu nền (thô)</dt><dd className="mb-0">{block.noise}</dd>
-                            <dt className="fw-normal text-muted">AGC (thô)</dt><dd className="mb-0">{block.agc}{block.agc_valid ? ' / 8191' : ' · ngoài dải mô tả'}</dd>
-                            <dt className="fw-normal text-muted">Mức triệt nhiễu CW (0–255)</dt><dd className="mb-0">{block.cw}</dd>
-                            <dt className="fw-normal text-muted">Anten</dt><dd className="mb-0">{['Khởi tạo','Chưa xác định','OK','Ngắn mạch','Hở mạch'][block.antenna] || 'Chưa xác định'}</dd>
-                        </dl>
-                    </div>)}
-                </div>
-            </>}
+            <UnicoreRfDetails unicore={unicore} um={um} reference={reference} />
+            <UbxRfDetails rf={rf} receiver={receiver} stateNames={stateNames} />
             {reference && <p className="small mb-2" role="status">Mốc so sánh: {new Date(reference.captured_at).toLocaleString()}.
                 <button className="btn btn-sm btn-link" onClick={() => setReference(null)}>Xóa mốc</button></p>}
             {!unicore && !spectrum && <p className="small text-muted mb-2">Chưa có phổ GNSS mới.</p>}
-            {spectrum && <>
-                <p className="small text-muted mb-2">MON-SPAN · {Math.floor(spectrum.age_seconds)} giây trước · Nét liền: hiện tại · Nét đứt: mốc so sánh</p>
-                <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fit, minmax(min(100%, 320px), 1fr))',gap:12}}>
-                {spectrum.blocks.map((block, index) => {
-                    const previous = reference?.spectrum?.blocks.find(b => b.center === block.center && b.span === block.span && b.resolution === block.resolution);
-                    const difference = compareSpectrum(block, previous);
-                    const frequency = bin => ((block.center + block.span * (bin - 127) / 256) / 1e6).toFixed(2);
-                    const points = bins => bins.map((value, i) => `${i * 2},${255 - value}`).join(' ');
-                    return <figure className="mb-2" key={index}>
-                        <figcaption className="small"><strong>{getRfFigureLabel(index, receiver)}</strong> · Tâm {(block.center / 1e6).toFixed(2)} MHz · Khuếch đại {block.pga} dB<br/>Mức phổ thô (0–255) · Bước {(block.resolution / 1e6).toFixed(2)} MHz</figcaption>
-                        <p className="small text-muted my-1">{getRfDifferenceText(previous, difference)}</p>
-                        <svg viewBox="0 0 510 255" role="img" aria-label={`Phổ GNSS quanh ${block.center / 1e6} MHz, mức phổ thô 0 đến 255`}
-                            style={{width:'100%',height:'auto',border:'1px solid var(--bs-border-color)',background:'var(--bs-tertiary-bg)'}}>
-                            {[0,64,128,192,255].map(value => <g key={value}><line x1="0" x2="510" y1={255-value} y2={255-value} stroke="currentColor" opacity="0.12"/><text x="3" y={Math.max(12,251-value)} fontSize="12" fill="currentColor">{value}</text></g>)}
-                            {difference && <polyline points={points(previous.bins)} fill="none" stroke="var(--bs-warning, #ffc107)" strokeWidth="2" strokeDasharray="6 4"/>}
-                            <polyline points={points(block.bins)} fill="none" stroke="var(--bs-info, #0dcaf0)" strokeWidth="2"/>
-                        </svg>
-                        <div className="d-flex justify-content-between small"><span>{frequency(0)} MHz</span><span>{frequency(255)} MHz</span></div>
-                        {previous && previous.pga !== block.pga && <p className="small text-warning mb-0">PGA đã đổi: {previous.pga} → {block.pga} dB; cần tính đến mức khuếch đại khi so sánh.</p>}
-                    </figure>;
-                })}</div>
-            </>}
+            <RfSpectrumDetails spectrum={spectrum} receiver={receiver} reference={reference} />
             <p className="small text-muted mb-0">{!unicore && 'Phổ thô không phải công suất dBm; đỉnh phổ đơn lẻ chưa chứng minh có nhiễu. '}Chỉ số RF không xác định nguồn gây nhiễu hoặc sai số tọa độ.</p>
             </details>
         </div>
@@ -1579,6 +1619,117 @@ const HardwareTelemetryPanel = memo(function HardwareTelemetryPanel({ device, li
     );
 });
 
+function drawSkyplotBackground(ctx) {
+    const width = ctx.canvas.width;
+    const height = ctx.canvas.height;
+    if (width === 0 || height === 0) return;
+    const centerX = width / 2;
+    const centerY = height / 2;
+    const radius = Math.max(0, Math.min(centerX, centerY) - 36);
+    ctx.clearRect(0, 0, width, height);
+
+    const gradient = ctx.createRadialGradient(centerX, centerY, 0, centerX, centerY, radius);
+    gradient.addColorStop(0, '#1a2332');
+    gradient.addColorStop(0.5, '#0d1520');
+    gradient.addColorStop(1, '#000');
+    ctx.fillStyle = gradient;
+    ctx.fillRect(0, 0, width, height);
+
+    ctx.strokeStyle = '#3a4a5a';
+    ctx.lineWidth = 1.5;
+    ctx.font = '11px Arial';
+    ctx.fillStyle = '#6a7a8a';
+    ctx.textAlign = 'left';
+    [{frac: 0.33, label: '60°'}, {frac: 0.66, label: '30°'}, {frac: 1, label: '0°'}].forEach(({frac, label}) => {
+        const circleRadius = radius * frac;
+        ctx.beginPath();
+        ctx.arc(centerX, centerY, circleRadius, 0, 2 * Math.PI);
+        ctx.stroke();
+        ctx.fillText(label, centerX + circleRadius + 5, centerY);
+    });
+
+    ctx.strokeStyle = '#2a3a4a';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    for (let index = 0; index < 12; index += 1) {
+        const angle = index * 30 * Math.PI / 180;
+        ctx.moveTo(centerX, centerY);
+        ctx.lineTo(centerX + radius * Math.sin(angle), centerY - radius * Math.cos(angle));
+    }
+    ctx.stroke();
+
+    ctx.fillStyle = '#fff';
+    ctx.font = 'bold 18px Arial';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    const labelDistance = radius + 25;
+    [{text: 'N', angle: 0}, {text: 'E', angle: 90}, {text: 'S', angle: 180}, {text: 'W', angle: 270}].forEach(({text, angle}) => {
+        const radians = angle * Math.PI / 180;
+        ctx.fillText(text, centerX + labelDistance * Math.sin(radians), centerY - labelDistance * Math.cos(radians));
+    });
+}
+
+function drawDashboardSkyplotSatellites(ctx, buffer, satellites, maxAgeMs, fadeDuration) {
+    const now = Date.now();
+    updateSkyplotSatelliteBuffer(buffer, satellites, now, maxAgeMs, fadeDuration);
+    ctx.clearRect(0, 0, ctx.canvas.width, ctx.canvas.height);
+    const centerX = ctx.canvas.width / 2;
+    const centerY = ctx.canvas.height / 2;
+    const radius = Math.max(0, Math.min(centerX, centerY) - 36);
+    if (ctx.canvas.width === 0 || ctx.canvas.height === 0) return;
+    for (const satellite of buffer.values()) drawSkyplotSatellite(satellite, ctx, centerX, centerY, radius);
+    ctx.globalAlpha = 1;
+}
+
+function updateDashboardSignalBars(satellites, plot, container, lastDataRef, setStats) {
+    if (!container) return;
+    const activeSatellites = getVisibleSatellites(satellites, plot.maxAgeMs);
+    const structureHash = activeSatellites.map(satellite => getSatelliteKey(satellite)).sort((a, b) => a.localeCompare(b)).join('|');
+    let totalSnr = 0;
+    let lowSnrCount = 0;
+    const groupedSatellites = activeSatellites.reduce((groups, satellite) => {
+        const system = getSatelliteSystem(satellite);
+        if (!groups[system]) groups[system] = [];
+        groups[system].push(satellite);
+        if (satellite.snr > 0) totalSnr += satellite.snr;
+        if (satellite.snr < 25 && satellite.snr > 0) lowSnrCount += 1;
+        return groups;
+    }, {});
+    const averageSnr = activeSatellites.length ? totalSnr / activeSatellites.length : 0;
+    setStats({
+        total: activeSatellites.length,
+        tracking: activeSatellites.filter(satellite => satellite.isTracking).length,
+        bySystem: groupedSatellites,
+        avgSnr: averageSnr,
+        lowSnrCount,
+        positioned: activeSatellites.filter(hasSatellitePosition).length,
+        source: plot.source,
+        age_seconds: plot.age_seconds,
+    });
+
+    if (lastDataRef.current !== structureHash) {
+        lastDataRef.current = structureHash;
+        container.innerHTML = '';
+        container.appendChild(createSatelliteBars(groupedSatellites));
+        return;
+    }
+    updateSatelliteBars(activeSatellites);
+}
+
+function resizeDashboardSkyplot(backgroundCanvas, satelliteCanvas, drawBackground) {
+    if (!backgroundCanvas || !satelliteCanvas) return;
+    const container = backgroundCanvas.parentElement;
+    if (!container) return;
+    const width = container.clientWidth;
+    const height = container.clientHeight;
+    if (width === 0 || height === 0) return;
+    backgroundCanvas.width = width;
+    backgroundCanvas.height = height;
+    satelliteCanvas.width = width;
+    satelliteCanvas.height = height;
+    drawBackground();
+}
+
 const DashboardPanel = memo(function DashboardPanel({ device, nmeaData }) {
     const [offlineClockNow, setOfflineClockNow] = useState(Date.now());
     useEffect(() => {
@@ -1720,123 +1871,15 @@ const DashboardPanel = memo(function DashboardPanel({ device, nmeaData }) {
         const bgCtx = bgCanvasRef.current.getContext('2d');
         const satCtx = satCanvasRef.current.getContext('2d');
 
-        const drawSkyplotBase = () => {
-            const w = bgCtx.canvas.width, h = bgCtx.canvas.height;
-            if (w === 0 || h === 0) return;
-
-            const centerX = w / 2, centerY = h / 2;
-            const radius = Math.max(0, Math.min(centerX, centerY) - 36);
-
-            bgCtx.clearRect(0, 0, w, h);
-
-            // Background Gradient
-            const grad = bgCtx.createRadialGradient(centerX, centerY, 0, centerX, centerY, radius);
-            grad.addColorStop(0, '#1a2332');
-            grad.addColorStop(0.5, '#0d1520');
-            grad.addColorStop(1, '#000');
-            bgCtx.fillStyle = grad;
-            bgCtx.fillRect(0, 0, w, h);
-
-            // Circles
-            bgCtx.strokeStyle = '#3a4a5a';
-            bgCtx.lineWidth = 1.5;
-            bgCtx.font = '11px Arial';
-            bgCtx.fillStyle = '#6a7a8a';
-            bgCtx.textAlign = 'left';
-
-            [{ frac: 0.33, label: '60°' }, { frac: 0.66, label: '30°' }, { frac: 1.0, label: '0°' }]
-                .forEach(({ frac, label }) => {
-                    const r = radius * frac;
-                    bgCtx.beginPath();
-                    bgCtx.arc(centerX, centerY, r, 0, 2 * Math.PI);
-                    bgCtx.stroke();
-                    bgCtx.fillText(label, centerX + r + 5, centerY);
-                });
-
-            // Cross Lines
-            bgCtx.strokeStyle = '#2a3a4a';
-            bgCtx.lineWidth = 1;
-            bgCtx.beginPath();
-            for (let i = 0; i < 12; i++) {
-                const angle = i * 30 * Math.PI / 180;
-                bgCtx.moveTo(centerX, centerY);
-                bgCtx.lineTo(centerX + radius * Math.sin(angle), centerY - radius * Math.cos(angle));
-            }
-            bgCtx.stroke();
-
-            // Labels
-            bgCtx.fillStyle = '#fff';
-            bgCtx.font = 'bold 18px Arial';
-            bgCtx.textAlign = 'center';
-            bgCtx.textBaseline = 'middle';
-            const labelDistance = radius + 25;
-            [{ t: 'N', a: 0 }, { t: 'E', a: 90 }, { t: 'S', a: 180 }, { t: 'W', a: 270 }].forEach(({ t, a }) => {
-                const rad = a * Math.PI / 180;
-                bgCtx.fillText(t, centerX + labelDistance * Math.sin(rad), centerY - labelDistance * Math.cos(rad));
-            });
-        };
-
+        const drawSkyplotBase = () => drawSkyplotBackground(bgCtx);
         drawSkyplotBase();
 
         const drawSkyplotSatellites = (satellites, maxAgeMs = SATELLITE_TIMEOUT + FADE_DURATION) => {
-            const now = Date.now();
-            const buffer = satelliteBufferRef.current;
-            updateSkyplotSatelliteBuffer(buffer, satellites, now, maxAgeMs, FADE_DURATION);
-
-            satCtx.clearRect(0, 0, satCtx.canvas.width, satCtx.canvas.height);
-            const centerX = satCtx.canvas.width / 2;
-            const centerY = satCtx.canvas.height / 2;
-            const radius = Math.max(0, Math.min(centerX, centerY) - 36);
-
-            if (satCtx.canvas.width === 0 || satCtx.canvas.height === 0) return;
-            for (const satData of buffer.values()) drawSkyplotSatellite(satData, satCtx, centerX, centerY, radius);
-            satCtx.globalAlpha = 1.0;
+            drawDashboardSkyplotSatellites(satCtx, satelliteBufferRef.current, satellites, maxAgeMs, FADE_DURATION);
         };
-
         const drawSignalBars = (satellites, plot) => {
-            const container = signalBarsContainerRef.current;
-            if (!container) return;
-
-            // Count only fresh satellites with a positive SNR; canvas fade remains visual-only.
-            const activeSatellites = getVisibleSatellites(satellites, plot.maxAgeMs);
-
-            // Tạo hash cấu trúc (Chỉ phụ thuộc số lượng và loại PRN - Không chứa giá trị SNR để tránh giật hình)
-            const structureHash = activeSatellites.map(s => getSatelliteKey(s)).sort((a, b) => a.localeCompare(b)).join('|');
-
-            // Cập nhật text Stats
-            let totalSnr = 0;
-            let lowSnrCount = 0;
-            const groupedSats = activeSatellites.reduce((acc, sat) => {
-                const system = getSatelliteSystem(sat);
-                if (!acc[system]) acc[system] = [];
-                acc[system].push(sat);
-                if (sat.snr > 0) totalSnr += sat.snr;
-                if (sat.snr < 25 && sat.snr > 0) lowSnrCount++;
-                return acc;
-            }, {});
-            const avgSnr = activeSatellites.length > 0 ? totalSnr / activeSatellites.length : 0;
-            setSatStats({
-                total: activeSatellites.length,
-                tracking: activeSatellites.filter(s => s.isTracking).length,
-                bySystem: groupedSats,
-                avgSnr: avgSnr,
-                lowSnrCount: lowSnrCount,
-                positioned: activeSatellites.filter(hasSatellitePosition).length,
-                source: plot.source, age_seconds: plot.age_seconds
-            });
-
-            // 1. Nếu CẤU TRÚC bị đổi (thêm/bớt vệ tinh) -> Xóa toàn bộ và vẽ lại DOM
-            if (lastSatelliteDataRef.current !== structureHash) {
-                lastSatelliteDataRef.current = structureHash;
-                container.innerHTML = '';
-                container.appendChild(createSatelliteBars(groupedSats));
-            }
-            // 2. Chế độ NGẦM: Chỉ cập nhật trị SNR + Color (Không tái tạo DOM, giúp thanh Transition mượt mà và hết giật nền)
-            else {
-                updateSatelliteBars(activeSatellites);
-            }
+            updateDashboardSignalBars(satellites, plot, signalBarsContainerRef.current, lastSatelliteDataRef, setSatStats);
         };
-
         const animate = () => {
             const now = Date.now();
             const device = deviceRef.current;
@@ -1855,23 +1898,7 @@ const DashboardPanel = memo(function DashboardPanel({ device, nmeaData }) {
             });
             animationFrameRef.current = requestAnimationFrame(animate);
         };
-
-        const handleResize = () => {
-            if (bgCanvasRef.current && satCanvasRef.current) {
-                const container = bgCanvasRef.current.parentElement;
-                if (!container) return;
-                const w = container.clientWidth;
-                const h = container.clientHeight;
-
-                if (w > 0 && h > 0) {
-                    bgCanvasRef.current.width = w;
-                    bgCanvasRef.current.height = h;
-                    satCanvasRef.current.width = w;
-                    satCanvasRef.current.height = h;
-                    drawSkyplotBase();
-                }
-            }
-        };
+        const handleResize = () => resizeDashboardSkyplot(bgCanvasRef.current, satCanvasRef.current, drawSkyplotBase);
 
         handleResize();
         setTimeout(handleResize, 100);
