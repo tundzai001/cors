@@ -12,6 +12,61 @@
         })[char]);
     }
 
+    function roverPopupHtml(rover, statusMeta) {
+        return `
+            <div class="station-map-popup">
+                <div class="station-map-popup-title">Rover: ${escapeHtml(rover.username || 'N/A')}</div>
+                <div class="station-map-popup-grid">
+                    <span class="station-map-popup-label">Receiver</span><span class="station-map-popup-value">${escapeHtml(rover.receiver_id || '--')}</span>
+                    <span class="station-map-popup-label">Mountpoint</span><span class="station-map-popup-value">${escapeHtml(rover.mountpoint || '--')}</span>
+                    <span class="station-map-popup-label">Status</span><span class="station-map-popup-value">${escapeHtml(statusMeta.label)}</span>
+                    <span class="station-map-popup-label">nSV</span><span class="station-map-popup-value">${escapeHtml(rover.nsv ?? '--')}</span>
+                </div>
+            </div>
+        `;
+    }
+
+    function updateRoverMarker(marker, lat, lon, statusMeta, html, {map, L, utils, addMarker}) {
+        const current = marker.getLatLng();
+        const distance = window.StationsMapUtils?.getDistanceMeters
+            ? window.StationsMapUtils.getDistanceMeters(current.lat, current.lng, lat, lon)
+            : map.distance(current, L.latLng(lat, lon));
+        if (distance > 1.5) {
+            if (distance <= 100 && utils.animateMarkerLatLng) utils.animateMarkerLatLng(marker, lat, lon, 550);
+            else marker.setLatLng([lat, lon]);
+        }
+        if (marker.__statusColor !== statusMeta.color && utils.createRoverIcon) {
+            marker.setIcon(utils.createRoverIcon(statusMeta.color));
+            marker.__statusColor = statusMeta.color;
+        }
+        marker.setPopupContent(html);
+        addMarker(marker);
+    }
+
+    function syncRoverMarker(rover, context) {
+        const {map, L, utils, roverMarkers, addMarker} = context;
+        const lat = Number(rover.latitude);
+        const lon = Number(rover.longitude);
+        const key = `${rover.username || 'unknown'}_${rover.receiver_id || '0'}`;
+        const statusMeta = utils.getRoverStatusMeta
+            ? utils.getRoverStatusMeta(rover.status)
+            : {label: rover.status || 'Unknown', color: '#38bdf8'};
+        const html = roverPopupHtml(rover, statusMeta);
+        if (roverMarkers[key]) {
+            updateRoverMarker(roverMarkers[key], lat, lon, statusMeta, html, context);
+            return key;
+        }
+
+        const marker = utils.createRoverMarker
+            ? utils.createRoverMarker(lat, lon, statusMeta.color)
+            : L.circleMarker([lat, lon], {radius: 6, color: '#ffffff', fillColor: statusMeta.color, fillOpacity: 0.95});
+        marker.bindPopup(html, {closeButton: true, maxWidth: 300});
+        marker.__statusColor = statusMeta.color;
+        roverMarkers[key] = marker;
+        addMarker(marker);
+        return key;
+    }
+
     function toNumber(value) {
         const n = Number(value);
         return Number.isFinite(n) ? n : null;
@@ -1257,52 +1312,7 @@
                 }
             };
 
-            visibleRovers.forEach(rover => {
-                const lat = Number(rover.latitude);
-                const lon = Number(rover.longitude);
-                const key = `${rover.username || 'unknown'}_${rover.receiver_id || '0'}`;
-                validKeys.add(key);
-                const statusMeta = utils.getRoverStatusMeta
-                    ? utils.getRoverStatusMeta(rover.status)
-                    : { label: rover.status || 'Unknown', color: '#38bdf8' };
-                const html = `
-                    <div class="station-map-popup">
-                        <div class="station-map-popup-title">Rover: ${escapeHtml(rover.username || 'N/A')}</div>
-                        <div class="station-map-popup-grid">
-                            <span class="station-map-popup-label">Receiver</span><span class="station-map-popup-value">${escapeHtml(rover.receiver_id || '--')}</span>
-                            <span class="station-map-popup-label">Mountpoint</span><span class="station-map-popup-value">${escapeHtml(rover.mountpoint || '--')}</span>
-                            <span class="station-map-popup-label">Status</span><span class="station-map-popup-value">${escapeHtml(statusMeta.label)}</span>
-                            <span class="station-map-popup-label">nSV</span><span class="station-map-popup-value">${escapeHtml(rover.nsv ?? '--')}</span>
-                        </div>
-                    </div>
-                `;
-
-                if (roverMarkers[key]) {
-                    const marker = roverMarkers[key];
-                    const current = marker.getLatLng();
-                    const distance = window.StationsMapUtils?.getDistanceMeters
-                        ? window.StationsMapUtils.getDistanceMeters(current.lat, current.lng, lat, lon)
-                        : map.distance(current, L.latLng(lat, lon));
-                    if (distance > 1.5) {
-                        if (distance <= 100 && utils.animateMarkerLatLng) utils.animateMarkerLatLng(marker, lat, lon, 550);
-                        else marker.setLatLng([lat, lon]);
-                    }
-                    if (marker.__statusColor !== statusMeta.color && utils.createRoverIcon) {
-                        marker.setIcon(utils.createRoverIcon(statusMeta.color));
-                        marker.__statusColor = statusMeta.color;
-                    }
-                    marker.setPopupContent(html);
-                    addMarker(marker);
-                } else {
-                    const marker = utils.createRoverMarker
-                        ? utils.createRoverMarker(lat, lon, statusMeta.color)
-                        : L.circleMarker([lat, lon], { radius: 6, color: '#ffffff', fillColor: statusMeta.color, fillOpacity: 0.95 });
-                    marker.bindPopup(html, { closeButton: true, maxWidth: 300 });
-                    marker.__statusColor = statusMeta.color;
-                    roverMarkers[key] = marker;
-                    addMarker(marker);
-                }
-            });
+            visibleRovers.forEach(rover => validKeys.add(syncRoverMarker(rover, {map, L, utils, roverMarkers, addMarker})));
 
             Object.keys(roverMarkers).forEach(key => {
                 if (!validKeys.has(key)) {

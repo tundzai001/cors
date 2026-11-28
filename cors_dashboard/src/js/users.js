@@ -333,6 +333,81 @@ document.addEventListener('DOMContentLoaded', async () => {
         updateRoleSections();
     }
 
+    function parseUserAssignments(value) {
+        if (Array.isArray(value)) return value;
+        if (typeof value !== 'string') return [];
+        try { return JSON.parse(value); } catch (_) { return []; }
+    }
+
+    function getUserDeviceAssignments(user, userDevices) {
+        if (user.role === 'viewer') return {assignedSerials: parseUserAssignments(user.allowed_bases), viewSerials: []};
+        const assignedSerials = (userDevices || []).filter(device => Number(device.user_id) === Number(user.id)).map(device => device.serial);
+        return {
+            assignedSerials,
+            viewSerials: (user.view_only_bases || []).filter(serial => !assignedSerials.includes(serial)),
+        };
+    }
+
+    function configureEditUserRole(user) {
+        const isAdmin = currentUser.role === 'admin';
+        roleSelect.disabled = !isAdmin;
+        Array.from(roleSelect.options).forEach(option => {
+            option.style.display = !isAdmin && option.value !== 'viewer' && option.value !== user.role ? 'none' : '';
+        });
+    }
+
+    function configureEditUserStatus(user) {
+        const checkbox = document.getElementById('is_active');
+        checkbox.checked = !!user.is_active;
+        checkbox.disabled = Number(user.id) === Number(currentUser.id);
+        checkbox.title = checkbox.disabled ? 'Không thể vô hiệu hóa tài khoản của chính bạn' : '';
+    }
+
+    function getUserPasswordError(password, userId) {
+        if (!password) return userId ? '' : 'Password is required for new users';
+        const errors = [];
+        if (password.length < 8) errors.push('Mật khẩu phải có ít nhất 8 ký tự');
+        if (!/[A-Z]/.test(password)) errors.push('Mật khẩu phải chứa ít nhất 1 chữ hoa');
+        if (!/[a-z]/.test(password)) errors.push('Mật khẩu phải chứa ít nhất 1 chữ thường');
+        if (!/\d/.test(password)) errors.push('Mật khẩu phải chứa ít nhất 1 chữ số');
+        if (!/[^a-zA-Z0-9]/.test(password)) errors.push('Mật khẩu phải chứa ít nhất 1 ký tự đặc biệt');
+        if (/[ "'`&()|<>]/.test(password)) errors.push('Mật khẩu không được chứa: khoảng trắng, ", \', `, &, (, ), |, <, >');
+        return errors[0] || '';
+    }
+
+    function createUserPayload(userId, password) {
+        const canViewMobile = Boolean(canViewMobileBases?.checked);
+        const stationAccess = Array.from(document.querySelectorAll('.device-access-select')).filter(input =>
+            canViewMobile || !isMobileBase(input.dataset.serial));
+        const checkedStations = Array.from(document.querySelectorAll('.device-checkbox:checked'))
+            .map(input => input.value)
+            .filter(serial => canViewMobile || !isMobileBase(serial));
+        const payload = {
+            username: document.getElementById('username').value.trim(),
+            full_name: document.getElementById('full_name').value.trim(),
+            role: document.getElementById('role').value || 'viewer',
+            is_active: document.getElementById('is_active').checked,
+            assigned_devices: stationAccess.filter(input => input.value === 'edit').map(input => input.dataset.serial),
+            allowed_bases: stationAccess.length ? [] : checkedStations,
+            view_only_bases: stationAccess.filter(input => input.value === 'view').map(input => input.dataset.serial),
+            allowed_rovers: Array.from(document.querySelectorAll('.rover-checkbox:checked')).map(input => input.value),
+        };
+        const canManageMobileBases = currentUser.role === 'admin' || (currentUser.role === 'coordinator' && Boolean(currentUser.can_view_mobile_bases));
+        if (canManageMobileBases) payload.can_view_mobile_bases = canViewMobile;
+        if (currentUser.role === 'admin') {
+            payload.can_view_rovers = document.getElementById('can_view_rovers').checked;
+            payload.can_create_rovers = document.getElementById('can_create_rovers').checked;
+            payload.can_create_users = document.getElementById('can_create_users')?.checked || false;
+            payload.extra_mountpoints = Array.from(document.querySelectorAll('.extra-mp-checkbox:checked')).map(input => input.value).join(';');
+        } else {
+            delete payload.assigned_devices;
+            delete payload.view_only_bases;
+            if (Number(userId) === Number(currentUser.id)) delete payload.allowed_bases;
+        }
+        if (password) payload.password = password;
+        return payload;
+    }
+
     async function openEditUser(userId) {
         const user = await apiJson(window.ApiRoutes.users.detail(userId));
         let userDevices = [];
@@ -348,29 +423,9 @@ document.addEventListener('DOMContentLoaded', async () => {
 
         document.getElementById('full_name').value = user.full_name || '';
         document.getElementById('role').value = user.role || 'viewer';
-        if (currentUser.role !== 'admin') {
-            roleSelect.disabled = true;
-            Array.from(roleSelect.options).forEach(opt => {
-                if(opt.value !== 'viewer' && opt.value !== user.role) {
-                    opt.style.display = 'none';
-                }
-            });
-        } else {
-            roleSelect.disabled = false;
-            Array.from(roleSelect.options).forEach(opt => {
-                opt.style.display = '';
-            });
-        }
+        configureEditUserRole(user);
         
-        const isActiveCheckbox = document.getElementById('is_active');
-        isActiveCheckbox.checked = !!user.is_active;
-        if (Number(user.id) === Number(currentUser.id)) {
-            isActiveCheckbox.disabled = true;
-            isActiveCheckbox.title = "Không thể vô hiệu hóa tài khoản của chính bạn";
-        } else {
-            isActiveCheckbox.disabled = false;
-            isActiveCheckbox.title = "";
-        }
+        configureEditUserStatus(user);
 
         document.getElementById('can_view_rovers').checked = user.can_view_rovers ?? !!user.can_create_rovers;
         document.getElementById('can_create_rovers').checked = !!user.can_create_rovers;
@@ -387,25 +442,9 @@ document.addEventListener('DOMContentLoaded', async () => {
 
         const extraMps = String(user.extra_mountpoints || '').split(/[;,\s\n]+/).map(v => v.trim()).filter(Boolean);
         
-        let assignedSerials = [];
-        let viewSerials = [];
-        if (user.role === 'viewer') {
-            if (Array.isArray(user.allowed_bases)) {
-                assignedSerials = user.allowed_bases;
-            } else if (typeof user.allowed_bases === 'string') {
-                try { assignedSerials = JSON.parse(user.allowed_bases); } catch(e) {}
-            }
-        } else {
-            assignedSerials = (userDevices || []).filter(d => Number(d.user_id) === Number(user.id)).map(d => d.serial);
-            viewSerials = (user.view_only_bases || []).filter(serial => !assignedSerials.includes(serial));
-        }
+        const {assignedSerials, viewSerials} = getUserDeviceAssignments(user, userDevices);
         
-        let assignedRovers = [];
-        if (Array.isArray(user.allowed_rovers)) {
-            assignedRovers = user.allowed_rovers;
-        } else if (typeof user.allowed_rovers === 'string') {
-            try { assignedRovers = JSON.parse(user.allowed_rovers); } catch(e) {}
-        }
+        const assignedRovers = parseUserAssignments(user.allowed_rovers);
 
         renderDeviceChecklist(assignedSerials, viewSerials);
         renderRoverChecklist(assignedRovers);
@@ -431,57 +470,13 @@ document.addEventListener('DOMContentLoaded', async () => {
         event.preventDefault();
         const userId = document.getElementById('user-id').value;
         const password = document.getElementById('password').value;
-        // === KIỂM TRA MẬT KHẨU TRƯỚC KHI GỬI ===
-        if (password) {
-            const errors = [];
-            if (password.length < 8) errors.push('Mật khẩu phải có ít nhất 8 ký tự');
-            if (!/[A-Z]/.test(password)) errors.push('Mật khẩu phải chứa ít nhất 1 chữ hoa');
-            if (!/[a-z]/.test(password)) errors.push('Mật khẩu phải chứa ít nhất 1 chữ thường');
-            if (!/\d/.test(password)) errors.push('Mật khẩu phải chứa ít nhất 1 chữ số');
-            if (!/[^a-zA-Z0-9]/.test(password)) errors.push('Mật khẩu phải chứa ít nhất 1 ký tự đặc biệt');
-            if (/[ "'`&()|<>]/.test(password)) errors.push('Mật khẩu không được chứa: khoảng trắng, ", \', `, &, (, ), |, <, >');
-            if (errors.length) {
-                window.CorsUI.showToast('warning', errors[0]);
-                return;
-            }
-        } else if (!userId) {
-            window.CorsUI.showToast('warning', 'Password is required for new users');
+        const passwordError = getUserPasswordError(password, userId);
+        if (passwordError) {
+            window.CorsUI.showToast('warning', passwordError);
             return;
         }
 
-        const canViewMobile = Boolean(canViewMobileBases?.checked);
-        const stationAccess = Array.from(document.querySelectorAll('.device-access-select')).filter(input => {
-            const serial = input.dataset.serial;
-            return canViewMobile || !isMobileBase(serial);
-        });
-        const checkedStations = Array.from(document.querySelectorAll('.device-checkbox:checked'))
-            .map(input => input.value)
-            .filter(serial => canViewMobile || !isMobileBase(serial));
-        const payload = {
-            username: document.getElementById('username').value.trim(),
-            full_name: document.getElementById('full_name').value.trim(),
-            role: document.getElementById('role').value || 'viewer',
-            is_active: document.getElementById('is_active').checked,
-            assigned_devices: stationAccess.filter(input => input.value === 'edit').map(input => input.dataset.serial),
-            allowed_bases: stationAccess.length ? [] : checkedStations,
-            view_only_bases: stationAccess.filter(input => input.value === 'view').map(input => input.dataset.serial),
-            allowed_rovers: Array.from(document.querySelectorAll('.rover-checkbox:checked')).map(input => input.value),
-        };
-        const canManageMobileBases = currentUser.role === 'admin' || (currentUser.role === 'coordinator' && Boolean(currentUser.can_view_mobile_bases));
-        if (canManageMobileBases) {
-            payload.can_view_mobile_bases = canViewMobile;
-        }
-        if (currentUser.role === 'admin') {
-            payload.can_view_rovers = document.getElementById('can_view_rovers').checked;
-            payload.can_create_rovers = document.getElementById('can_create_rovers').checked;
-            payload.can_create_users = document.getElementById('can_create_users')?.checked || false;
-            payload.extra_mountpoints = Array.from(document.querySelectorAll('.extra-mp-checkbox:checked')).map(input => input.value).join(';');
-        } else {
-            delete payload.assigned_devices;
-            delete payload.view_only_bases;
-            if (Number(userId) === Number(currentUser.id)) delete payload.allowed_bases;
-        }
-        if (password) payload.password = password;
+        const payload = createUserPayload(userId, password);
 
         const url = userId ? window.ApiRoutes.users.detail(userId) : window.ApiRoutes.users.list;
         const method = userId ? 'PUT' : 'POST';
