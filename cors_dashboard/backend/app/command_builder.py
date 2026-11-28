@@ -231,39 +231,40 @@ def normalize_gnss_options(options: dict | None) -> dict:
     }
 
 
-def build_ublox_output_config_command(gnss_options: dict | None = None, *, modern: bool = False) -> bytes:
-    opts = normalize_gnss_options(gnss_options)
-    constellations = opts["constellations"]
-    output_mode = opts["output_mode"]
-    msm_level = opts["msm_level"]
-    ports = opts["ports"]
-    diagnostics_enabled = output_mode != "rtcm_only"
-    entries: dict[int, int] = {}
-
+def _add_ublox_protocol_entries(entries, ports, diagnostics_enabled):
     for port in ports:
         protocol_keys = UBLOX_OUTPUT_PROTOCOL_KEYS[port]
         entries[protocol_keys["UBX"]] = 1
         entries[protocol_keys["NMEA"]] = 1 if diagnostics_enabled else 0
         entries[protocol_keys["RTCM3X"]] = 1
 
-    if modern:
-        for port in ports:
-            entries[{'UART1': 0x10520005, 'UART2': 0x10530005, 'USB': 0x10650001}[port]] = 1
-        # F9P 1.51 requires identical RTCM configuration on every emitting port.
-        for port, prefix in (('I2C',0x10720000),('UART1',0x10740000),('UART2',0x10760000),('USB',0x10780000),('SPI',0x107a0000)):
-            if port not in ports:
-                entries[prefix | 4] = 0
 
+def _add_modern_ublox_port_entries(entries, ports):
+    enabled_keys = {'UART1': 0x10520005, 'UART2': 0x10530005, 'USB': 0x10650001}
+    for port in ports:
+        entries[enabled_keys[port]] = 1
+    # F9P 1.51 requires identical RTCM configuration on every emitting port.
+    port_prefixes = (
+        ('I2C', 0x10720000), ('UART1', 0x10740000), ('UART2', 0x10760000),
+        ('USB', 0x10780000), ('SPI', 0x107a0000),
+    )
+    for port, prefix in port_prefixes:
+        if port not in ports:
+            entries[prefix | 4] = 0
+
+
+def _add_ublox_diagnostic_entries(entries, ports, diagnostics_enabled):
     for message, keys_by_port in UBLOX_NMEA_KEYS.items():
         enabled = diagnostics_enabled and message in {"GGA", "GSA", "GSV", "GST"}
         for port in ports:
             entries[keys_by_port[port]] = 1 if enabled else 0
-
     for keys_by_port in UBLOX_NAV_KEYS.values():
         for port in ports:
             entries[keys_by_port[port]] = 1 if diagnostics_enabled else 0
 
-    rtcm_enabled = {
+
+def _ublox_rtcm_enabled(constellations, msm_level):
+    return {
         "1005": True,
         "1074": msm_level in {4, "both"} and constellations["gps"],
         "1084": msm_level in {4, "both"} and constellations["glo"],
@@ -275,19 +276,16 @@ def build_ublox_output_config_command(gnss_options: dict | None = None, *, moder
         "1127": msm_level in {7, "both"} and constellations["bds"],
         "1230": constellations["glo"],
     }
+
+
+def _add_ublox_rtcm_entries(entries, ports, constellations, msm_level):
+    enabled_messages = _ublox_rtcm_enabled(constellations, msm_level)
     for message, keys_by_port in UBLOX_RTCM_KEYS.items():
         for port in ports:
-            entries[keys_by_port[port]] = 1 if rtcm_enabled.get(message, False) else 0
+            entries[keys_by_port[port]] = 1 if enabled_messages.get(message, False) else 0
 
-    command = _ubx_cfg_valset_u1(entries)
 
-    if modern:
-        return command
-
-    # Legacy CFG-MSG fallback must explicitly configure both MSM families.
-    # Otherwise a message enabled by an older setup (for example MSM7) keeps
-    # streaming after the user switches to MSM4, causing duplicate/conflicting
-    # observations on receivers that use CFG-MSG instead of VALSET.
+def _append_legacy_ublox_msm_commands(command, msm_level, constellations, ports):
     msm_ids = {
         4: {"gps": 0x4A, "glo": 0x54, "gal": 0x5E, "bds": 0x7C},
         7: {"gps": 0x4D, "glo": 0x57, "gal": 0x61, "bds": 0x7F},
@@ -298,6 +296,73 @@ def build_ublox_output_config_command(gnss_options: dict | None = None, *, moder
             enabled = level_enabled and constellations[constellation]
             command += _ubx_cfg_msg(0xF5, msg_id, ports if enabled else [], rate=1 if enabled else 0)
     return command
+
+
+def build_ublox_output_config_command(gnss_options: dict | None = None, *, modern: bool = False) -> bytes:
+    options = normalize_gnss_options(gnss_options)
+    constellations = options["constellations"]
+    msm_level = options["msm_level"]
+    ports = options["ports"]
+    diagnostics_enabled = options["output_mode"] != "rtcm_only"
+    entries: dict[int, int] = {}
+    _add_ublox_protocol_entries(entries, ports, diagnostics_enabled)
+    if modern:
+        _add_modern_ublox_port_entries(entries, ports)
+    _add_ublox_diagnostic_entries(entries, ports, diagnostics_enabled)
+    _add_ublox_rtcm_entries(entries, ports, constellations, msm_level)
+    command = _ubx_cfg_valset_u1(entries)
+    if modern:
+        return command
+    # Explicitly configure both MSM families for legacy CFG-MSG receivers.
+    return _append_legacy_ublox_msm_commands(command, msm_level, constellations, ports)
+
+
+def _extract_ublox_output_values(packet):
+    output = bytearray()
+    offset = 0
+    while offset < len(packet):
+        length = int.from_bytes(packet[offset + 4:offset + 6], "little")
+        if packet[offset + 2:offset + 4] == b'\x06\x8a':
+            output.extend(packet[offset + 10:offset + 6 + length])
+        offset += length + 8
+    return output
+
+
+def _ublox_verification_fields_and_keys():
+    fields = ['UBX', 'NMEA', 'RTCM3X']
+    message_keys = []
+    tables = (
+        ('NMEA ', UBLOX_NMEA_KEYS), ('UBX ', UBLOX_NAV_KEYS),
+        ('RTCM ', UBLOX_RTCM_KEYS),
+    )
+    for prefix, table in tables:
+        for name, keys in table.items():
+            fields.append(prefix + name.removeprefix('NAV_'))
+            message_keys.append(keys['UART1'])
+    return fields, message_keys
+
+
+def _ublox_verification_ports(message_keys, options, desired):
+    ports = []
+    expected_values = []
+    enabled_keys = {
+        'I2C': 0x10510003, 'UART1': 0x10520005, 'UART2': 0x10530005,
+        'USB': 0x10650001, 'SPI': 0x10640006,
+    }
+    port_specs = (
+        ('I2C', -1, 0x10720000), ('UART1', 0, 0x10740000),
+        ('UART2', 1, 0x10760000), ('USB', 2, 0x10780000),
+        ('SPI', 3, 0x107A0000),
+    )
+    for port, delta, protocol in port_specs:
+        keys = [protocol | suffix for suffix in (1, 2, 4)]
+        keys.extend(key + delta for key in message_keys)
+        keys.append(enabled_keys[port])
+        records = b''.join(key.to_bytes(4, 'little') + b'\0' for key in keys)
+        ports.append({'name': port, 'output_b64': base64.b64encode(records).decode('ascii')})
+        if port == options['ports'][0]:
+            expected_values = [desired[key] for key in keys[:-1]] + [1]
+    return ports, expected_values
 
 
 def build_ublox_verification_payload(config: dict, *, route_to_uart1: bool = False, receiver_profile: dict | None = None) -> dict:
@@ -311,7 +376,6 @@ def build_ublox_verification_payload(config: dict, *, route_to_uart1: bool = Fal
     coords = config.get("coords") or {}
     if not isinstance(coords, dict) or not all(key in coords for key in ("lat", "lon", "alt")):
         raise ValueError("Chưa có đủ tọa độ Fixed LLA đã lưu.")
-    # ESP32 routes USB/UART2 output requests to the GNSS UART1 connection.
     options = normalize_gnss_options(config.get("gnss_options"))
     if route_to_uart1:
         options["ports"] = ["UART1"]
@@ -322,37 +386,25 @@ def build_ublox_verification_payload(config: dict, *, route_to_uart1: bool = Fal
     )
     if receiver_profile and receiver_profile['modern']:
         packets[1] = build_ublox_output_config_command(options, modern=True)
-    output = bytearray()
-    offset = 0
-    while offset < len(packets[1]):
-        length = int.from_bytes(packets[1][offset + 4:offset + 6], "little")
-        if packets[1][offset + 2:offset + 4] == b'\x06\x8a':
-            output.extend(packets[1][offset + 10:offset + 6 + length])
-        offset += length + 8
-    desired = {int.from_bytes(output[i:i + 4], 'little'): output[i + 4] for i in range(0, len(output), 5)}
-    fields = ['UBX', 'NMEA', 'RTCM3X']
-    message_keys = []
-    for prefix, table in (('NMEA ', UBLOX_NMEA_KEYS), ('UBX ', UBLOX_NAV_KEYS), ('RTCM ', UBLOX_RTCM_KEYS)):
-        for name, keys in table.items():
-            fields.append(prefix + name.removeprefix('NAV_'))
-            message_keys.append(keys['UART1'])
-    inspection_ports = []
-    enabled_keys = {'I2C': 0x10510003, 'UART1': 0x10520005, 'UART2': 0x10530005, 'USB': 0x10650001, 'SPI': 0x10640006}
-    for port, delta, protocol in (('I2C', -1, 0x10720000), ('UART1', 0, 0x10740000),
-                                  ('UART2', 1, 0x10760000), ('USB', 2, 0x10780000), ('SPI', 3, 0x107A0000)):
-        keys = [protocol | suffix for suffix in (1, 2, 4)] + [key + delta for key in message_keys] + [enabled_keys[port]]
-        records = b''.join(key.to_bytes(4, 'little') + b'\0' for key in keys)
-        inspection_ports.append({'name': port, 'output_b64': base64.b64encode(records).decode('ascii')})
-        if port == options['ports'][0]:
-            expected_values = [desired[key] for key in keys[:-1]] + [1]
+    output = _extract_ublox_output_values(packets[1])
+    desired = {
+        int.from_bytes(output[index:index + 4], 'little'): output[index + 4]
+        for index in range(0, len(output), 5)
+    }
+    fields, message_keys = _ublox_verification_fields_and_keys()
+    inspection_ports, expected_values = _ublox_verification_ports(message_keys, options, desired)
     return {
         "tmode_valget": bool(receiver_profile and receiver_profile["modern"]),
         "receiver_profile": receiver_profile,
         "tmode_b64": base64.b64encode(packets[0][6:-2]).decode("ascii"),
         "output_b64": base64.b64encode(output).decode("ascii"),
-        "readback": {"fields": fields + ['PORT_ENABLED'], "expected": expected_values, "compare_ports": options['ports'], "ports": inspection_ports},
+        "readback": {
+            "fields": fields + ['PORT_ENABLED'],
+            "expected": expected_values,
+            "compare_ports": options['ports'],
+            "ports": inspection_ports,
+        },
     }
-
 
 def build_unicore_verification_payload(config: dict, *, current_port: bool = False) -> dict:
     if not isinstance(config, dict) or config.get("base_setup_method") != "FIXED_LLA":
