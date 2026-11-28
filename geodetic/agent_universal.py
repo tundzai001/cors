@@ -4443,256 +4443,233 @@ class GNSSReader(threading.Thread):
             buffer = remaining
         return buffer
 
+    def _reader_should_pause(self):
+        if self._pause_event.is_set():
+            time.sleep(0.5)
+            return True
+        if not is_remote_locked():
+            return False
+        if self._reader_error_count == 0:
+            self.log("WARNING", "Device is remotely locked, pausing GNSS reader")
+        time.sleep(1)
+        return True
+
+    def _refresh_reader_port(self, current_port, buffer):
+        available_ports = [port.device for port in serial.tools.list_ports.comports()]
+        if current_port in available_ports:
+            return current_port, True
+        self.log("WARNING", f"Port {current_port} disappeared! Attempting auto-redetection...")
+        chip_info = find_chip_robustly()
+        if not chip_info or not chip_info.get("port"):
+            self.log("ERROR", "Failed to find GNSS chip. Retrying in 5s...")
+            time.sleep(5)
+            return current_port, False
+        current_port = chip_info["port"]
+        self.port = current_port
+        self.baudrate = chip_info.get("baud", self.baudrate)
+        self.log("SUCCESS", f"Re-detected GNSS chip on NEW PORT: {current_port} @ {self.baudrate}")
+        self._reader_error_count = 0
+        buffer.clear()
+        return current_port, True
+
+    def _increase_reader_kernel_buffer(self, current_port):
+        try:
+            if IS_RASPBERRY_PI and self._reader_error_count == 0:
+                temp_ser = serial.Serial(current_port, self.baudrate, timeout=0.1)
+                try:
+                    temp_ser.set_buffer_size(rx_size=16384, tx_size=4096)
+                    self.log("DEBUG", f"Increased serial buffer size for {current_port}")
+                except AttributeError:
+                    pass
+                temp_ser.close()
+        except Exception as error:
+            self.log("DEBUG", f"Could not set buffer size: {error}")
+
+    def _inject_queued_rtcm(self, ser):
+        inject_count = 0
+        inject_bytes = 0
+        while not self.rtcm_inject_queue.empty():
+            try:
+                packet = self.rtcm_inject_queue.get_nowait()
+                if ser.write(packet) != len(packet):
+                    raise IOError("Incomplete RTCM correction write")
+                inject_count += 1
+                inject_bytes += len(packet)
+            except Empty:
+                break
+            except Exception as error:
+                self.log("WARNING", f"RTCM inject write error: {error}")
+                break
+        if inject_count == 0:
+            return
+        if not hasattr(self, "_inject_total"):
+            self._inject_total = 0
+            self._inject_bytes_total = 0
+            self._inject_last_log = 0
+        self._inject_total += inject_count
+        self._inject_bytes_total += inject_bytes
+        now = time.time()
+        if now - self._inject_last_log >= 30.0:
+            self.log("INFO", f"[RTCM INJECT] Written {self._inject_total} pkts / {self._inject_bytes_total}B to serial port")
+            self._inject_last_log = now
+
+    def _parse_reader_buffer_batch(self, buffer):
+        attempts = 0
+        while len(buffer) > 0 and attempts < 20:
+            old_length = len(buffer)
+            parsed_buffer = self._parse_buffer(buffer)
+            if parsed_buffer is not buffer:
+                buffer[:] = parsed_buffer
+            if len(buffer) >= old_length:
+                break
+            attempts += 1
+        return buffer
+
+    def _read_reader_batch(self, ser, buffer):
+        if ser.in_waiting <= 0:
+            return buffer
+        bytes_to_read = min(ser.in_waiting, 4096)
+        buffer.extend(ser.read(bytes_to_read))
+        self._consecutive_read_failures = 0
+        return self._parse_reader_buffer_batch(buffer)
+
+    def _trim_reader_buffer(self, buffer):
+        if len(buffer) <= 8192:
+            return buffer
+        self.log("WARNING", f"Buffer overflow ({len(buffer)} bytes) - trimming and resync")
+        tail = bytearray(buffer[-4096:])
+        marker_positions = []
+        for marker in (b"$", b"\xd3", b"\xb5\x62"):
+            position = tail.find(marker)
+            if position != -1:
+                marker_positions.append(position)
+        if marker_positions:
+            buffer[:] = tail[min(marker_positions):]
+        else:
+            buffer.clear()
+        self.buffer_overflows += 1
+        return buffer
+
+    def _log_reader_statistics(self, buffer):
+        current_time = time.time()
+        if current_time - self._last_stats_log > 30:
+            _ = self.get_statistics()
+            self._last_stats_log = current_time
+        self._log_parser_debug_if_due(current_time, len(buffer))
+
+    def _handle_reader_read_error(self, current_port, read_error, buffer):
+        self._consecutive_read_failures += 1
+        if self._consecutive_read_failures < 5:
+            time.sleep(0.1)
+            return False
+        current_time = time.time()
+        if current_time - self._last_error_log_time > 5:
+            self.log("WARNING", f"Read instability on {current_port}: {read_error}")
+            self._last_error_log_time = current_time
+        _mark_gnss_data_stale()
+        buffer.clear()
+        return True
+
+    def _handle_reader_parse_error(self, parse_error, buffer):
+        current_time = time.time()
+        if current_time - self._last_error_log_time > 10:
+            self.log("ERROR", f"Data parsing error: {str(parse_error)[:100]}")
+            self._last_error_log_time = current_time
+        buffer.clear()
+        self.parse_errors += 1
+        time.sleep(0.1)
+
+    def _read_reader_loop(self, ser, current_port, buffer):
+        while not self._stop_event.is_set():
+            if self._pause_event.is_set() or is_remote_locked():
+                break
+            try:
+                self._service_base_query(ser)
+                self._inject_queued_rtcm(ser)
+                buffer = self._read_reader_batch(ser, buffer)
+                buffer = self._trim_reader_buffer(buffer)
+                self._log_reader_statistics(buffer)
+                time.sleep(0.003)
+            except (serial.SerialException, OSError) as read_error:
+                if self._handle_reader_read_error(current_port, read_error, buffer):
+                    break
+            except Exception as parse_error:
+                self._handle_reader_parse_error(parse_error, buffer)
+
+    def _open_reader_connection(self, current_port, buffer):
+        with serial_port_lock:
+            with serial.Serial(
+                current_port,
+                self.baudrate,
+                timeout=1,
+                write_timeout=1
+            ) as ser:
+                buffer.clear()
+                self._consecutive_read_failures = 0
+                if self._reader_error_count > 0:
+                    self.log("SUCCESS", f"Reconnected to {current_port} after {self._reader_error_count} failed attempts")
+                else:
+                    self.log("SUCCESS", f"Connected to GNSS receiver on {current_port}")
+                self._reader_error_count = 0
+                self._read_reader_loop(ser, current_port, buffer)
+
+    def _handle_reader_connection_error(self, conn_error, current_port, buffer):
+        _telemetry_inc("reconnect", "serial")
+        self._reader_error_count += 1
+        wait_time = min(5 * self._reader_error_count, 30)
+        current_time = time.time()
+        should_log = (
+            self._reader_error_count == 1
+            or self._reader_error_count <= 3
+            or self._reader_error_count % 10 == 0
+            or current_time - self._last_error_log_time > 30
+        )
+        if should_log:
+            if self._reader_error_count == 1:
+                if "FileNotFoundError" in str(type(conn_error).__name__):
+                    self.log("ERROR", f"Port {current_port} disappeared (device unplugged?)")
+                else:
+                    self.log("WARNING", f"Connection lost on {current_port}: {str(conn_error)[:100]}")
+            elif self._reader_error_count <= 3:
+                self.log("INFO", f"Reconnection attempt #{self._reader_error_count} in {wait_time}s...")
+            else:
+                self.log("WARNING", f"Persistent failure (attempt {self._reader_error_count}). Next retry in {wait_time}s")
+            self._last_error_log_time = current_time
+        buffer.clear()
+        _mark_gnss_data_stale()
+        time.sleep(wait_time)
+
+    def _handle_reader_critical_error(self, critical_error, buffer):
+        self._reader_error_count += 1
+        self.log("ERROR", f"Critical error in GNSSReader: {critical_error}", exc_info=True)
+        buffer.clear()
+        _mark_gnss_data_stale()
+        time.sleep(min(5 * self._reader_error_count, 30))
+
     def run(self):
         if not self.port:
             self.log("ERROR", "GNSSReader: No serial port configured. Thread exiting.")
             return
-        
         self.log("SUCCESS", f"GNSSReader thread started for {self.port}")
-        
-        # Connection management
-        error_count = 0
-        last_error_log_time = 0
-        consecutive_read_failures = 0
+        self._reader_error_count = 0
+        self._last_error_log_time = 0
+        self._consecutive_read_failures = 0
+        self._last_stats_log = time.time()
         buffer = bytearray()
         current_port = self.port
-        last_stats_log = time.time()
-        
         while not self._stop_event.is_set():
             try:
-                # ==================== CHECK PAUSE/LOCK ====================
-                if self._pause_event.is_set():
-                    time.sleep(0.5)
+                if self._reader_should_pause():
                     continue
-                
-                if is_remote_locked():
-                    if error_count == 0:
-                        self.log("WARNING", "Device is remotely locked, pausing GNSS reader")
-                    time.sleep(1)
+                current_port, port_ready = self._refresh_reader_port(current_port, buffer)
+                if not port_ready:
                     continue
-                
-                # ==================== CHECK PORT EXISTENCE ====================
-                available_ports = [p.device for p in serial.tools.list_ports.comports()]
-                
-                if current_port not in available_ports:
-                    self.log("WARNING", f"Port {current_port} disappeared! Attempting auto-redetection...")
-                    
-                    # Auto-detect new port
-                    new_chip_info = find_chip_robustly()
-                    
-                    if new_chip_info and new_chip_info.get("port"):
-                        current_port = new_chip_info["port"]
-                        self.port = current_port
-                        self.baudrate = new_chip_info.get("baud", self.baudrate)
-                        
-                        self.log("SUCCESS", f"Re-detected GNSS chip on NEW PORT: {current_port} @ {self.baudrate}")
-                        error_count = 0
-                        buffer.clear()
-                    else:
-                        self.log("ERROR", "Failed to find GNSS chip. Retrying in 5s...")
-                        time.sleep(5)
-                        continue
-                
-                # ==================== INCREASE KERNEL BUFFER (RASPBERRY PI) ====================
-                try:
-                    if IS_RASPBERRY_PI and error_count == 0:
-                        temp_ser = serial.Serial(current_port, self.baudrate, timeout=0.1)
-                        try:
-                            temp_ser.set_buffer_size(rx_size=16384, tx_size=4096)
-                            self.log("DEBUG", f"Increased serial buffer size for {current_port}")
-                        except AttributeError:
-                            pass  # Method not available in this pyserial version
-                        temp_ser.close()
-                except Exception as e:
-                    self.log("DEBUG", f"Could not set buffer size: {e}")
-                
-                # ==================== OPEN SERIAL PORT ====================
-                with serial_port_lock:
-                    with serial.Serial(
-                        current_port,
-                        self.baudrate,
-                        timeout=1,
-                        write_timeout=1
-                    ) as ser:
-                        
-                        # Reset state on successful connection
-                        buffer.clear()
-                        consecutive_read_failures = 0
-                        
-                        # Log connection status
-                        if error_count > 0:
-                            self.log("SUCCESS", f"Reconnected to {current_port} after {error_count} failed attempts")
-                        else:
-                            self.log("SUCCESS", f"Connected to GNSS receiver on {current_port}")
-                        
-                        error_count = 0
-                        
-                        # ==================== MAIN READ LOOP ====================
-                        while not self._stop_event.is_set():
-                            # Check pause/lock status
-                            if self._pause_event.is_set():
-                                break
-                            
-                            if is_remote_locked():
-                                break
-                            
-                            try:
-                                self._service_base_query(ser)
-                                # === INJECT RTCM CORRECTIONS TO CHIP ===
-                                inject_count = 0
-                                inject_bytes = 0
-                                while not self.rtcm_inject_queue.empty():
-                                    try:
-                                        rtcm_pkt = self.rtcm_inject_queue.get_nowait()
-                                        if ser.write(rtcm_pkt) != len(rtcm_pkt):
-                                            raise IOError("Incomplete RTCM correction write")
-                                        inject_count += 1
-                                        inject_bytes += len(rtcm_pkt)
-                                    except Empty:
-                                        break
-                                    except Exception as inj_err:
-                                        self.log("WARNING", f"RTCM inject write error: {inj_err}")
-                                        break
-                                
-                                if inject_count > 0:
-                                    if not hasattr(self, '_inject_total'):
-                                        self._inject_total = 0
-                                        self._inject_bytes_total = 0
-                                        self._inject_last_log = 0
-                                    self._inject_total += inject_count
-                                    self._inject_bytes_total += inject_bytes
-                                    now_inj = time.time()
-                                    if now_inj - self._inject_last_log >= 30.0:
-                                        self.log("INFO", f"[RTCM INJECT] Written {self._inject_total} pkts / {self._inject_bytes_total}B to serial port")
-                                        self._inject_last_log = now_inj
-                                
-                                # === READ IN BATCHES (NOT BYTE-BY-BYTE) ===
-                                if ser.in_waiting > 0:
-                                    # Read up to 4KB at once for better performance
-                                    bytes_to_read = min(ser.in_waiting, 4096)
-                                    new_data = ser.read(bytes_to_read)
-                                    
-                                    buffer.extend(new_data)
-                                    consecutive_read_failures = 0
-                                    
-                                    # === MULTI-PASS PARSING ===
-                                    # Parse multiple times in one cycle to prevent buffer overflow
-                                    parse_attempts = 0
-                                    while len(buffer) > 0 and parse_attempts < 20:
-                                        old_len = len(buffer)
-                                        buffer = self._parse_buffer(buffer)
-                                        
-                                        # If buffer didn't shrink → stop parsing
-                                        if len(buffer) >= old_len:
-                                            break
-                                        parse_attempts += 1
-                                
-                                # Prevent buffer overflow with best-effort resync (avoid dropping everything).
-                                if len(buffer) > 8192:
-                                    self.log("WARNING", f"Buffer overflow ({len(buffer)} bytes) - trimming and resync")
-                                    tail = bytearray(buffer[-4096:])
-
-                                    marker_positions = []
-                                    pos_nmea = tail.find(b'$')
-                                    if pos_nmea != -1:
-                                        marker_positions.append(pos_nmea)
-                                    pos_rtcm = tail.find(0xD3)
-                                    if pos_rtcm != -1:
-                                        marker_positions.append(pos_rtcm)
-                                    pos_ubx = tail.find(b'\xB5\x62')
-                                    if pos_ubx != -1:
-                                        marker_positions.append(pos_ubx)
-
-                                    if marker_positions:
-                                        buffer = tail[min(marker_positions):]
-                                    else:
-                                        buffer.clear()
-
-                                    self.buffer_overflows += 1
-                                
-                                # === LOG STATISTICS PERIODICALLY ===
-                                current_time = time.time()
-                                if current_time - last_stats_log > 30:  # Every 30 seconds
-                                    _ = self.get_statistics()
-                                    #self.log("INFO", f"GNSS Stats: RTCM={stats['rtcm_packets']}, NMEA={stats['nmea_packets']}, Errors={stats['parse_errors']}, Overflows={stats['buffer_overflows']}")
-                                    last_stats_log = current_time
-                                self._log_parser_debug_if_due(current_time, len(buffer))
-                                
-                                # Reduce CPU usage (3ms sleep = ~200 cycles/sec)
-                                time.sleep(0.003)
-                            
-                            except (serial.SerialException, OSError) as read_error:
-                                consecutive_read_failures += 1
-                                
-                                # Only log after multiple failures
-                                if consecutive_read_failures >= 5:
-                                    current_time = time.time()
-                                    if current_time - last_error_log_time > 5:
-                                        self.log("WARNING", f"Read instability on {current_port}: {read_error}")
-                                        last_error_log_time = current_time
-                                    _mark_gnss_data_stale()
-                                    
-                                    # Break out of read loop to reconnect
-                                    buffer.clear()
-                                    break
-                                
-                                time.sleep(0.1)
-                            
-                            except Exception as parse_error:
-                                # Log parsing errors occasionally
-                                current_time = time.time()
-                                if current_time - last_error_log_time > 10:
-                                    self.log("ERROR", f"Data parsing error: {str(parse_error)[:100]}")
-                                    last_error_log_time = current_time
-                                
-                                # Clear buffer on parse error
-                                buffer.clear()
-                                self.parse_errors += 1
-                                time.sleep(0.1)
-            
-            # ==================== CONNECTION ERROR HANDLING ====================
+                self._increase_reader_kernel_buffer(current_port)
+                self._open_reader_connection(current_port, buffer)
             except (serial.SerialException, OSError, FileNotFoundError) as conn_error:
-                _telemetry_inc("reconnect", "serial")
-                error_count += 1
-                
-                # Exponential backoff (capped at 30 seconds)
-                wait_time = min(5 * error_count, 30)
-                
-                # Throttled logging
-                current_time = time.time()
-                should_log = (
-                    error_count == 1 or  # First error
-                    error_count <= 3 or  # First few retries
-                    error_count % 10 == 0 or  # Every 10th retry
-                    (current_time - last_error_log_time) > 30  # Every 30 seconds
-                )
-                
-                if should_log:
-                    if error_count == 1:
-                        if "FileNotFoundError" in str(type(conn_error).__name__):
-                            self.log("ERROR", f"Port {current_port} disappeared (device unplugged?)")
-                        else:
-                            self.log("WARNING", f"Connection lost on {current_port}: {str(conn_error)[:100]}")
-                    elif error_count <= 3:
-                        self.log("INFO", f"Reconnection attempt #{error_count} in {wait_time}s...")
-                    else:
-                        self.log("WARNING", f"Persistent failure (attempt {error_count}). Next retry in {wait_time}s")
-                    
-                    last_error_log_time = current_time
-                
-                # Clear buffer and wait before retry
-                buffer.clear()
-                _mark_gnss_data_stale()
-                time.sleep(wait_time)
-            
+                self._handle_reader_connection_error(conn_error, current_port, buffer)
             except Exception as critical_error:
-                error_count += 1
-                self.log("ERROR", f"Critical error in GNSSReader: {critical_error}", exc_info=True)
-                buffer.clear()
-                _mark_gnss_data_stale()
-                time.sleep(min(5 * error_count, 30))
-        
-        # ==================== CLEANUP ====================
+                self._handle_reader_critical_error(critical_error, buffer)
         self.log("INFO", f"GNSSReader thread stopped. Final statistics: {self.get_statistics()}")
 
 def _base_ubx_payload(packet, key):
