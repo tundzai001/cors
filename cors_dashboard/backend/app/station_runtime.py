@@ -177,33 +177,35 @@ def _compact_status_payload(payload: Any) -> Optional[dict]:
     return compact
 
 
-async def enqueue_ui_broadcast(message: dict) -> None:
-    if isinstance(message, dict) and message.get("type") == "status_update":
-        data = message.get("data") or {}
-        serial = str(message.get("serial") or data.get("serial") or "").strip()
-        if serial:
-            async with pending_ui_status_lock:
-                if (
-                    message.get("_drop_if_device_missing")
-                    and mqtt_handler.device_metadata_is_missing(serial)
-                ):
-                    return
-                previous_message = pending_ui_status_updates.get(serial) or {}
-                previous_data = previous_message.get("data") or {}
-                revision = int(data.get("status_revision") or 0)
-                previous_revision = int(previous_data.get("status_revision") or 0)
-                received_at = float(data.get("server_received_at") or data.get("timestamp") or 0)
-                previous_received_at = float(
-                    previous_data.get("server_received_at") or previous_data.get("timestamp") or 0
-                )
-                if previous_message and revision and previous_revision:
-                    if revision < previous_revision:
-                        return
-                    if revision == previous_revision and received_at <= previous_received_at:
-                        return
-                pending_ui_status_updates[serial] = message
-                pending_ui_status_event.set()
-            return
+async def _enqueue_pending_status_update(message: dict) -> bool:
+    if not isinstance(message, dict) or message.get("type") != "status_update":
+        return False
+    data = message.get("data") or {}
+    serial = str(message.get("serial") or data.get("serial") or "").strip()
+    if not serial:
+        return False
+    async with pending_ui_status_lock:
+        if message.get("_drop_if_device_missing") and mqtt_handler.device_metadata_is_missing(serial):
+            return True
+        previous_message = pending_ui_status_updates.get(serial) or {}
+        previous_data = previous_message.get("data") or {}
+        revision = int(data.get("status_revision") or 0)
+        previous_revision = int(previous_data.get("status_revision") or 0)
+        received_at = float(data.get("server_received_at") or data.get("timestamp") or 0)
+        previous_received_at = float(
+            previous_data.get("server_received_at") or previous_data.get("timestamp") or 0
+        )
+        if previous_message and revision and previous_revision:
+            if revision < previous_revision:
+                return True
+            if revision == previous_revision and received_at <= previous_received_at:
+                return True
+        pending_ui_status_updates[serial] = message
+        pending_ui_status_event.set()
+    return True
+
+
+def _put_ui_broadcast_with_backpressure(message):
     try:
         ui_broadcast_queue.put_nowait(message)
     except asyncio.QueueFull:
@@ -218,6 +220,12 @@ async def enqueue_ui_broadcast(message: dict) -> None:
             ui_broadcast_queue.put_nowait(message)
         except Exception:
             pass
+
+
+async def enqueue_ui_broadcast(message: dict) -> None:
+    if await _enqueue_pending_status_update(message):
+        return
+    _put_ui_broadcast_with_backpressure(message)
 
 
 async def ui_broadcast_worker_task():

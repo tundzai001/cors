@@ -201,174 +201,148 @@ def lookup_coords(name: str, code_name: Optional[str] = None) -> tuple[Optional[
     return (None, None)
 
 
+def _province_seed_objects(province):
+    province_code = str(province.get("Code", "")).strip()
+    if not province_code:
+        return None, [], []
+    province_name = province.get("Name", "")
+    lat, lon = lookup_coords(province_name, province.get("CodeName"))
+    province_obj = models.Province(
+        code=province_code, name=province_name, name_en=province.get("NameEn"),
+        full_name=province.get("FullName", ""), full_name_en=province.get("FullNameEn"),
+        code_name=province.get("CodeName"), latitude=lat, longitude=lon,
+    )
+    districts, wards = [], []
+    for ward in (province.get("Wards") or province.get("Ward") or []):
+        ward_code = str(ward.get("Code", "")).strip()
+        if not ward_code:
+            continue
+        ward_name = ward.get("Name", "")
+        ward_lat, ward_lon = lookup_coords(ward_name, ward.get("CodeName"))
+        wards.append(models.Ward(
+            code=ward_code, name=ward_name, name_en=ward.get("NameEn"),
+            full_name=ward.get("FullName", ""), full_name_en=ward.get("FullNameEn"),
+            code_name=ward.get("CodeName"), province_code=province_code,
+            latitude=ward_lat, longitude=ward_lon, postal_code=ward.get("PostalCode", ""),
+        ))
+    for district in (province.get("District") or []):
+        district_code = str(district.get("Code", "")).strip()
+        if not district_code:
+            continue
+        district_name = district.get("Name", "")
+        district_lat, district_lon = lookup_coords(district_name, district.get("CodeName"))
+        districts.append(models.District(
+            code=district_code, name=district_name, name_en=district.get("NameEn"),
+            full_name=district.get("FullName", ""), full_name_en=district.get("FullNameEn"),
+            code_name=district.get("CodeName"), province_code=province_code,
+            latitude=district_lat, longitude=district_lon,
+        ))
+        for ward in (district.get("Ward") or []):
+            ward_code = str(ward.get("Code", "")).strip()
+            if not ward_code:
+                continue
+            wards.append(models.Ward(
+                code=ward_code, name=ward.get("Name", ""), name_en=ward.get("NameEn"),
+                full_name=ward.get("FullName", ""), full_name_en=ward.get("FullNameEn"),
+                code_name=ward.get("CodeName"), district_code=district_code,
+                province_code=province_code, latitude=None, longitude=None,
+            ))
+    return province_obj, districts, wards
+
+
+def _build_vietnam_seed_objects(units):
+    provinces, districts, wards = [], [], []
+    for unit in units:
+        province, unit_districts, unit_wards = _province_seed_objects(unit)
+        if province:
+            provinces.append(province)
+        districts.extend(unit_districts)
+        wards.extend(unit_wards)
+    return provinces, districts, wards
+
+
+async def _add_vietnam_seed_reference_rows(db):
+    regions = [
+        (1, 'Đông Bắc Bộ', 'Northeast', 'dong_bac_bo', 'northest'),
+        (2, 'Tây Bắc Bộ', 'Northwest', 'tay_bac_bo', 'northwest'),
+        (3, 'Đồng bằng sông Hồng', 'Red River Delta', 'dong_bang_song_hong', 'red_river_delta'),
+        (4, 'Bắc Trung Bộ', 'North Central Coast', 'bac_trung_bo', 'north_central_coast'),
+        (5, 'Duyên hải Nam Trung Bộ', 'South Central Coast', 'duyen_hai_nam_trung_bo', 'south_central_coast'),
+        (6, 'Tây Nguyên', 'Central Highlands', 'tay_nguyen', 'central_highlands'),
+        (7, 'Đông Nam Bộ', 'Southeast', 'dong_nam_bo', 'southeast'),
+        (8, 'Đồng bằng sông Cửu Long', 'Mekong River Delta', 'dong_bang_song_cuu_long', 'southwest'),
+    ]
+    for region_id, name, name_en, code_name, code_name_en in regions:
+        db.add(models.AdministrativeRegion(
+            id=region_id, name=name, name_en=name_en, code_name=code_name, code_name_en=code_name_en
+        ))
+    unit_types = [
+        (1, 'Thành phố trực thuộc trung ương', 'Municipality', 'Thành phố', 'City', 'thanh_pho_truc_thuoc_trung_uong', 'municipality'),
+        (2, 'Tỉnh', 'Province', 'Tỉnh', 'Province', 'tinh', 'province'),
+        (3, 'Quận', 'District', 'Quận', 'District', 'quan', 'district'),
+        (4, 'Huyện', 'District', 'Huyện', 'District', 'huyen', 'district'),
+        (5, 'Thị xã', 'Town', 'Thị xã', 'Town', 'thi_xa', 'town'),
+        (6, 'Thành phố thuộc tỉnh', 'Provincial City', 'Thành phố', 'City', 'thanh_pho_thuoc_tinh', 'city'),
+        (7, 'Phường', 'Ward', 'Phường', 'Ward', 'phuong', 'ward'),
+        (8, 'Xã', 'Commune', 'Xã', 'Commune', 'xa', 'commune'),
+        (9, 'Thị trấn', 'Township', 'Thị trấn', 'Township', 'thi_tran', 'township'),
+    ]
+    for unit_id, full_name, full_name_en, short_name, short_name_en, code_name, code_name_en in unit_types:
+        db.add(models.AdministrativeUnit(
+            id=unit_id, full_name=full_name, full_name_en=full_name_en,
+            short_name=short_name, short_name_en=short_name_en, code_name=code_name, code_name_en=code_name_en,
+        ))
+    await db.flush()
+
+
+async def _flush_seed_batches(db, objects):
+    for offset in range(0, len(objects), 1000):
+        db.add_all(objects[offset:offset + 1000])
+        await db.flush()
+
+
+async def _prepare_vietnam_seed(db, force):
+    result = await db.execute(select(func.count(models.Province.code)))
+    province_count = result.scalar() or 0
+    if province_count >= 34 and not force:
+        wards_result = await db.execute(select(func.count(models.Ward.code)))
+        return None, {
+            "provinces": province_count, "districts": 0,
+            "wards": wards_result.scalar() or 0, "already_seeded": True,
+        }
+    if province_count > 0:
+        for model in (models.Ward, models.District, models.Province, models.AdministrativeUnit, models.AdministrativeRegion):
+            await db.execute(delete(model))
+        await db.flush()
+    if not os.path.exists(UNITS_JSON_PATH):
+        logger.warning("%s not found at %s", VIETNAM_UNITS_FILENAME, UNITS_JSON_PATH)
+        return None, {"provinces": 0, "districts": 0, "wards": 0}
+    units = json.loads(await asyncio.to_thread(Path(UNITS_JSON_PATH).read_text, encoding="utf-8"))
+    return units, None
+
+
 async def seed_vietnam_provinces(db: AsyncSession, force: bool = False) -> dict[str, Any]:
     """Seed the bundled current two-tier dataset; legacy names stay versioned separately."""
     try:
-        # Check existing count
-        res = await db.execute(select(func.count(models.Province.code)))
-        prov_count = res.scalar() or 0
-        if prov_count >= 34 and not force:
-            res_w = await db.execute(select(func.count(models.Ward.code)))
-            return {
-                "provinces": prov_count,
-                "districts": 0,
-                "wards": res_w.scalar() or 0,
-                "already_seeded": True
-            }
-
-        # Clear outdated data if re-seeding
-        if prov_count > 0:
-            await db.execute(delete(models.Ward))
-            await db.execute(delete(models.District))
-            await db.execute(delete(models.Province))
-            await db.execute(delete(models.AdministrativeUnit))
-            await db.execute(delete(models.AdministrativeRegion))
-            await db.flush()
-
-        if not os.path.exists(UNITS_JSON_PATH):
-            logger.warning("%s not found at %s", VIETNAM_UNITS_FILENAME, UNITS_JSON_PATH)
-            return {"provinces": 0, "districts": 0, "wards": 0}
-
-        units = json.loads(await asyncio.to_thread(Path(UNITS_JSON_PATH).read_text, encoding="utf-8"))
-
-        # 1. Regions
-        reg_data = [
-            (1, 'Đông Bắc Bộ', 'Northeast', 'dong_bac_bo', 'northest'),
-            (2, 'Tây Bắc Bộ', 'Northwest', 'tay_bac_bo', 'northwest'),
-            (3, 'Đồng bằng sông Hồng', 'Red River Delta', 'dong_bang_song_hong', 'red_river_delta'),
-            (4, 'Bắc Trung Bộ', 'North Central Coast', 'bac_trung_bo', 'north_central_coast'),
-            (5, 'Duyên hải Nam Trung Bộ', 'South Central Coast', 'duyen_hai_nam_trung_bo', 'south_central_coast'),
-            (6, 'Tây Nguyên', 'Central Highlands', 'tay_nguyen', 'central_highlands'),
-            (7, 'Đông Nam Bộ', 'Southeast', 'dong_nam_bo', 'southeast'),
-            (8, 'Đồng bằng sông Cửu Long', 'Mekong River Delta', 'dong_bang_song_cuu_long', 'southwest'),
-        ]
-        for rid, name, name_en, code_name, code_name_en in reg_data:
-            db.add(models.AdministrativeRegion(
-                id=rid, name=name, name_en=name_en, code_name=code_name, code_name_en=code_name_en
-            ))
-
-        # 2. Administrative unit types
-        unit_data = [
-            (1, 'Thành phố trực thuộc trung ương', 'Municipality', 'Thành phố', 'City', 'thanh_pho_truc_thuoc_trung_uong', 'municipality'),
-            (2, 'Tỉnh', 'Province', 'Tỉnh', 'Province', 'tinh', 'province'),
-            (3, 'Quận', 'District', 'Quận', 'District', 'quan', 'district'),
-            (4, 'Huyện', 'District', 'Huyện', 'District', 'huyen', 'district'),
-            (5, 'Thị xã', 'Town', 'Thị xã', 'Town', 'thi_xa', 'town'),
-            (6, 'Thành phố thuộc tỉnh', 'Provincial City', 'Thành phố', 'City', 'thanh_pho_thuoc_tinh', 'city'),
-            (7, 'Phường', 'Ward', 'Phường', 'Ward', 'phuong', 'ward'),
-            (8, 'Xã', 'Commune', 'Xã', 'Commune', 'xa', 'commune'),
-            (9, 'Thị trấn', 'Township', 'Thị trấn', 'Township', 'thi_tran', 'township'),
-        ]
-        for uid, fn, fne, sn, sne, cn, cne in unit_data:
-            db.add(models.AdministrativeUnit(
-                id=uid, full_name=fn, full_name_en=fne, short_name=sn, short_name_en=sne, code_name=cn, code_name_en=cne
-            ))
-
+        units, early_result = await _prepare_vietnam_seed(db, force)
+        if early_result is not None:
+            return early_result
+        await _add_vietnam_seed_reference_rows(db)
+        provinces, districts, wards = _build_vietnam_seed_objects(units)
+        db.add_all(provinces)
         await db.flush()
-
-        prov_objs = []
-        district_objs = []
-        ward_objs = []
-
-        for p in units:
-            p_code = str(p.get("Code", "")).strip()
-            if not p_code:
-                continue
-            p_name = p.get("Name", "")
-            p_lat, p_lon = lookup_coords(p_name, p.get("CodeName"))
-            prov_objs.append(models.Province(
-                code=p_code,
-                name=p_name,
-                name_en=p.get("NameEn"),
-                full_name=p.get("FullName", ""),
-                full_name_en=p.get("FullNameEn"),
-                code_name=p.get("CodeName"),
-                latitude=p_lat,
-                longitude=p_lon,
-            ))
-
-            # Direct wards (34-province model)
-            for w in (p.get("Wards") or p.get("Ward") or []):
-                w_code = str(w.get("Code", "")).strip()
-                if not w_code:
-                    continue
-                w_name = w.get("Name", "")
-                w_lat, w_lon = lookup_coords(w_name, w.get("CodeName"))
-                ward_objs.append(models.Ward(
-                    code=w_code,
-                    name=w_name,
-                    name_en=w.get("NameEn"),
-                    full_name=w.get("FullName", ""),
-                    full_name_en=w.get("FullNameEn"),
-                    code_name=w.get("CodeName"),
-                    province_code=p_code,
-                    latitude=w_lat,
-                    longitude=w_lon,
-                    postal_code=w.get("PostalCode", ""),
-                ))
-
-            # Nested districts and wards (if 3-tier model)
-            for d in (p.get("District") or []):
-                d_code = str(d.get("Code", "")).strip()
-                if not d_code:
-                    continue
-                d_name = d.get("Name", "")
-                d_lat, d_lon = lookup_coords(d_name, d.get("CodeName"))
-                district_objs.append(models.District(
-                    code=d_code,
-                    name=d_name,
-                    name_en=d.get("NameEn"),
-                    full_name=d.get("FullName", ""),
-                    full_name_en=d.get("FullNameEn"),
-                    code_name=d.get("CodeName"),
-                    province_code=p_code,
-                    latitude=d_lat,
-                    longitude=d_lon,
-                ))
-
-                for w in (d.get("Ward") or []):
-                    w_code = str(w.get("Code", "")).strip()
-                    if not w_code:
-                        continue
-                    ward_objs.append(models.Ward(
-                        code=w_code,
-                        name=w.get("Name", ""),
-                        name_en=w.get("NameEn"),
-                        full_name=w.get("FullName", ""),
-                        full_name_en=w.get("FullNameEn"),
-                        code_name=w.get("CodeName"),
-                        district_code=d_code,
-                        province_code=p_code,
-                        latitude=None,
-                        longitude=None,
-                    ))
-
-        db.add_all(prov_objs)
-        await db.flush()
-
-        # Batch insert districts and wards to avoid excessive memory
-        batch_size = 1000
-        for i in range(0, len(district_objs), batch_size):
-            db.add_all(district_objs[i:i + batch_size])
-            await db.flush()
-
-        for i in range(0, len(ward_objs), batch_size):
-            db.add_all(ward_objs[i:i + batch_size])
-            await db.flush()
-
+        await _flush_seed_batches(db, districts)
+        await _flush_seed_batches(db, wards)
         db.add(models.VNProvincesMetadata(
-            dataset_version="v5.2.0",
-            latest_decree="388/NQ-UBTVQH16",
-            generated_at="2026-10-14T16:00:00Z"
+            dataset_version="v5.2.0", latest_decree="388/NQ-UBTVQH16",
+            generated_at="2026-10-14T16:00:00Z",
         ))
         await db.commit()
         logger.info("Successfully seeded %d provinces, %d districts, and %d wards into database.",
-                    len(prov_objs), len(district_objs), len(ward_objs))
+                    len(provinces), len(districts), len(wards))
         return {
-            "provinces": len(prov_objs),
-            "districts": len(district_objs),
-            "wards": len(ward_objs),
-            "already_seeded": False
+            "provinces": len(provinces), "districts": len(districts),
+            "wards": len(wards), "already_seeded": False,
         }
     except Exception as exc:
         await db.rollback()

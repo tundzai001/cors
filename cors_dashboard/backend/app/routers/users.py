@@ -268,13 +268,7 @@ async def rename_device_serial(
     
     return {"status": "success", "new_serial": request.new_serial}
 
-@router.post("/api/users", response_model=schemas.UserResponse, responses={400: {"description": "Bad Request"}, 403: {"description": "Forbidden"}})
-async def create_user(
-    user_data: schemas.UserCreate,
-    auth_db: AsyncSession = Depends(get_auth_db),
-    devices_db: AsyncSession = Depends(get_db),
-    current_user: models.User = Depends(auth.require_permission(auth.Permission.MANAGE_USERS))):
-    
+async def _validate_user_create_scope(user_data, devices_db, current_user):
     if current_user.role != 'admin' and user_data.role != 'viewer':
         raise HTTPException(status_code=403, detail="Chỉ admin mới được tạo tài khoản khác ngoài Viewer")
     if current_user.role == 'coordinator':
@@ -283,23 +277,20 @@ async def create_user(
         if not requested.issubset(visible):
             raise HTTPException(status_code=403, detail="Chỉ được cấp trạm trong phạm vi của bạn")
 
-    existing = await crud.get_user_by_username(auth_db, username=user_data.username)
-    if existing:
-        raise HTTPException(status_code=400, detail="Username already exists")
+
+async def _hash_new_user_password(password):
     try:
-        # Dòng này có thể ném ra lỗi ValueError
-        hashed_password = await auth.get_password_hash(user_data.password)
-    except ValueError as e:
-        # Nếu có lỗi từ chính sách mật khẩu, trả về lỗi 400 với thông điệp cụ thể
-        raise HTTPException(status_code=400, detail=str(e))
-    # -----------------------------------------------------------
-        
-    parent_id = current_user.id if current_user.role != 'admin' else None
-    new_user = await crud.create_user(
-        auth_db, 
-        username=user_data.username, 
+        return await auth.get_password_hash(password)
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail=str(error))
+
+
+async def _create_user_record(auth_db, user_data, current_user, hashed_password):
+    return await crud.create_user(
+        auth_db,
+        username=user_data.username,
         hashed_password=hashed_password,
-        role=user_data.role, 
+        role=user_data.role,
         full_name=user_data.full_name,
         is_active=user_data.is_active,
         can_view_rovers=user_data.can_view_rovers if current_user.role == 'admin' else False,
@@ -309,23 +300,40 @@ async def create_user(
             current_user.role == 'admin' or (current_user.role == 'coordinator' and getattr(current_user, 'can_view_mobile_bases', False))
         ) else False,
         extra_mountpoints=user_data.extra_mountpoints if current_user.role == 'admin' else None,
-        parent_id=parent_id,
+        parent_id=current_user.id if current_user.role != 'admin' else None,
         allowed_bases=user_data.allowed_bases,
         view_only_bases=user_data.view_only_bases if current_user.role == 'admin' and user_data.role == 'coordinator' else None,
-        allowed_rovers=user_data.allowed_rovers
+        allowed_rovers=user_data.allowed_rovers,
     )
-    
+
+
+async def _assign_user_devices(auth_db, devices_db, user_data, new_user):
+    if not user_data.assigned_devices or new_user.role != 'coordinator':
+        return
     previous_owners = set()
-    if user_data.assigned_devices:
-        if new_user.role == 'coordinator':
-            for serial in user_data.assigned_devices:
-                device = await crud.get_device_by_serial(devices_db, serial)
-                if device:
-                    if device.user_id is not None:
-                        previous_owners.add(device.user_id)
-                    device.user_id = new_user.id
-            await devices_db.commit()
-            await _notify_station_scope_changed(auth_db, previous_owners)
+    for serial in user_data.assigned_devices:
+        device = await crud.get_device_by_serial(devices_db, serial)
+        if device:
+            if device.user_id is not None:
+                previous_owners.add(device.user_id)
+            device.user_id = new_user.id
+    await devices_db.commit()
+    await _notify_station_scope_changed(auth_db, previous_owners)
+
+
+@router.post("/api/users", response_model=schemas.UserResponse, responses={400: {"description": "Bad Request"}, 403: {"description": "Forbidden"}})
+async def create_user(
+    user_data: schemas.UserCreate,
+    auth_db: AsyncSession = Depends(get_auth_db),
+    devices_db: AsyncSession = Depends(get_db),
+    current_user: models.User = Depends(auth.require_permission(auth.Permission.MANAGE_USERS))):
+    await _validate_user_create_scope(user_data, devices_db, current_user)
+    existing = await crud.get_user_by_username(auth_db, username=user_data.username)
+    if existing:
+        raise HTTPException(status_code=400, detail="Username already exists")
+    hashed_password = await _hash_new_user_password(user_data.password)
+    new_user = await _create_user_record(auth_db, user_data, current_user, hashed_password)
+    await _assign_user_devices(auth_db, devices_db, user_data, new_user)
     
     permissions = auth.get_user_permissions(new_user)
     user_response = schemas.UserResponse.model_validate(new_user)
