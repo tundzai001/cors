@@ -3648,182 +3648,181 @@ class NTRIPServerWorker(threading.Thread):
             or not selected or selected == own_mountpoint
         )
 
-    def run(self):
+    def _connection_settings(self):
         host = self.config.get(f'serverhost{self.server_id}')
-        p_str = self.config.get(f'port{self.server_id}')
-        mp = self.config.get(f'mountpoint{self.server_id}')
-        pw = self.config.get(f'password{self.server_id}')
-        user = self.config.get(f'username{self.server_id}')
-        if not user or user.strip() == "":
-            user = "source"
+        port_value = self.config.get(f'port{self.server_id}')
+        mountpoint = self.config.get(f'mountpoint{self.server_id}')
+        password = self.config.get(f'password{self.server_id}')
+        username = self.config.get(f'username{self.server_id}')
+        if not username or username.strip() == "":
+            username = "source"
         version = int(self.config.get(f'ntrip_version{self.server_id}', 1))
-
-        
-        if not all([host, p_str, mp]):
-            return
-        
+        if not all([host, port_value, mountpoint]):
+            return None
         try:
-            port = int(p_str)
+            port = int(port_value)
         except (ValueError, TypeError):
-            return
-        
+            return None
         reconnect_interval = int(self.config.get('reconnectioninterval', 15))
-        
-        while not self._stop_event.is_set():
-            if is_remote_locked(self.server_id):
-                with self.stats_lock:
-                    self.connection_status[f'server{self.server_id}'] = False
-                time.sleep(2)
-                continue
-                
-            server_switches = _get_server_stream_switches(
-                self.config,
-                self.server_id,
-                apply_fail_open=True,
+        return host, port, mountpoint, password, username, version, reconnect_interval
+
+    def _clear_rtcm_queue(self):
+        try:
+            while True:
+                self.queue.get_nowait()
+        except Empty:
+            pass
+
+    def _wait_for_server_enabled(self):
+        if is_remote_locked(self.server_id):
+            with self.stats_lock:
+                self.connection_status[f'server{self.server_id}'] = False
+            time.sleep(2)
+            return False
+        switches = _get_server_stream_switches(
+            self.config, self.server_id, apply_fail_open=True
+        )
+        if switches['enabled']:
+            return True
+        with self.stats_lock:
+            self.connection_status[f'server{self.server_id}'] = False
+        self._clear_rtcm_queue()
+        time.sleep(1)
+        return False
+
+    def _build_source_headers(self, host, port, mountpoint, password, username, version, auth):
+        if version == 2:
+            self.log("INFO", f"S{self.server_id}: Using NTRIP v2.0 (HTTP POST) with User: {username}")
+            return (
+                f"POST /{mountpoint} HTTP/1.1\r\n"
+                f"Host: {host}:{port}\r\n"
+                f"Ntrip-Version: Ntrip/2.0\r\n"
+                f"User-Agent: NTRIP GeodeticAgent/4.1\r\n"
+                f"Authorization: Basic {auth}\r\n"
+                f"Transfer-Encoding: chunked\r\n"
+                f"Connection: Keep-Alive\r\n\r\n"
             )
-            if not server_switches['enabled']:
-                with self.stats_lock:
-                    self.connection_status[f'server{self.server_id}'] = False
-                try:
-                    while True:
-                        self.queue.get_nowait()
-                except Empty:
-                    pass
-                time.sleep(1)
+        self.log("INFO", f"S{self.server_id}: Using NTRIP v1.0 (SOURCE)")
+        return (
+            f"SOURCE {password or ''} /{mountpoint} HTTP/1.1\r\n"
+            f"Host: {host}:{port}\r\n"
+            f"Ntrip-Version: Ntrip/2.0\r\n"
+            f"User-Agent: NTRIP GeodeticAgent/4.1\r\n"
+            f"Authorization: Basic {auth}\r\n"
+            f"Connection: Keep-Alive\r\n\r\n"
+        )
+
+    def _authenticate_caster(self, client_socket, host, port, mountpoint, password, username, version):
+        client_socket.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
+        auth_string = f"{username}:{password or ''}"
+        auth = base64.b64encode(auth_string.encode('ascii')).decode('ascii')
+        headers = self._build_source_headers(host, port, mountpoint, password, username, version, auth)
+        client_socket.sendall(headers.encode('ascii'))
+        response = client_socket.recv(4096)
+        if not (b"ICY 200 OK" in response or b"HTTP/1.1 200 OK" in response):
+            raise ConnectionError(f"Caster rejected: {response.decode(errors='ignore')}")
+        with self.stats_lock:
+            self.connection_status[f'server{self.server_id}'] = True
+        self.log("SUCCESS", f"S{self.server_id}: Authenticated. Caster connection ready.")
+        self.last_stat_update = time.time()
+        self.bytes_sent = 0
+
+    def _enter_stream_standby(self, stream_state):
+        if not stream_state["standby_logged"]:
+            self.log("INFO", f"S{self.server_id}: RTCM paused; keeping authenticated caster connection.")
+            stream_state["standby_logged"] = True
+        with self.stats_lock:
+            self.stats[f'server{self.server_id}_bps'] = 0
+        self.bytes_sent = 0
+        self.last_stat_update = time.time()
+        self._clear_rtcm_queue()
+        self._stop_event.wait(0.25)
+
+    def _forward_next_rtcm_packet(self, client_socket, version, stream_state):
+        data_chunk = self.queue.get(timeout=1.0)
+        if not self._can_push_rtcm():
+            return False
+        if not is_valid_rtcm3_packet(data_chunk):
+            stream_state["non_rtcm_dropped"] += 1
+            now = time.time()
+            if now - stream_state["non_rtcm_last_log_ts"] >= 5.0:
+                self.log(
+                    "WARNING",
+                    f"S{self.server_id}: Dropped non-RTCM payloads={stream_state['non_rtcm_dropped']}"
+                )
+                stream_state["non_rtcm_last_log_ts"] = now
+            return False
+        if version == 2:
+            chunk_size = hex(len(data_chunk))[2:].encode('ascii')
+            client_socket.sendall(chunk_size + b'\r\n' + data_chunk + b'\r\n')
+        else:
+            client_socket.sendall(data_chunk)
+        self.bytes_sent += len(data_chunk)
+        return True
+
+    def _update_sent_rate(self):
+        now = time.time()
+        if now - self.last_stat_update < 1.0:
+            return
+        elapsed = now - self.last_stat_update
+        with self.stats_lock:
+            self.stats[f'server{self.server_id}_bps'] = int(self.bytes_sent / elapsed)
+        self.bytes_sent = 0
+        self.last_stat_update = now
+
+    def _stream_rtcm(self, client_socket, version):
+        stream_state = {
+            "standby_logged": False,
+            "non_rtcm_dropped": 0,
+            "non_rtcm_last_log_ts": 0.0,
+        }
+        while not self._stop_event.is_set() and not is_remote_locked(self.server_id):
+            try:
+                switches = _get_server_stream_switches(
+                    self.config, self.server_id, apply_fail_open=True
+                )
+                if not switches['enabled']:
+                    break
+                readable, _, _ = select.select([client_socket], [], [], 0)
+                if readable and not client_socket.recv(4096):
+                    raise ConnectionError("Caster closed the connection")
+                if not self._can_push_rtcm():
+                    self._enter_stream_standby(stream_state)
+                    continue
+                stream_state["standby_logged"] = False
+                if not self._forward_next_rtcm_packet(client_socket, version, stream_state):
+                    continue
+            except Empty:
+                pass
+            self._update_sent_rate()
+
+    def _log_connection_error(self, error, reconnect_interval):
+        _telemetry_inc("reconnect", f"ntrip_server{self.server_id}")
+        self.log("WARNING", f"S{self.server_id}: Connection error: {error}.")
+        with self.stats_lock:
+            self.stats[f'server{self.server_id}_bps'] = 0
+            self.connection_status[f'server{self.server_id}'] = False
+        self._stop_event.wait(reconnect_interval)
+
+    def run(self):
+        connection_settings = self._connection_settings()
+        if not connection_settings:
+            return
+        host, port, mountpoint, password, username, version, reconnect_interval = connection_settings
+
+        while not self._stop_event.is_set():
+            if not self._wait_for_server_enabled():
                 continue
-            
             client_socket = None
             try:
-                self.log("INFO", f"S{self.server_id}: Connecting to ntrip://{host}:{port}/{mp} (v{version}.0)...")
+                self.log("INFO", f"S{self.server_id}: Connecting to ntrip://{host}:{port}/{mountpoint} (v{version}.0)...")
                 client_socket = socket.create_connection((host, port), timeout=10)
-                client_socket.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
-                
-                auth_str = f"{user}:{pw or ''}"
-                auth = base64.b64encode(auth_str.encode('ascii')).decode('ascii')
-
-                if version == 2:
-                    # ===== NTRIP v2.0 - HTTP POST =====
-                    self.log("INFO", f"S{self.server_id}: Using NTRIP v2.0 (HTTP POST) with User: {user}")
-                    
-                    headers = (
-                        f"POST /{mp} HTTP/1.1\r\n"
-                        f"Host: {host}:{port}\r\n"
-                        f"Ntrip-Version: Ntrip/2.0\r\n"
-                        f"User-Agent: NTRIP GeodeticAgent/4.1\r\n"
-                        f"Authorization: Basic {auth}\r\n" 
-                        f"Transfer-Encoding: chunked\r\n"
-                        f"Connection: Keep-Alive\r\n\r\n"
-                    )
-                else:
-                    # ===== NTRIP v1.0 - SOURCE =====
-                    self.log("INFO", f"S{self.server_id}: Using NTRIP v1.0 (SOURCE)")
-                    
-                    headers = (
-                        f"SOURCE {pw or ''} /{mp} HTTP/1.1\r\n"
-                        f"Host: {host}:{port}\r\n"
-                        f"Ntrip-Version: Ntrip/2.0\r\n"
-                        f"User-Agent: NTRIP GeodeticAgent/4.1\r\n"
-                        f"Authorization: Basic {auth}\r\n" 
-                        f"Connection: Keep-Alive\r\n\r\n"
-                    )
-                
-                client_socket.sendall(headers.encode('ascii'))
-                response = client_socket.recv(4096)
-                
-                if not (b"ICY 200 OK" in response or b"HTTP/1.1 200 OK" in response):
-                    raise ConnectionError(f"Caster rejected: {response.decode(errors='ignore')}")
-                
-                with self.stats_lock:
-                    self.connection_status[f'server{self.server_id}'] = True
-                
-                self.log("SUCCESS", f"S{self.server_id}: Authenticated. Caster connection ready.")
-                self.last_stat_update = time.time()
-                self.bytes_sent = 0
-                standby_logged = False
-                non_rtcm_dropped = 0
-                non_rtcm_last_log_ts = 0.0
-
-                # ========== DATA STREAMING LOOP ==========
-                while not self._stop_event.is_set() and not is_remote_locked(self.server_id):
-                    try:
-                        # Per-server gate: each server can be configured independently.
-                        server_switches = _get_server_stream_switches(
-                            self.config,
-                            self.server_id,
-                            apply_fail_open=True,
-                        )
-                        if not server_switches['enabled']:
-                            break
-                        # TCP/authentication stays alive in standby; only RTCM is gated.
-                        readable, _, _ = select.select([client_socket], [], [], 0)
-                        if readable and not client_socket.recv(4096):
-                            raise ConnectionError("Caster closed the connection")
-                        if not self._can_push_rtcm():
-                            if not standby_logged:
-                                self.log("INFO", f"S{self.server_id}: RTCM paused; keeping authenticated caster connection.")
-                                standby_logged = True
-                            with self.stats_lock:
-                                self.stats[f'server{self.server_id}_bps'] = 0
-                            self.bytes_sent = 0
-                            self.last_stat_update = time.time()
-                            try:
-                                while True:
-                                    self.queue.get_nowait()
-                            except Empty:
-                                pass
-                            self._stop_event.wait(0.25)
-                            continue
-
-                        standby_logged = False
-                        data_chunk = self.queue.get(timeout=1.0)
-                        # Sleep may arrive while queue.get is waiting for a packet.
-                        if not self._can_push_rtcm():
-                            continue
-
-                        # Hard filter: never forward non-RTCM payloads to caster.
-                        if not is_valid_rtcm3_packet(data_chunk):
-                            non_rtcm_dropped += 1
-                            now = time.time()
-                            if (now - non_rtcm_last_log_ts) >= 5.0:
-                                self.log(
-                                    "WARNING",
-                                    f"S{self.server_id}: Dropped non-RTCM payloads={non_rtcm_dropped}"
-                                )
-                                non_rtcm_last_log_ts = now
-                            continue
-                        
-                        if version == 2:
-                            chunk_size = hex(len(data_chunk))[2:].encode('ascii')
-                            client_socket.sendall(chunk_size + b'\r\n' + data_chunk + b'\r\n')
-                        else:
-                            client_socket.sendall(data_chunk)
-
-                        self.bytes_sent += len(data_chunk)
-
-                    except Empty:
-                        # TCP keepalive handles idle sessions. A zero HTTP chunk
-                        # would terminate an NTRIP v2 stream, not keep it alive.
-                        pass
-
-                    now = time.time()
-                    if now - self.last_stat_update >= 1.0:
-                        elapsed = now - self.last_stat_update
-                        bps = self.bytes_sent / elapsed
-                        
-                        with self.stats_lock:
-                            self.stats[f'server{self.server_id}_bps'] = int(bps)
-                        
-                        self.bytes_sent = 0
-                        self.last_stat_update = now
-
-            except Exception as e:
-                _telemetry_inc("reconnect", f"ntrip_server{self.server_id}")
-                self.log("WARNING", f"S{self.server_id}: Connection error: {e}.")
-                with self.stats_lock:
-                    self.stats[f'server{self.server_id}_bps'] = 0
-                    self.connection_status[f'server{self.server_id}'] = False
-                self._stop_event.wait(reconnect_interval)
-            
+                self._authenticate_caster(
+                    client_socket, host, port, mountpoint, password, username, version
+                )
+                self._stream_rtcm(client_socket, version)
+            except Exception as error:
+                self._log_connection_error(error, reconnect_interval)
             finally:
                 with self.stats_lock:
                     self.stats[f'server{self.server_id}_bps'] = 0
