@@ -59,32 +59,28 @@ def _normalize_to_ascii(text: str) -> str:
     return "".join(ch for ch in normalized if not unicodedata.combining(ch))
 
 
-def _is_cors_status_question(text: str) -> bool:
-    """Recognize public Cục health questions with or without Vietnamese accents."""
-    normalized = _normalize_to_ascii(text).lstrip("\u200b\u200c\u200d\ufeff").strip()
-    if normalized.startswith("/"):
-        return False  # Explicit commands keep their own permissions and arguments.
-    words = re.sub(r"[^a-z0-9]+", " ", normalized).strip()
-    if re.search(r"\b(?:base|rover)\b", words):
-        return False
-    from ..zalo_cors_report import region_for_question, region_options, is_region_only, _plain
-    region = region_for_question(words)[0]
-    from ..zalo_cors_dialogue import cors_intent, DIAGNOSTIC_INTENTS
-    intent = cors_intent(words)
-    if intent.startswith('faq_') or intent in DIAGNOSTIC_INTENTS or intent == 'fix_possible':
+def _is_region_status_question(words, region, intent, region_options, is_region_only, plain):
+    options = region_options(words)
+    if options and intent in {"stability", "measurement", "detail", "diagnostic"}:
         return True
-    if region_options(words) and intent in {"stability", "measurement", "detail", "diagnostic"}:
-        return True
-    if region_options(words) and re.search(r'\b(tinh trang|tinh hinh|trang thai)\b', words):
+    if options and re.search(r'\b(tinh trang|tinh hinh|trang thai)\b', words):
         return True
     if is_region_only(words):
         return True
-    if region != "Việt Nam" and words in {_plain(region), f"con {_plain(region)}", f"the con {_plain(region)}"}:
+    if region != "Việt Nam" and words in {plain(region), f"con {plain(region)}", f"the con {plain(region)}"}:
         return True
+    return False
+
+
+def _is_cors_operational_detail(words, region):
     if re.search(r"\b(?:dien ly|dia tu|kp|float|khong fix|kho fix|fix kho|mat fix)\b", words):
         return True
-    if region != "Việt Nam" and re.search(r"\b(?:khuyen nghi|tu van|khong che|bo tri)\b", words):
-        return True
+    return region != "Việt Nam" and bool(
+        re.search(r"\b(?:khuyen nghi|tu van|khong che|bo tri)\b", words)
+    )
+
+
+def _is_cors_status_target(words, normalized):
     caster_host = _get_env_preferring_dotenv("CORS_CUC_NTRIP_HOST", "vngeonet.vn").strip().lower()
     target = (re.search(r"\b(?:cuc|vngeonet)\b", words)
               or (caster_host and caster_host in normalized)
@@ -102,6 +98,27 @@ def _is_cors_status_question(text: str) -> bool:
         r"do (?:duoc|dc|dk|on|khong|ko|k)|co do|ok|down|up)\b",
         words,
     ))
+
+
+def _is_cors_status_question(text: str) -> bool:
+    """Recognize public Cục health questions with or without Vietnamese accents."""
+    normalized = _normalize_to_ascii(text).lstrip("\u200b\u200c\u200d\ufeff").strip()
+    if normalized.startswith("/"):
+        return False  # Explicit commands keep their own permissions and arguments.
+    words = re.sub(r"[^a-z0-9]+", " ", normalized).strip()
+    if re.search(r"\b(?:base|rover)\b", words):
+        return False
+    from ..zalo_cors_report import region_for_question, region_options, is_region_only, _plain
+    region = region_for_question(words)[0]
+    from ..zalo_cors_dialogue import cors_intent, DIAGNOSTIC_INTENTS
+    intent = cors_intent(words)
+    if intent.startswith('faq_') or intent in DIAGNOSTIC_INTENTS or intent == 'fix_possible':
+        return True
+    if _is_region_status_question(words, region, intent, region_options, is_region_only, _plain):
+        return True
+    if _is_cors_operational_detail(words, region):
+        return True
+    return _is_cors_status_target(words, normalized)
 
 
 # ---------------------------------------------------------------------------

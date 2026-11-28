@@ -390,40 +390,50 @@ async def _validate_multi_rover_scope(
     return ",".join(selected_serials) if selected_serials else ""
 
 
+def _multi_rover_target_hosts(request):
+    target_hosts = request.target_casters or []
+    if not target_hosts:
+        env_hosts, env_config = _read_caster_config_from_env()
+        if env_hosts:
+            target_hosts = [str(host).strip() for host in env_hosts if host.strip()]
+        else:
+            default_host = str(env_config.get("host") or settings.CASTER_HOST or "")
+            if default_host:
+                target_hosts = [default_host]
+    if not target_hosts:
+        raise ValueError("No target caster configured.")
+    return validate_caster_hosts(target_hosts)
+
+
+async def _create_multi_rover_on_caster(host, port, request, creator, duration_seconds, target_mountpoints):
+    from app.caster_client import CasterClient
+
+    caster = CasterClient(host, port)
+    await caster.create_user(
+        creator=creator,
+        username=request.username,
+        password=request.password,
+        mountpoints=target_mountpoints,
+        expiry_seconds=duration_seconds,
+        max_users=request.max_connections,
+        show_position=request.show_position,
+        rtcm_cycle_enabled=bool(getattr(request, "rtcm_cycle_enabled", False)),
+        rtcm_disconnect_interval_seconds=int(getattr(request, "rtcm_disconnect_interval_seconds", 300) or 300),
+        rtcm_disconnect_duration_seconds=int(getattr(request, "rtcm_disconnect_duration_seconds", 10) or 10),
+    )
+
+
 async def _create_multi_rover_on_casters(request, current_user, duration_seconds, target_mountpoints):
     try:
         creator_identifier = current_user.username
-        target_hosts = request.target_casters or []
-        if not target_hosts:
-            env_hosts, env_config = _read_caster_config_from_env()
-            if env_hosts:
-                target_hosts = [str(host).strip() for host in env_hosts if host.strip()]
-            else:
-                default_host = str(env_config.get("host") or settings.CASTER_HOST or "")
-                if default_host:
-                    target_hosts = [default_host]
-
-        if not target_hosts:
-            raise ValueError("No target caster configured.")
-        target_hosts = validate_caster_hosts(target_hosts)
+        target_hosts = _multi_rover_target_hosts(request)
         results_log = []
         errors = []
         port = int(settings.CASTER_PORT or 2101)
         for host in target_hosts:
             try:
-                from app.caster_client import CasterClient
-                caster = CasterClient(host, port)
-                await caster.create_user(
-                    creator=creator_identifier,
-                    username=request.username,
-                    password=request.password,
-                    mountpoints=target_mountpoints,
-                    expiry_seconds=duration_seconds,
-                    max_users=request.max_connections,
-                    show_position=request.show_position,
-                    rtcm_cycle_enabled=bool(getattr(request, "rtcm_cycle_enabled", False)),
-                    rtcm_disconnect_interval_seconds=int(getattr(request, "rtcm_disconnect_interval_seconds", 300) or 300),
-                    rtcm_disconnect_duration_seconds=int(getattr(request, "rtcm_disconnect_duration_seconds", 10) or 10),
+                await _create_multi_rover_on_caster(
+                    host, port, request, creator_identifier, duration_seconds, target_mountpoints
                 )
                 results_log.append(host)
             except Exception as error:

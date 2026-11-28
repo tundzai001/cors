@@ -48,23 +48,27 @@ def get_esp_setup_status(serial, boot_id):
             if stage != "auto_nearest" or (boot_id and value.get("boot_id") == boot_id)}
 
 
-def _extract_esp_mountpoint(device: models.Device) -> Optional[str]:
-    """Extract primary mountpoint configured on ESP32 device."""
-    cfg = device.service_config
+def _parse_esp_service_config(cfg):
     if isinstance(cfg, str):
         try:
             cfg = json.loads(cfg)
         except Exception:
             cfg = {}
     if not isinstance(cfg, dict):
-        cfg = {}
+        return {}
+    return cfg
 
+
+def _enabled_esp_mountpoint(cfg):
     for slot in (1, 2):
         if str(cfg.get(f"server{slot}_enabled", '')).lower() in {'true', '1', 'on', 'yes'}:
             selected = str(cfg.get(f"mountpoint{slot}") or '').strip().lstrip('/')
             if selected:
                 return selected
+    return None
 
+
+def _fallback_esp_mountpoint(cfg):
     mp = cfg.get("mountpoint1") or cfg.get("active_mountpoint") or cfg.get("mountpoint") or cfg.get("source_mountpoint")
     if not mp and cfg.get("server1_enabled"):
         mp = cfg.get("mountpoint1")
@@ -72,11 +76,20 @@ def _extract_esp_mountpoint(device: models.Device) -> Optional[str]:
         mp = cfg.get("mountpoint2")
     if not mp:
         mp = cfg.get("mountpoint2")
+    return mp
 
-    if mp:
-        mp_clean = str(mp).strip().lstrip("/")
-        return mp_clean or None
-    return None
+
+def _clean_esp_mountpoint(mountpoint):
+    if not mountpoint:
+        return None
+    cleaned = str(mountpoint).strip().lstrip("/")
+    return cleaned or None
+
+
+def _extract_esp_mountpoint(device: models.Device) -> Optional[str]:
+    """Extract primary mountpoint configured on ESP32 device."""
+    cfg = _parse_esp_service_config(device.service_config)
+    return _enabled_esp_mountpoint(cfg) or _clean_esp_mountpoint(_fallback_esp_mountpoint(cfg))
 
 
 async def _get_configured_casters() -> List[tuple[str, int]]:
