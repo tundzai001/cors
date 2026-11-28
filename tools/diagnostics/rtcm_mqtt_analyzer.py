@@ -19,59 +19,60 @@ def on_connect(client, userdata, flags, rc, properties=None):
 
 buffer = bytearray()
 
+
+def _parse_rtcm_message(frame_bytes, frame_len):
+    parsed_successfully = False
+    try:
+        # Đưa frame hoàn chỉnh vào RTCMReader để parse
+        stream = BytesIO(frame_bytes)
+        # quitonerror=True để nếu sai CRC nó sẽ throw error thay vì cố đọc tiếp
+        rtr = RTCMReader(stream, quitonerror=True)
+        for raw_data, parsed_data in rtr:
+            if parsed_data:
+                print(f"[+] Phát hiện bản tin RTCM Type: {parsed_data.identity:<4} (ghép nối thành công, kích thước {frame_len} bytes)")
+                parsed_successfully = True
+    except Exception:
+        pass # Lỗi parse (có thể do 0xD3 giả mạo, hoặc sai CRC)
+    return parsed_successfully
+
+
+def _process_next_rtcm_message():
+    global buffer
+    # RTCM3 frame có ít nhất 6 bytes (3 byte header + tối thiểu 0 byte payload + 3 byte CRC)
+    idx = buffer.find(0xD3)
+    if idx == -1:
+        # Nếu không thấy 0xD3, xóa toàn bộ buffer vì toàn là rác
+        buffer.clear()
+        return False
+    if idx > 0:
+        # Cắt bỏ các byte rác nằm trước 0xD3
+        buffer = buffer[idx:]
+        return True
+    if len(buffer) < 3:
+        return False # Chờ thêm dữ liệu để đọc được chiều dài (length)
+
+    # Tính toán chiều dài payload của bản tin RTCM (10 bit)
+    payload_length = ((buffer[1] & 0x03) << 8) | buffer[2]
+    frame_len = payload_length + 6 # Tổng chiều dài = 3 (header) + payload + 3 (CRC)
+    if len(buffer) < frame_len:
+        return False # Chưa nhận đủ bytes cho toàn bộ bản tin này, chờ MQTT gửi thêm
+
+    frame_bytes = buffer[:frame_len]
+    if _parse_rtcm_message(frame_bytes, frame_len):
+        # Xóa frame hợp lệ khỏi buffer
+        buffer = buffer[frame_len:]
+    else:
+        # Nếu parse lỗi, dịch đi 1 byte để tiếp tục tìm 0xD3 thực sự
+        buffer = buffer[1:]
+    return True
+
+
 def on_message(client, userdata, msg):
     global buffer
     # Thêm dữ liệu mới nhận được vào buffer
     buffer.extend(msg.payload)
-    
-    # RTCM3 frame có ít nhất 6 bytes (3 byte header + tối thiểu 0 byte payload + 3 byte CRC)
-    while len(buffer) >= 6:
-        # Tìm byte bắt đầu của bản tin RTCM3 (Preamble = 0xD3)
-        idx = buffer.find(0xD3)
-        if idx == -1:
-            # Nếu không thấy 0xD3, xóa toàn bộ buffer vì toàn là rác
-            buffer.clear()
-            break
-            
-        if idx > 0:
-            # Cắt bỏ các byte rác nằm trước 0xD3
-            buffer = buffer[idx:]
-            continue
-            
-        # Lúc này buffer[0] đang là 0xD3
-        if len(buffer) < 3:
-            break # Chờ thêm dữ liệu để đọc được chiều dài (length)
-            
-        # Tính toán chiều dài payload của bản tin RTCM (10 bit)
-        # Byte 1 chứa 6 bit rỗng và 2 bit cao của length. Byte 2 chứa 8 bit thấp.
-        payload_length = ((buffer[1] & 0x03) << 8) | buffer[2]
-        frame_len = payload_length + 6 # Tổng chiều dài = 3 (header) + payload + 3 (CRC)
-        
-        if len(buffer) < frame_len:
-            break # Chưa nhận đủ bytes cho toàn bộ bản tin này, chờ MQTT gửi thêm
-            
-        # Trích xuất toàn bộ frame
-        frame_bytes = buffer[:frame_len]
-        
-        parsed_successfully = False
-        try:
-            # Đưa frame hoàn chỉnh vào RTCMReader để parse
-            stream = BytesIO(frame_bytes)
-            # quitonerror=True để nếu sai CRC nó sẽ throw error thay vì cố đọc tiếp
-            rtr = RTCMReader(stream, quitonerror=True)
-            for raw_data, parsed_data in rtr:
-                if parsed_data:
-                    print(f"[+] Phát hiện bản tin RTCM Type: {parsed_data.identity:<4} (ghép nối thành công, kích thước {frame_len} bytes)")
-                    parsed_successfully = True
-        except Exception:
-            pass # Lỗi parse (có thể do 0xD3 giả mạo, hoặc sai CRC)
-            
-        if parsed_successfully:
-            # Xóa frame hợp lệ khỏi buffer
-            buffer = buffer[frame_len:]
-        else:
-            # Nếu parse lỗi, dịch đi 1 byte để tiếp tục tìm 0xD3 thực sự
-            buffer = buffer[1:]
+    while len(buffer) >= 6 and _process_next_rtcm_message():
+        pass
 
 def main():
     # Khởi tạo client MQTT (Sử dụng protocol v5 hoặc v3.1.1 tuỳ broker, ở đây dùng mặc định)

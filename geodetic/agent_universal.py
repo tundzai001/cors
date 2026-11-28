@@ -449,30 +449,38 @@ def _ubx_rf_payload(payload, message_id):
                 'payload_b64':base64.b64encode(payload).decode('ascii')}
 
 
+def _decode_ubx_sec_sig(payload):
+    if len(payload) < 4 or payload[0] != 2 or payload[3] > 16 or len(payload) != 4 + payload[3] * 4:
+        raise ValueError('Invalid SEC-SIG payload')
+    flags = payload[1]
+    jam, spoof = (flags >> 1) & 3, (flags >> 4) & 7
+    if jam > 2 or spoof > 3:
+        raise ValueError('Unknown SEC-SIG state')
+    frequencies = []
+    for offset in range(4, len(payload), 4):
+        value = int.from_bytes(payload[offset:offset+4], 'little')
+        khz = value & 0xffffff
+        if not khz or any(row['khz'] == khz for row in frequencies):
+            raise ValueError('Invalid SEC-SIG frequency')
+        frequencies.append({'khz':khz, 'jammed':bool(value & (1 << 24))})
+    return {'source':'ubx_sec_sig', 'jam_enabled':bool(flags & 1), 'jam_state':jam,
+            'spoof_enabled':bool(flags & 8), 'spoof_state':spoof, 'frequencies':frequencies}
+
+
+def _decode_ubx_sec_siglog(payload):
+    if len(payload) < 8 or payload[0] != 1 or payload[1] > 16 or len(payload) != 8 + payload[1] * 8:
+        raise ValueError('Invalid SEC-SIGLOG payload')
+    return {'source':'ubx_sec_siglog', 'events':[{
+        'elapsed_seconds':int.from_bytes(payload[o:o+4], 'little'), 'detection':payload[o+4], 'event':payload[o+5]}
+        for o in range(8, len(payload), 8)]}
+
+
 def _ubx_security_payload(payload, message_id):
     # HPG 1.51 interface: SEC-SIG v2 and SEC-SIGLOG v1.
     if message_id == 9:
-        if len(payload) < 4 or payload[0] != 2 or payload[3] > 16 or len(payload) != 4 + payload[3] * 4:
-            raise ValueError('Invalid SEC-SIG payload')
-        flags = payload[1]
-        jam, spoof = (flags >> 1) & 3, (flags >> 4) & 7
-        if jam > 2 or spoof > 3:
-            raise ValueError('Unknown SEC-SIG state')
-        frequencies = []
-        for offset in range(4, len(payload), 4):
-            value = int.from_bytes(payload[offset:offset+4], 'little')
-            khz = value & 0xffffff
-            if not khz or any(row['khz'] == khz for row in frequencies):
-                raise ValueError('Invalid SEC-SIG frequency')
-            frequencies.append({'khz':khz, 'jammed':bool(value & (1 << 24))})
-        result = {'source':'ubx_sec_sig', 'jam_enabled':bool(flags & 1), 'jam_state':jam,
-                      'spoof_enabled':bool(flags & 8), 'spoof_state':spoof, 'frequencies':frequencies}
+        result = _decode_ubx_sec_sig(payload)
     elif message_id == 0x10:
-        if len(payload) < 8 or payload[0] != 1 or payload[1] > 16 or len(payload) != 8 + payload[1] * 8:
-            raise ValueError('Invalid SEC-SIGLOG payload')
-        result = {'source':'ubx_sec_siglog', 'events':[{
-            'elapsed_seconds':int.from_bytes(payload[o:o+4], 'little'), 'detection':payload[o+4], 'event':payload[o+5]}
-            for o in range(8, len(payload), 8)]}
+        result = _decode_ubx_sec_siglog(payload)
     else:
         raise ValueError('Unsupported security message')
     return dict(result, payload_b64=base64.b64encode(payload).decode('ascii'))

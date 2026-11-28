@@ -331,25 +331,38 @@ async def _validate_viewer_multi_rover_scope(
         raise HTTPException(status_code=403, detail="Mountpoint không thuộc trạm được cấp cho bạn.")
 
 
-async def _collect_coordinator_mountpoints(request, devices_db, current_user, visible_serials):
-    valid_mountpoints = set()
-    if request.selected_serials:
-        for serial in request.selected_serials:
-            device = await crud.get_device_by_serial(devices_db, serial)
-            if device and str(device.serial).strip().upper() in visible_serials:
-                config = _device_service_config(device)
-                if config.get('server1_enabled') and config.get('mountpoint1'):
-                    valid_mountpoints.add(config.get('mountpoint1'))
-                if config.get('server2_enabled') and config.get('mountpoint2'):
-                    valid_mountpoints.add(config.get('mountpoint2'))
+def _add_enabled_server_mountpoint(mountpoints, config, server_number):
+    if config.get(f'server{server_number}_enabled'):
+        mountpoint = config.get(f'mountpoint{server_number}')
+        if mountpoint:
+            mountpoints.add(mountpoint)
 
-    if current_user.extra_mountpoints:
-        extras = [
-            mountpoint.strip()
-            for mountpoint in re.split(r'[;,\s]+', current_user.extra_mountpoints)
-            if mountpoint.strip()
-        ]
-        valid_mountpoints.update(extras)
+
+async def _coordinator_device_mountpoints(request, devices_db, visible_serials):
+    mountpoints = set()
+    for serial in request.selected_serials or []:
+        device = await crud.get_device_by_serial(devices_db, serial)
+        if not device or str(device.serial).strip().upper() not in visible_serials:
+            continue
+        config = _device_service_config(device)
+        _add_enabled_server_mountpoint(mountpoints, config, 1)
+        _add_enabled_server_mountpoint(mountpoints, config, 2)
+    return mountpoints
+
+
+def _coordinator_extra_mountpoints(current_user):
+    if not current_user.extra_mountpoints:
+        return set()
+    return {
+        mountpoint.strip()
+        for mountpoint in re.split(r'[;,\s]+', current_user.extra_mountpoints)
+        if mountpoint.strip()
+    }
+
+
+async def _collect_coordinator_mountpoints(request, devices_db, current_user, visible_serials):
+    valid_mountpoints = await _coordinator_device_mountpoints(request, devices_db, visible_serials)
+    valid_mountpoints.update(_coordinator_extra_mountpoints(current_user))
     return valid_mountpoints
 
 
