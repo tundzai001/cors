@@ -76,14 +76,7 @@ function getDashboardPosition(device, data) {
         || position(saved?.lat, saved?.lon, 'Cấu hình Base đã lưu');
 }
 
-function getReceiverSatellites(device, live = true, now = Date.now() / 1000) {
-    if (device.detected_chip_type === 'Unicorecomm') return null;
-    const snapshot = device.gnss_satellites;
-    if (!live || snapshot?.source !== 'ubx_nav_sat' || typeof snapshot.payload_b64 !== 'string'
-        || snapshot.payload_b64.length > 2060 || typeof snapshot.age_seconds !== 'number') return null;
-    const received = Number(device.server_received_at || device.timestamp);
-    const age = snapshot.age_seconds + (Number.isFinite(received) ? Math.max(0, now - received) : 0);
-    if (!Number.isFinite(age) || age < 0 || age > 45) return null;
+function decodeReceiverSatellites(snapshot, now, age) {
     try {
         const raw = atob(snapshot.payload_b64);
         const bytes = Uint8Array.from(raw, c => c.charCodeAt(0));
@@ -106,6 +99,17 @@ function getReceiverSatellites(device, live = true, now = Date.now() / 1000) {
         }
         return {satellites, age_seconds: age};
     } catch (_) { return null; }
+}
+
+function getReceiverSatellites(device, live = true, now = Date.now() / 1000) {
+    if (device.detected_chip_type === 'Unicorecomm') return null;
+    const snapshot = device.gnss_satellites;
+    if (!live || snapshot?.source !== 'ubx_nav_sat' || typeof snapshot.payload_b64 !== 'string'
+        || snapshot.payload_b64.length > 2060 || typeof snapshot.age_seconds !== 'number') return null;
+    const received = Number(device.server_received_at || device.timestamp);
+    const age = snapshot.age_seconds + (Number.isFinite(received) ? Math.max(0, now - received) : 0);
+    if (!Number.isFinite(age) || age < 0 || age > 45) return null;
+    return decodeReceiverSatellites(snapshot, now, age);
 }
 
 // NAV-SAT reports one C/N₀ per satellite; it cannot separate signal bands.
