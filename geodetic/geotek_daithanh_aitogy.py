@@ -1546,50 +1546,18 @@ def normalize_lte_gnss_options(options=None):
             "constellations": constellations}
 
 
-def build_lte_unicore_commands(original_config=None, runtime_cfg=None):
-    """
-    Local command builder for every JSON-configured Geotek LTE source.
-
-    The dashboard can still send encoded commands, but this relay is the device
-    boundary for geotek_config.json sources. Rebuild the command list here so all
-    LTE units use their configured receiver port and requested output profile.
-    """
-    runtime_cfg = runtime_cfg if isinstance(runtime_cfg, dict) else {}
-    payload, params = _extract_remote_payload(original_config)
-    coords = params.get("coords", {}) if isinstance(params.get("coords"), dict) else {}
-
-    method = str(_first_value(
-        payload.get("method"),
-        payload.get("base_setup_method"),
-        params.get("base_setup_method"),
-        runtime_cfg.get("setup_method"),
-        "SURVEY_IN",
-    )).upper()
-    duration = _as_int(_first_value(
-        params.get("survey_in_duration"),
-        params.get("duration"),
-        runtime_cfg.get("duration"),
-        60,
-    ), 60)
-
+def _lte_position_values(method, coords, params, runtime_cfg):
     position = []
     for key, lower, upper in (('lat', -90, 90), ('lon', -180, 180), ('alt', -12000, 100000)):
         text = str(_first_value(coords.get(key), params.get(key), runtime_cfg.get(key), 0.0)).strip().replace(',', '.')
         if method == 'FIXED_LLA' and (not re.fullmatch(r'[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?', text) or not lower <= float(text) <= upper):
             raise ValueError(f'Invalid fixed position {key}')
         position.append(text)
+    return position
+
+
+def _lte_base_setup_commands(method, position, duration, payload, params, runtime_cfg):
     lat, lon, alt = position
-
-    rtcm_port = str(_first_value(runtime_cfg.get("rtcm_port"), runtime_cfg.get("sensor_port"), "com2")).strip() or "com2"
-    if not re.fullmatch(RECEIVER_PORT_PATTERN, rtcm_port, flags=re.IGNORECASE):
-        raise ValueError("Invalid Unicore RTCM port")
-    commands = [
-        b"FRESET\r\n",
-        b"$DELAY_5000$",
-        b"unlogall\r\n",
-        b"$DELAY_1000$",
-    ]
-
     if method == "FIXED_LLA":
         # A new fixed-position payload without metadata retains legacy semantics;
         # on restart, a saved explicit reference must survive FRESET.
@@ -1598,6 +1566,7 @@ def build_lte_unicore_commands(original_config=None, runtime_cfg=None):
             reference = runtime_cfg.get("altitude_reference")
         if reference not in (None, "LEGACY", "ELLIPSOID"):
             raise ValueError("Unsupported altitude reference")
+        commands = []
         if reference == "ELLIPSOID":
             commands.append(b"config undulation 0.0\r\n")
         commands.extend([
@@ -1605,18 +1574,20 @@ def build_lte_unicore_commands(original_config=None, runtime_cfg=None):
             b"$DELAY_2000$",
         ])
     else:
-        commands.extend([
+        commands = [
             f"mode base time {duration}\r\n".encode("ascii"),
             b"$DELAY_2000$",
-        ])
+        ]
+    return commands
 
-    options = normalize_lte_gnss_options(_first_value(
-        params.get("gnss_options"), payload.get("gnss_options"), runtime_cfg.get("gnss_options")))
-    selected = options["constellations"]
+
+def _lte_diagnostic_commands(options, runtime_cfg, rtcm_port):
     if options["output_mode"] == "diagnostics_rtcm":
+        selected = options["constellations"]
         nmea_port = str(runtime_cfg.get("nmea_port") or rtcm_port).strip()
         if not re.fullmatch(RECEIVER_PORT_PATTERN, nmea_port, flags=re.IGNORECASE):
             raise ValueError("Invalid Unicore NMEA port")
+        commands = []
         for system, messages in {
             "gps": ("gpgga", "gpgsa", "gpgsv", "gpgst"),
             "glo": ("glgga", "glgsa", "glgsv"),
@@ -1626,6 +1597,12 @@ def build_lte_unicore_commands(original_config=None, runtime_cfg=None):
             if selected[system]:
                 for message in messages:
                     commands.extend([f"{message} {nmea_port} 1\r\n".encode("ascii"), b"$DELAY_200$"])
+        return commands
+    return []
+
+
+def _lte_rtcm_commands(options, rtcm_port):
+    selected = options["constellations"]
     messages = ["1006", "1033"]
     for system, msm4, msm7, ephemeris in (
         ("gps", "1074", "1077", "1019"), ("glo", "1084", "1087", "1020"),
@@ -1638,10 +1615,37 @@ def build_lte_unicore_commands(original_config=None, runtime_cfg=None):
             if options["msm_level"] in (7, "both"):
                 messages.append(msm7)
             messages.append(ephemeris)
+    commands = []
     for msg_id in messages:
         commands.append(f"rtcm{msg_id} {rtcm_port} 1\r\n".encode("ascii"))
         commands.append(b"$DELAY_200$")
+    return commands
 
+
+def build_lte_unicore_commands(original_config=None, runtime_cfg=None):
+    """Build configured base and output commands for a Geotek LTE receiver."""
+    runtime_cfg = runtime_cfg if isinstance(runtime_cfg, dict) else {}
+    payload, params = _extract_remote_payload(original_config)
+    coords = params.get("coords", {}) if isinstance(params.get("coords"), dict) else {}
+    method = str(_first_value(
+        payload.get("method"), payload.get("base_setup_method"), params.get("base_setup_method"),
+        runtime_cfg.get("setup_method"), "SURVEY_IN",
+    )).upper()
+    duration = _as_int(_first_value(
+        params.get("survey_in_duration"), params.get("duration"), runtime_cfg.get("duration"), 60,
+    ), 60)
+    position = _lte_position_values(method, coords, params, runtime_cfg)
+
+    rtcm_port = str(_first_value(runtime_cfg.get("rtcm_port"), runtime_cfg.get("sensor_port"), "com2")).strip() or "com2"
+    if not re.fullmatch(RECEIVER_PORT_PATTERN, rtcm_port, flags=re.IGNORECASE):
+        raise ValueError("Invalid Unicore RTCM port")
+    setup_commands = _lte_base_setup_commands(method, position, duration, payload, params, runtime_cfg)
+    options = normalize_lte_gnss_options(_first_value(
+        params.get("gnss_options"), payload.get("gnss_options"), runtime_cfg.get("gnss_options")))
+    commands = [b"FRESET\r\n", b"$DELAY_5000$", b"unlogall\r\n", b"$DELAY_1000$"]
+    commands.extend(setup_commands)
+    commands.extend(_lte_diagnostic_commands(options, runtime_cfg, rtcm_port))
+    commands.extend(_lte_rtcm_commands(options, rtcm_port))
     commands.append(b"saveconfig\r\n")
     return commands
 

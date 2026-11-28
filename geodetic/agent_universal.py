@@ -812,45 +812,48 @@ class GnssRfMonitor:
         return self._build_rf_summary(severity)
 
 
+def _fresh_receiver_reading(key, now):
+    reading = globals().get(key)
+    age = now - float(globals().get(key + '_TS') or 0)
+    return dict(reading, age_seconds=round(age, 1)) if reading and 0 <= age <= 45 else None
+
+
+def _attach_receiver_rf_error(status, now):
+    error = _fresh_receiver_reading('LAST_UBX_RF_ERROR', now)
+    if not error:
+        return
+    if status['gnss_rf']:
+        status['gnss_rf']['last_error'] = error
+    else:
+        error.update(source='ubx_mon_rf', state='read_error')
+        status['gnss_rf'] = error
+
+
+def _fresh_unicore_rf_status(now):
+    status = {'source':'unicore_rf', 'agc':None, 'jamming':None}
+    for field, key in [('agc', 'LAST_UNICORE_AGC'), ('jamming', 'LAST_UNICORE_JAM')]:
+        status[field] = _fresh_receiver_reading(key, now)
+    return status if status['agc'] or status['jamming'] else None
+
+
 def receiver_quality_status(now):
     # Explicit null clears stale data; legacy hacc is always millimetres.
     status = {'hacc':None, 'gnss_quality':None, 'gnss_dop':None, 'gnss_satellites':None, 'gnss_rf':None, 'gnss_spectrum':None, 'gnss_receiver':None,
-                  'gnss_security':None, 'gnss_security_log':None}
+              'gnss_security':None, 'gnss_security_log':None}
     report = globals().get('AUTOMATIC_RF_REPORT')
     status['gnss_rf_monitor'] = dict(report, age_seconds=max(0, round(now - report['last_sample_at'], 1))) if report else None
     for field, key in [('gnss_receiver', 'LAST_UBX_RECEIVER_INFO'), ('gnss_rf', 'LAST_UBX_RF'), ('gnss_spectrum', 'LAST_UBX_SPECTRUM'),
                        ('gnss_security', 'LAST_UBX_SECURITY'), ('gnss_security_log', 'LAST_UBX_SECURITY_LOG')]:
-        reading = globals().get(key)
-        age = now - float(globals().get(key + '_TS') or 0)
-        if reading and 0 <= age <= 45:
-            status[field] = dict(reading, age_seconds=round(age, 1))
-    rf_error = globals().get('LAST_UBX_RF_ERROR')
-    error_age = now - float(globals().get('LAST_UBX_RF_ERROR_TS') or 0)
-    if rf_error and 0 <= error_age <= 45:
-        if status['gnss_rf']:
-            status['gnss_rf']['last_error'] = dict(rf_error, age_seconds=round(error_age, 1))
-        else:
-            status['gnss_rf'] = dict(rf_error, source='ubx_mon_rf', state='read_error', age_seconds=round(error_age, 1))
-    unicore = {'source':'unicore_rf', 'agc':None, 'jamming':None}
-    for field, key in [('agc', 'LAST_UNICORE_AGC'), ('jamming', 'LAST_UNICORE_JAM')]:
-        reading = globals().get(key)
-        age = now - float(globals().get(key + '_TS') or 0)
-        if reading and 0 <= age <= 45:
-            unicore[field] = dict(reading, age_seconds=round(age, 1))
-    if unicore['agc'] or unicore['jamming']:
+        status[field] = _fresh_receiver_reading(key, now)
+    _attach_receiver_rf_error(status, now)
+    unicore = _fresh_unicore_rf_status(now)
+    if unicore:
         status['gnss_rf'] = unicore
-    satellites = globals().get('LAST_UBX_SATELLITES')
-    satellite_age = now - float(globals().get('LAST_UBX_SATELLITES_TS') or 0)
-    if satellites and 0 <= satellite_age <= 45:
-        status['gnss_satellites'] = dict(satellites, age_seconds=round(satellite_age, 1))
-    dop = globals().get('LAST_UBX_DOP')
-    dop_age = now - float(globals().get('LAST_UBX_DOP_TS') or 0)
-    if dop and 0 <= dop_age <= 45:
-        status['gnss_dop'] = dict(dop, age_seconds=round(dop_age, 1))
-    quality = globals().get('LAST_RECEIVER_QUALITY')
-    age = now - float(globals().get('LAST_RECEIVER_QUALITY_TS') or 0)
-    if quality and 0 <= age <= 45:
-        status['gnss_quality'] = dict(quality, age_seconds=round(age, 1))
+    status['gnss_satellites'] = _fresh_receiver_reading('LAST_UBX_SATELLITES', now)
+    status['gnss_dop'] = _fresh_receiver_reading('LAST_UBX_DOP', now)
+    quality = _fresh_receiver_reading('LAST_RECEIVER_QUALITY', now)
+    if quality:
+        status['gnss_quality'] = quality
         if 'satellites' in quality:
             status['satellite_count'] = quality['satellites']
         if quality['hacc_m'] is not None:
@@ -5007,48 +5010,56 @@ def _gnss_verification_expected(payload):
     return mode, records
 
 
-def _parse_unicore_loglist(packet):
+def _unicore_loglist_body(packet):
     if not packet.startswith(UNICORE_LOG_LIST_KEY + b',') or len(packet) > 4096:
         raise ValueError('Invalid UNILOGLIST header/size')
     if b'*' in packet:
-        _, body = _base_unicore_fields(packet)
-    else:
-        # Some firmware returns a counted list and blank terminator without CRC.
-        if not packet.endswith((b'\r\n\r\n', b'\n\n')):
-            raise ValueError('Incomplete UNILOGLIST terminator')
-        text = packet.decode('ascii')
-        if any(ord(char) < 32 and char not in '\t\r\n' or ord(char) == 127 for char in text):
-            raise ValueError('Invalid UNILOGLIST characters')
-        body = text.split(';', 1)[1]
-        if any(not line.lstrip().startswith('<') for line in body.splitlines() if line.strip()):
-            raise ValueError('Invalid UNILOGLIST row prefix')
+        return _base_unicore_fields(packet)[1]
+    # Some firmware returns a counted list and blank terminator without CRC.
+    if not packet.endswith((b'\r\n\r\n', b'\n\n')):
+        raise ValueError('Incomplete UNILOGLIST terminator')
+    text = packet.decode('ascii')
+    if any(ord(char) < 32 and char not in '\t\r\n' or ord(char) == 127 for char in text):
+        raise ValueError('Invalid UNILOGLIST characters')
+    body = text.split(';', 1)[1]
+    if any(not line.lstrip().startswith('<') for line in body.splitlines() if line.strip()):
+        raise ValueError('Invalid UNILOGLIST row prefix')
+    return body
+
+
+def _parse_unicore_loglist_entry(line):
+    tokens = line.upper().split()
+    if tokens and tokens[0] == 'LOG':
+        tokens = tokens[1:]
+    if len(tokens) < 3:
+        raise ValueError('Invalid UNILOGLIST row')
+    name, port = (tokens[1], tokens[0]) if tokens[0].startswith('COM') else (tokens[0], tokens[1])
+    if not re.fullmatch(r'[A-Z][A-Z0-9]{1,23}', name) or port not in ('COM1', 'COM2', 'COM3'):
+        raise ValueError('Invalid UNILOGLIST message/port')
+    trigger = tokens[2:]
+    if trigger == ['ONCE']:
+        return (port, name), None
+    if trigger[:1] == ['ONTIME']:
+        trigger = trigger[1:]
+    if len(trigger) != 1:
+        raise ValueError('Unsupported UNILOGLIST trigger')
+    period = float(trigger[0])
+    if not math.isfinite(period) or period <= 0:
+        raise ValueError('Invalid UNILOGLIST period')
+    return (port, name), period
+
+
+def _parse_unicore_loglist(packet):
+    body = _unicore_loglist_body(packet)
     lines = [line.strip().lstrip('<').strip() for line in body.splitlines() if line.strip()]
     if not lines or not re.fullmatch(r'\d+', lines[0]) or not 0 <= int(lines[0]) <= 64 or len(lines) != int(lines[0]) + 1:
         raise ValueError('Incomplete UNILOGLIST entries')
     logs = {}
     for line in lines[1:]:
-        tokens = line.upper().split()
-        if tokens and tokens[0] == 'LOG':
-            tokens = tokens[1:]
-        if len(tokens) < 3:
-            raise ValueError('Invalid UNILOGLIST row')
-        name, port = (tokens[1], tokens[0]) if tokens[0].startswith('COM') else (tokens[0], tokens[1])
-        if not re.fullmatch(r'[A-Z][A-Z0-9]{1,23}', name) or port not in ('COM1', 'COM2', 'COM3'):
-            raise ValueError('Invalid UNILOGLIST message/port')
-        trigger = tokens[2:]
-        if trigger == ['ONCE']:
-            period = None
-        else:
-            if trigger[:1] == ['ONTIME']:
-                trigger = trigger[1:]
-            if len(trigger) != 1:
-                raise ValueError('Unsupported UNILOGLIST trigger')
-            period = float(trigger[0])
-            if not math.isfinite(period) or period <= 0:
-                raise ValueError('Invalid UNILOGLIST period')
-        if (port, name) in logs:
+        key, period = _parse_unicore_loglist_entry(line)
+        if key in logs:
             raise ValueError('Duplicate UNILOGLIST entry')
-        logs[(port, name)] = period
+        logs[key] = period
     return logs
 
 
