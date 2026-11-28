@@ -279,7 +279,7 @@ class ConversationMixin:
             handler = handlers.get(ctx_type, {}).get(lowered)
             if handler:
                 await handler(update, _SyntheticContext([target]))
-            return True
+            return handler is not None
 
         # 2. Handle natural language quick edits (One-line parsing)
         # Try to see if the user typed something like 'port 2101 mk 123'
@@ -294,7 +294,7 @@ class ConversationMixin:
                 }.get(ctx_type)
                 if handler:
                     await handler(update, _SyntheticContext(args))
-                return True
+                    return
         except ValueError:
             pass # Not a key-value assignment, fall through
 
@@ -302,13 +302,13 @@ class ConversationMixin:
         # Clear context and re-evaluate as a fresh intent
         self._conversation_states.pop(key, None)
         if await self._try_dispatch_intent(update, answer):
-            return True
+            return
         principal = await self._resolve_principal(update)
         if principal.is_linked and principal.allows(auth.Permission.VIEW_DEVICES):
             await self._admin_read(update, "smart_search", {"query": answer})
         else:
             await update.message.reply_text("Không tìm thấy lệnh hoặc bạn chưa liên kết tài khoản.")
-        return True
+        return
 
     async def _handle_notification_setup(self, update, key, state, answer):
         step = state.get("step")
@@ -327,15 +327,15 @@ class ConversationMixin:
         selection = self._parse_notification_severity(answer)
         if selection is None:
             await update.message.reply_text("Chọn 1, 2 hoặc 3 để mình đặt mức cảnh báo.")
-            return True
+            return
         enabled, min_severity = selection
         data.update({"enabled": enabled, "min_severity": min_severity})
         if not enabled:
             await self._disable_notification_setup(update, key, data)
-            return True
+            return
         if data.get("scope_locked"):
             await self._prompt_locked_notification_scope(update, state, data)
-            return True
+            return
         state["step"] = "scope"
         await update.message.reply_text(
             "2/3 — Phạm vi cảnh báo:\n"
@@ -343,7 +343,7 @@ class ConversationMixin:
             "2. Chỉ một số trạm/rover\n"
             "3. Không nhận cảnh báo nội bộ"
         )
-        return True
+        return
 
     async def _disable_notification_setup(self, update, key, data):
         binding_id = int(data["binding_id"])
@@ -385,7 +385,7 @@ class ConversationMixin:
         valid, quiet_start, quiet_end = self._parse_quiet_hours(answer)
         if not valid:
             await update.message.reply_text("Giờ im lặng cần dạng HH:MM-HH:MM, ví dụ 22:00-07:00.")
-            return True
+            return
         binding_id = int(data["binding_id"])
         await zalo_repository.set_notification_preference(
             binding_id,
@@ -413,7 +413,7 @@ class ConversationMixin:
             f"• Giờ im lặng: {quiet}\n\n"
             "Gõ /menu để bắt đầu dùng bot."
         )
-        return True
+        return
 
 
     def _parse_notification_severity(self, answer):
@@ -448,28 +448,28 @@ class ConversationMixin:
             await update.message.reply_text(
                 "Nhập danh sách tên trạm hoặc username rover, cách nhau bằng dấu phẩy hoặc dấu chấm phẩy."
             )
-            return True
+            return
         elif lowered in {"3", "none", "off", "tat", "tắt", "khong", NEGATIVE_ANSWER}:
             data["enabled"] = False
             data["scopes"] = {"mode": "none"}
             state["step"] = "quiet"
         else:
             await update.message.reply_text("Chọn 1, 2 hoặc 3 cho phạm vi cảnh báo.")
-            return True
+            return
         await update.message.reply_text(
             "3/3 — Giờ im lặng:\n"
             "1. Không đặt giờ im lặng\n"
             "2. 22:00-07:00\n"
             "Hoặc nhập trực tiếp dạng HH:MM-HH:MM."
         )
-        return True
+        return
 
     async def _handle_notification_scope_values(self, update, state, answer):
         data = state["data"]
         selected = self._split_list_value(answer)
         if not selected:
             await update.message.reply_text("Danh sách chưa hợp lệ. Ví dụ: HCM01; rover01")
-            return True
+            return
         data["scopes"] = {"mode": "selected", "values": selected}
         state["step"] = "quiet"
         await update.message.reply_text(
@@ -478,7 +478,7 @@ class ConversationMixin:
             "2. 22:00-07:00\n"
             "Hoặc nhập trực tiếp dạng HH:MM-HH:MM."
         )
-        return True
+        return
 
     async def _handle_station_config_read(self, update, key, state, answer):
         flow = state["flow"]
@@ -573,7 +573,7 @@ class ConversationMixin:
         if answer in BACK_COMMANDS:
             state["step"] = "field"
             await update.message.reply_text(self._format_editor_menu(flow, data))
-            return True
+            return
         if answer in {"1", "bật", "bat", "on", "true"}:
             new_value = True
         elif answer in {"2", "tắt", "tat", "off", "false"}:
@@ -583,14 +583,14 @@ class ConversationMixin:
             await update.message.reply_text(
                 f"Chọn 1 ({enabled_label}), 2 ({disabled_label}) hoặc 0 (quay lại)."
             )
-            return True
+            return
         data["changes"][field] = new_value
         state["step"] = "field"
         await update.message.reply_text(
             f"✅ Đã chọn [{self._human_value(field, new_value)}]. Chưa áp dụng cho tới khi xác nhận.\n\n"
             + self._format_editor_menu(flow, data)
         )
-        return True
+        return
 
     async def _handle_editor_mountpoint_action(self, update, state, answer, flow, current_value):
         data = state["data"]
@@ -598,7 +598,7 @@ class ConversationMixin:
         if answer in BACK_COMMANDS:
             state["step"] = "field"
             await update.message.reply_text(self._format_editor_menu(flow, data))
-            return True
+            return
         if answer == "1":
             current_lower = {item.lower() for item in current_mountpoints}
             options = [
@@ -613,25 +613,25 @@ class ConversationMixin:
                 + (option_text or "Không còn mountpoint gợi ý từ hệ thống.")
                 + "\n\nBạn cũng có thể nhập tên khác, nhiều tên cách nhau bằng dấu ;"
             )
-            return True
+            return
         if answer == "2":
             if not current_mountpoints:
                 await update.message.reply_text("Danh sách hiện đang trống; không có gì để xóa.")
-                return True
+                return
             data["selection_options"] = current_mountpoints
             state["step"] = "mountpoint_remove"
             await update.message.reply_text(
                 "Chọn mountpoint cần XÓA bằng số (có thể chọn nhiều: 1 3):\n"
                 + "\n".join(f"[✓] {i}. {item}" for i, item in enumerate(current_mountpoints, 1))
             )
-            return True
+            return
         if answer == "3":
             state["step"] = "mountpoint_replace"
             await update.message.reply_text(
                 "Nhập toàn bộ danh sách mountpoint mới, cách nhau bằng dấu ;\n"
                 "Ví dụ: HCM01;HN01"
             )
-            return True
+            return
         if answer == "4":
             data["changes"]["mountpoints"] = ""
             state["step"] = "field"
@@ -639,12 +639,13 @@ class ConversationMixin:
                 "✅ Đã đánh dấu xóa toàn bộ mountpoint. Chưa áp dụng cho tới khi xác nhận.\n\n"
                 + self._format_editor_menu(flow, data)
             )
-            return True
+            return
         await update.message.reply_text("Chọn từ 0 đến 4 theo danh sách.")
-        return True
+        return
 
     async def _handle_editor_mountpoint_selection(self, update, state, answer, flow, current_value):
         data = state["data"]
+        step = state["step"]
         options = list(data.get("selection_options") or [])
         number_tokens = re.findall(r"\d+", answer)
         selected = [
@@ -655,7 +656,7 @@ class ConversationMixin:
             selected = self._split_list_value(answer)
         if not selected:
             await update.message.reply_text("Mình chưa nhận được lựa chọn hợp lệ. Hãy gửi số trong danh sách.")
-            return True
+            return
         current_mountpoints = self._split_list_value(current_value)
         if step == "mountpoint_add":
             new_list = list(dict.fromkeys(current_mountpoints + selected))
@@ -670,27 +671,27 @@ class ConversationMixin:
             "Chưa áp dụng cho tới khi xác nhận.\n\n"
             + self._format_editor_menu(flow, data)
         )
-        return True
+        return
 
     async def _handle_editor_mountpoint_replace(self, update, state, answer, flow):
         data = state["data"]
         new_list = self._split_list_value(answer)
         if not new_list:
             await update.message.reply_text("Danh sách không hợp lệ. Nếu muốn xóa hết, quay lại và chọn mục 4.")
-            return True
+            return
         data["changes"]["mountpoints"] = ";".join(new_list)
         state["step"] = "field"
         await update.message.reply_text(
             f"✅ Danh sách mới: {', '.join(new_list)}\n\n" + self._format_editor_menu(flow, data)
         )
-        return True
+        return
 
     async def _handle_editor_value(self, update, state, answer, flow, field):
         data = state["data"]
         if answer.lower() in {"giữ", "giu", *BACK_COMMANDS}:
             state["step"] = "field"
             await update.message.reply_text(self._format_editor_menu(flow, data))
-            return True
+            return
         data["changes"][field] = answer
         state["step"] = "field"
         await update.message.reply_text(
@@ -698,7 +699,7 @@ class ConversationMixin:
             "Chưa áp dụng cho tới khi xác nhận.\n\n"
             + self._format_editor_menu(flow, data)
         )
-        return True
+        return
 
 
     async def _handle_rover_create(self, update, key, state, answer):
@@ -778,14 +779,14 @@ class ConversationMixin:
             data["username"] = answer
             state["step"] = "reason"
             await update.message.reply_text("2/2 — Nhập lý do chặn:")
-            return True
+            return
         data["reason"] = answer
         self._conversation_states.pop(key, None)
         await self._queue_admin_action(
             update, "rover_block", data,
             f"CHẶN rover {data['username']}\nLý do: {answer}",
         )
-        return True
+        return
 
     async def _handle_station_power_or_delete(self, update, key, state, answer):
         flow = state["flow"]
@@ -869,8 +870,10 @@ class ConversationMixin:
         if flow == "rover_read" and await self._handle_rover_read(update, key, answer):
             return
         handler = flow_handlers.get(flow)
-        if handler and await handler(update, key, state, answer):
-            return
+        if handler:
+            handled = await handler(update, key, state, answer)
+            if handled is not False:
+                return
 
 
         self._conversation_states.pop(key, None)
