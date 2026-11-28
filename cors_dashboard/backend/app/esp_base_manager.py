@@ -627,16 +627,18 @@ def _update_prefix7_device(device, source, rover, mountpoint, now):
     source_active = _source_has_data(source, now)
     valid_rover = _prefix7_rover_is_valid(rover, mountpoint, now)
     can_start = valid_rover and source_active
+    if not valid_rover:
+        decoder_status = 'missing_rover_credentials'
+    elif source_active:
+        decoder_status = 'ready'
+    else:
+        decoder_status = 'source_offline'
     device.system_info = {
         **(device.system_info or {}),
         'auth_license_bypass': True,
         'base_type': '4g',
         'read_only': True,
-        'decoder_status': (
-            ('ready' if source_active else 'source_offline')
-            if valid_rover
-            else 'missing_rover_credentials'
-        ),
+        'decoder_status': decoder_status,
     }
     if not can_start or device.status in ('awaiting_license', 'unprovisioned', 'locked', 'sleep'):
         device.status = 'offline'

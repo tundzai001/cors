@@ -381,6 +381,15 @@ def _rover_history_session_payload(session, points, date_start, date_end):
         and session.longitude is not None
         and (date_start is None or date_start <= int(session.position_updated_at or 0) < date_end)
     )
+    last_position = None
+    if has_position:
+        last_position = {
+            "lat": session.latitude,
+            "lon": session.longitude,
+            "recorded_at": session.position_updated_at,
+            "fix_quality": session.position_fix_quality if session.position_fix_quality is not None else 4,
+            "satellites": session.position_satellite_count,
+        }
     return {
         "id": session.id,
         "server": session.server,
@@ -394,13 +403,7 @@ def _rover_history_session_payload(session, points, date_start, date_end):
         "uptime_seconds": session.uptime_seconds,
         "current_fix_quality": session.latest_fix_quality,
         "satellites": session.satellite_count,
-        "last_position": {
-            "lat": session.latitude,
-            "lon": session.longitude,
-            "recorded_at": session.position_updated_at,
-            "fix_quality": session.position_fix_quality if session.position_fix_quality is not None else 4,
-            "satellites": session.position_satellite_count,
-        } if has_position else None,
+        "last_position": last_position,
         "points": points[session.id],
     }
 

@@ -630,18 +630,15 @@ class CommandsMixin:
             return
         role = "admin" if binding.binding_type == "group_admin" else "public"
         self._revoked_chat_ids.discard(str(chat_id))
+        if binding.station_scope_mode == "all":
+            scope_text = "\nPhạm vi: tất cả trạm."
+        elif binding.station_scope_mode == "none":
+            scope_text = "\nPhạm vi: không có trạm."
+        else:
+            scope_text = f"\nPhạm vi: {len(binding.allowed_bases or [])} trạm được admin chọn."
         await context.bot.send_message(
             chat_id=chat_id,
-            text=(
-                self._registration_success_text(role, chat_type)
-                + (
-                    "\nPhạm vi: tất cả trạm."
-                    if binding.station_scope_mode == "all"
-                    else "\nPhạm vi: không có trạm."
-                    if binding.station_scope_mode == "none"
-                    else f"\nPhạm vi: {len(binding.allowed_bases or [])} trạm được admin chọn."
-                )
-            ),
+            text=self._registration_success_text(role, chat_type) + scope_text,
         )
         await self._start_notification_onboarding(update, int(binding.id), str(binding.binding_type))
 

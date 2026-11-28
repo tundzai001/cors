@@ -83,7 +83,12 @@ class AlertsMixin:
     def _notification_details(newly_offline, newly_online, new_alerts):
         severities = {str(alert.get("severity") or "warning").lower() for alert in new_alerts}
         critical_alert = bool(severities.intersection({"critical", "fatal", "error", "high", "severe"}))
-        severity = "critical" if newly_offline or critical_alert else "warning" if new_alerts else "info"
+        if newly_offline or critical_alert:
+            severity = "critical"
+        elif new_alerts:
+            severity = "warning"
+        else:
+            severity = "info"
         subjects = set()
         for device in newly_offline + newly_online:
             subjects.update(filter(None, (device.get("name"), device.get("serial"))))

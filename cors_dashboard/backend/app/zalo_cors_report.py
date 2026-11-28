@@ -428,11 +428,14 @@ async def _report_environment(intent):
 def _magnetic_report(value, kp):
     if not kp:
         return 'Chỉ số địa từ đang tạm mất cập nhật.'
-    state = (
-        'bão từ mạnh, nguy cơ gián đoạn định vị tăng.' if value >= 7 else
-        'đang có bão từ; cần theo dõi chất lượng định vị.' if value >= 5 else
-        'đang nhiễu động.' if value >= 4 else 'mức yên tĩnh.'
-    )
+    if value >= 7:
+        state = 'bão từ mạnh, nguy cơ gián đoạn định vị tăng.'
+    elif value >= 5:
+        state = 'đang có bão từ; cần theo dõi chất lượng định vị.'
+    elif value >= 4:
+        state = 'đang nhiễu động.'
+    else:
+        state = 'mức yên tĩnh.'
     return f"Địa từ Kp {value:.2f} · {state} NOAA SWPC · {kp['stamp']}."
 
 

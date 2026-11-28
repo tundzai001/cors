@@ -143,7 +143,12 @@ def on_connect(client, userdata, flags, rc, *args, **kwargs):
         stats["mqtt"]["connected"] = False
 
 def on_disconnect(client, userdata, *args, **kwargs):
-    rc = args[0] if len(args) == 1 else (args[1] if len(args) >= 2 else None)
+    if len(args) == 1:
+        rc = args[0]
+    elif len(args) >= 2:
+        rc = args[1]
+    else:
+        rc = None
     rc_str = f" (rc={rc})" if rc is not None else ""
     logging.warning(f"[MQTT] Mất kết nối khỏi broker{rc_str}. Đang tự động thử lại...")
     stats["mqtt"]["connected"] = False

@@ -75,9 +75,13 @@ def _qzss_record(system, status, cells, norad_by_svn):
         code = f"{prefix}{int(match[1]):02d}" if match else None
     if not code and status != "retired":
         return None
+    if status == "retired":
+        record_status = "unusable" if code else "retired"
+    else:
+        record_status = status or "operational"
     record = {
         "code": code,
-        "status": ("unusable" if code else "retired") if status == "retired" else status or "operational",
+        "status": record_status,
     }
     return norad, record
 

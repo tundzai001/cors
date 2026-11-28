@@ -211,9 +211,12 @@ class ZaloAssistantRepository:
         minimum = str(pref.min_severity or "critical").lower()
         if not pref.enabled or SEVERITY_ORDER.get(severity, 0) < SEVERITY_ORDER.get(minimum, 2):
             return False
-        scopes = scope_override if isinstance(scope_override, dict) else (
-            pref.scopes if isinstance(pref.scopes, dict) else {}
-        )
+        if isinstance(scope_override, dict):
+            scopes = scope_override
+        elif isinstance(pref.scopes, dict):
+            scopes = pref.scopes
+        else:
+            scopes = {}
         if not ZaloAssistantRepository._notification_scope_allowed(scopes, subjects):
             return False
         if pref.quiet_start and pref.quiet_end and ZaloAssistantRepository._inside_notification_quiet_hours(pref, severity):

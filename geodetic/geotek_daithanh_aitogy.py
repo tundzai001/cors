@@ -368,7 +368,10 @@ def generate_gga(lat, lon, alt):
         abs_v = abs(val)
         deg = int(abs_v)
         minutes = (abs_v - deg) * 60
-        direction = ("N" if val >= 0 else "S") if is_lat else ("E" if val >= 0 else "W")
+        if is_lat:
+            direction = "N" if val >= 0 else "S"
+        else:
+            direction = "E" if val >= 0 else "W"
         if is_lat:
             return f"{deg:02d}{minutes:08.5f},{direction}"
         else:
@@ -2395,6 +2398,9 @@ class MonitorWorker(threading.Thread):
         return True
 
     def _build_relay_status(self, now, current_status, rtcm_stats, coords, satellites, satellite_count):
+        rtk_fix_status = "NO_FIX"
+        if not self.is_prefix7 and satellite_count > 0:
+            rtk_fix_status = "FIXED"
         return {
             "serial": self.serial,
             "rtcm_stats": rtcm_stats,
@@ -2418,7 +2424,7 @@ class MonitorWorker(threading.Thread):
                 "active_mountpoint": self.cfg['mountpoint'],
             },
             "source_mountpoint": self.cfg['mountpoint'],
-            "rtk_fix_status": "NO_FIX" if self.is_prefix7 else ("FIXED" if satellite_count > 0 else "NO_FIX"),
+            "rtk_fix_status": rtk_fix_status,
             "detected_chip_type": "UNKNOWN" if self.is_prefix7 else "Ublox",
             "is_provisioned": self.is_prefix7 or has_license(self.serial),
             "nmea_data": {
@@ -2844,7 +2850,12 @@ class MqttSourceWorker(threading.Thread):
                 "alt": latest_gga.get("altitude"),
             }
         base_coords = configured_coords
-        rtk_fix_status = latest_gga.get("fix_status") if latest_gga else ("DGPS" if mqtt_data_active else "NO_FIX")
+        if latest_gga:
+            rtk_fix_status = latest_gga.get("fix_status")
+        elif mqtt_data_active:
+            rtk_fix_status = "DGPS"
+        else:
+            rtk_fix_status = "NO_FIX"
         base_config = {
             "base_setup_method": self.cfg.get("setup_method") or self.cfg.get("base_setup_method"),
             "survey_in_duration": self.cfg.get("duration"),

@@ -960,10 +960,15 @@ async def _refresh_ubx_rf_quality(reader):
 def _record_ubx_rf_failure(message_id, error, packet):
     if message_id != 0x38:
         return
+    if isinstance(error, TimeoutError):
+        error_kind = 'timeout'
+    elif isinstance(error, ValueError):
+        error_kind = 'invalid_response'
+    else:
+        error_kind = 'query_failed'
     failure = {
         'error': (str(error) or type(error).__name__)[:160],
-        'error_kind': 'timeout' if isinstance(error, TimeoutError)
-        else 'invalid_response' if isinstance(error, ValueError) else 'query_failed',
+        'error_kind': error_kind,
     }
     if packet:
         failure['frame_b64'] = base64.b64encode(packet[:128]).decode('ascii')
@@ -5134,8 +5139,12 @@ async def _verify_unicore_configuration(agent, reader, payload, command_id):
 
     await _verify_unicore_fixed_position(reader, payload, wanted_position, groups, details, result)
     await _verify_unicore_output_logs(reader, payload, expected_logs, groups, details, result)
-    result['state'] = ('unread' if any(group['unread'] for group in groups.values())
-                       else 'mismatch' if any(group['mismatched'] for group in groups.values()) else 'match')
+    if any(group['unread'] for group in groups.values()):
+        result['state'] = 'unread'
+    elif any(group['mismatched'] for group in groups.values()):
+        result['state'] = 'mismatch'
+    else:
+        result['state'] = 'match'
     agent.gnss_verification = result
     agent.gnss_verification_at = time.monotonic()
     logging.log(logging.INFO if result['state'] == 'match' else logging.WARNING,
@@ -5347,7 +5356,12 @@ def _update_ublox_verification_groups(groups, desired, values, chunk):
     for key, _ in chunk:
         if key not in desired:
             continue
-        name = 'protocols' if key >> 28 == 1 else 'rtcm' if key >= 0x209102bd else 'diagnostics'
+        if key >> 28 == 1:
+            name = 'protocols'
+        elif key >= 0x209102bd:
+            name = 'rtcm'
+        else:
+            name = 'diagnostics'
         group = groups[name]
         group['checked' if values is not None else 'unread'] += 1
         if values is not None and values[key] != desired[key]:
@@ -5383,7 +5397,12 @@ def _ublox_desired_values(records, jobs, details):
 def _finalize_gnss_verification(agent, result, groups):
     unread = any(group['unread'] or not group['checked'] for group in groups.values())
     mismatch = any(group['mismatched'] for group in groups.values())
-    result['state'] = 'unread' if unread else 'mismatch' if mismatch else 'match'
+    if unread:
+        result['state'] = 'unread'
+    elif mismatch:
+        result['state'] = 'mismatch'
+    else:
+        result['state'] = 'match'
     agent.gnss_verification = result
     agent.gnss_verification_at = time.monotonic()
     return result
@@ -6877,7 +6896,12 @@ def _mqtt_connect_callback(loop, command_topics, control_ack_topic):
 
 
 def _mqtt_on_disconnect(client, userdata, *args):
-    rc = args[-2] if len(args) >= 2 else (args[0] if args else 0)
+    if len(args) >= 2:
+        rc = args[-2]
+    elif args:
+        rc = args[0]
+    else:
+        rc = 0
     _set_transport_state("mqtt", False)
     if rc != 0:
         _telemetry_inc("reconnect", "mqtt")
@@ -7309,6 +7333,13 @@ def _set_auto_base_progress(phase: str, **extra):
     gga_age = round(now - gga_ts, 1) if gga_ts > 0 else None
     fix_status = globals().get('LAST_GGA_FIX_STATUS') or "NO_FIX"
     coord = globals().get('LAST_GGA_COORD')
+    current_coord = None
+    if coord:
+        current_coord = {
+            "lat": repr(coord[0]) if coord[0] is not None else None,
+            "lon": repr(coord[1]) if coord[1] is not None else None,
+            "alt": repr(coord[2]) if coord[2] is not None else None,
+        }
     
     progress = {
         "phase": phase,
@@ -7316,11 +7347,7 @@ def _set_auto_base_progress(phase: str, **extra):
         "last_raw_gga": raw_gga,
         "gga_age_seconds": gga_age,
         "gga_fix_status": fix_status,
-        "current_coord": {
-            "lat": repr(coord[0]) if coord and coord[0] is not None else None,
-            "lon": repr(coord[1]) if coord and coord[1] is not None else None,
-            "alt": repr(coord[2]) if coord and coord[2] is not None else None,
-        } if coord else None,
+        "current_coord": current_coord,
     }
     client = globals().get('active_auto_base_client')
     if client is not None and hasattr(client, 'datum_message_counts'):
@@ -7951,6 +7978,12 @@ def _build_auto_base_result(session, sample_result, projection, transformed, chi
                 f'.{digits}f',
             )
     datum = sample_result['datum_snapshot']
+    zone_width_deg = None
+    if transform_applied:
+        if abs(datum.k0 - 0.9999) < 1e-9:
+            zone_width_deg = 3
+        elif abs(datum.k0 - 0.9996) < 1e-9:
+            zone_width_deg = 6
     conversion_report = {
         "version": 1,
         "source": {"host": session["host"], "port": int(session["port"]), "mountpoint": session["mountpoint"]},
@@ -7973,8 +8006,7 @@ def _build_auto_base_result(session, sample_result, projection, transformed, chi
         "rtcm1025": dict(datum.projection_1025),
         "location": location,
         "projection_source": projection_source,
-        "zone_width_deg": (3 if abs(datum.k0 - 0.9999) < 1e-9 else
-                           6 if abs(datum.k0 - 0.9996) < 1e-9 else None) if transform_applied else None,
+        "zone_width_deg": zone_width_deg,
         "province_code": province_code,
         "province_name": province_name,
         "province_hint": None,

@@ -740,9 +740,11 @@ class ZaloBotService(
         update = Update.de_json(update_data, self.app.bot)
         if update is None:
             raise ValueError("Zalo SDK could not parse webhook payload")
-        event["parsed_update"] = REDACTED_VALUE if sensitive_input else self._safe_debug_value(
-            update.to_dict() if hasattr(update, "to_dict") else update
-        )
+        if sensitive_input:
+            event["parsed_update"] = REDACTED_VALUE
+        else:
+            debug_update = update.to_dict() if hasattr(update, "to_dict") else update
+            event["parsed_update"] = self._safe_debug_value(debug_update)
         message = getattr(update, "message", None)
         if not getattr(getattr(message, "chat", None), "id", None):
             return update, None, True
