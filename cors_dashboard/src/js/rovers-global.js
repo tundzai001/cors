@@ -3336,13 +3336,17 @@ document.addEventListener('DOMContentLoaded', async () => {
             || document.getElementById('sync-mountpoints-btn')?.disabled);
     }
 
+    function showMountpointLoading(container, background) {
+        if (background) return;
+        container.innerHTML = '<div class="text-center py-5"><div class="spinner-border spinner-border-sm text-info me-2"></div><span class="text-muted">Đang tải danh sách mountpoints...</span></div>';
+    }
+
     // ✅ Load and render mountpoints into tab
     async function loadAndRenderMountpoints({ background = false } = {}) {
         const container = document.getElementById('mountpoints-container');
         if (shouldSkipMountpointRefresh(container, background)) return;
         mountpointsRefreshInProgress = true;
-
-        if (!background) container.innerHTML = '<div class="text-center py-5"><div class="spinner-border spinner-border-sm text-info me-2"></div><span class="text-muted">Đang tải danh sách mountpoints...</span></div>';
+        showMountpointLoading(container, background);
 
         try {
             const res = await apiFetchRaw('/api/admin/caster-sources', { headers: API_HEADERS, cache: 'no-store' });
