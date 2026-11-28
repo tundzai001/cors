@@ -208,9 +208,9 @@
     align-items: center;
     min-height: 1.5rem;
     padding: 0.1875rem 0.625rem;
-    border: 1px solid rgba(248, 113, 113, 0.28);
+    border: 1px solid rgba(248, 113, 113, 0.4);
     border-radius: 999px;
-    background: rgba(248, 113, 113, 0.1);
+    background: #4c0519;
     color: #fca5a5;
     font-size: 0.6875rem;
     font-weight: 700;
@@ -275,9 +275,9 @@
     align-items: center;
     min-height: 1.5rem;
     padding: 0.1875rem 0.55rem;
-    border: 1px solid rgba(56, 189, 248, 0.24);
+    border: 1px solid rgba(56, 189, 248, 0.32);
     border-radius: 999px;
-    background: rgba(56, 189, 248, 0.08);
+    background: #0c2a40;
     color: #bae6fd;
     font-size: 0.6875rem;
     font-weight: 700;
@@ -285,8 +285,8 @@
 }
 
 .gnss-output-policy__chip--muted {
-    border-color: rgba(148, 163, 184, 0.24);
-    background: rgba(148, 163, 184, 0.08);
+    border-color: rgba(148, 163, 184, 0.32);
+    background: #1e293b;
     color: #cbd5e1;
 }
 
@@ -364,8 +364,8 @@ body.dashboard-fixed-layout > main.container-fluid {
 }
 
 .dashboard-sidebar-head .badge {
-    border: 1px solid rgba(56, 189, 248, 0.24);
-    background: rgba(56, 189, 248, 0.12) !important;
+    border: 1px solid rgba(56, 189, 248, 0.32);
+    background: #0c2a40 !important;
     color: #bae6fd;
     box-shadow: none;
 }
@@ -473,8 +473,8 @@ body.dashboard-fixed-layout > main.container-fluid {
 .dashboard-device-card > .badge,
 .dashboard-device-card__top > .badge,
 .dashboard-device-card__top .badge:not([class*="bg-"]) {
-    border: 1px solid rgba(148, 163, 184, 0.18);
-    background: rgba(148, 163, 184, 0.1);
+    border: 1px solid rgba(148, 163, 184, 0.28);
+    background: #1e293b;
     color: #cbd5e1;
 }
 
@@ -561,12 +561,12 @@ body.dashboard-fixed-layout > main.container-fluid {
 
 .dashboard-tabs .nav-link:hover {
     color: #e5e7eb;
-    background: rgba(148, 163, 184, 0.08);
+    background: #334155;
 }
 
 .dashboard-tabs .nav-link.active {
     color: #e0f2fe;
-    background: rgba(56, 189, 248, 0.16);
+    background: #075985;
     box-shadow: none;
 }
 
@@ -782,12 +782,12 @@ body.dashboard-fixed-layout > main.container-fluid {
 
 .dashboard-tabs .nav-link:hover {
     color: #e5e7eb;
-    background: rgba(148, 163, 184, 0.08);
+    background: #334155;
 }
 
 .dashboard-tabs .nav-link.active {
     color: #e0f2fe;
-    background: rgba(56, 189, 248, 0.16);
+    background: #075985;
 }
 
 /* ==============================================================================
@@ -894,9 +894,9 @@ body.dashboard-fixed-layout > main.container-fluid {
 
 .cors-dashboard .dashboard-sidebar-head .badge {
     min-width: 34px;
-    border: 1px solid rgba(34, 211, 238, 0.24);
+    border: 1px solid rgba(34, 211, 238, 0.32);
     border-radius: 999px;
-    background: rgba(34, 211, 238, 0.10) !important;
+    background: #083344 !important;
     color: #a5f3fc;
 }
 
@@ -1035,7 +1035,7 @@ body.dashboard-fixed-layout > main.container-fluid {
 }
 
 .cors-dashboard .dashboard-station-type.active strong {
-    background: rgba(4, 16, 30, 0.2);
+    background: #e0f2fe;
     color: #04101e;
 }
 
@@ -1126,8 +1126,8 @@ body.dashboard-fixed-layout > main.container-fluid {
 }
 
 .cors-dashboard .dashboard-device-card__top > .badge:not(.bg-primary) {
-    border: 1px solid rgba(148, 163, 184, 0.22);
-    background: rgba(148, 163, 184, 0.10);
+    border: 1px solid rgba(148, 163, 184, 0.32);
+    background: #1e293b;
     color: #cbd5e1;
 }
 
@@ -1253,16 +1253,16 @@ body.dashboard-fixed-layout > main.container-fluid {
 
 .cors-dashboard .dashboard-detail-header .btn-outline-danger {
     min-height: 32px;
-    border: 1px solid rgba(251, 113, 133, 0.35) !important;
+    border: 1px solid rgba(251, 113, 133, 0.45) !important;
     border-radius: 7px;
-    background: rgba(251, 113, 133, 0.08);
+    background: #4c0519;
     color: #fda4af;
     box-shadow: none;
 }
 
 .cors-dashboard .dashboard-detail-header .btn-outline-danger:hover {
     transform: none;
-    background: rgba(251, 113, 133, 0.14);
+    background: #7f1d1d;
 }
 
 .cors-dashboard .dashboard-detail-body {

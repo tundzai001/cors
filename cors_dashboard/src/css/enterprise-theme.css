@@ -397,10 +397,10 @@
     border: 1px solid rgba(0, 242, 255, 0.15);
     transition: all 0.4s;
 }
-.feature-icon-blue { background: rgba(0, 136, 255, 0.1); color: #4facfe; }
-.feature-icon-green { background: rgba(0, 200, 100, 0.1); color: #51cf66; }
-.feature-icon-purple { background: rgba(150, 100, 255, 0.1); color: #cc5de8; }
-.feature-icon-cyan { background: rgba(0, 242, 255, 0.1); color: var(--primary-cyan); }
+.feature-icon-blue { background: #0c2a40; color: #4facfe; }
+.feature-icon-green { background: #064e3b; color: #51cf66; }
+.feature-icon-purple { background: #3b0764; color: #cc5de8; }
+.feature-icon-cyan { background: #083344; color: var(--primary-cyan); }
 
 .landing-feature-title {
     font-size: 1.25rem; font-weight: 800; color: #fff; margin-bottom: 12px;
@@ -458,12 +458,12 @@
 }
 .login-panel-close {
     position: absolute; top: 20px; right: 20px;
-    background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.1);
-    color: #aaa; width: 36px; height: 36px; border-radius: 50%;
+    background: #1e293b; border: 1px solid rgba(255,255,255,0.2);
+    color: #e2e8f0; width: 36px; height: 36px; border-radius: 50%;
     font-size: 1.2rem; cursor: pointer; transition: all 0.3s;
     display: flex; align-items: center; justify-content: center;
 }
-.login-panel-close:hover { background: rgba(255,255,255,0.1); color: #fff; }
+.login-panel-close:hover { background: #334155; color: #fff; }
 .login-panel-body { padding: 24px 32px; flex: 1; }
 .login-input-group { position: relative; margin-bottom: 16px; }
 .login-input-icon {
@@ -475,8 +475,8 @@
     color: var(--primary-cyan);
 }
 .login-input {
-    width: 100%; background: rgba(0, 242, 255, 0.04);
-    border: 1px solid rgba(0, 242, 255, 0.15); border-radius: 14px;
+    width: 100%; background: #0b1220;
+    border: 1px solid rgba(0, 242, 255, 0.3); border-radius: 14px;
     color: #fff; padding: 14px 16px 14px 48px; font-size: 0.95rem;
     transition: all 0.3s; position: relative; z-index: 1;
 }
@@ -499,9 +499,9 @@
 }
 .login-submit-btn:disabled { opacity: 0.6; cursor: not-allowed; }
 .login-error {
-    background: rgba(220, 53, 69, 0.15); border: 1px solid rgba(220, 53, 69, 0.4);
+    background: #4c0519; border: 1px solid rgba(220, 53, 69, 0.6);
     border-radius: 12px; padding: 10px 14px; margin-bottom: 16px;
-    font-size: 0.85rem; color: #ff6b6b;
+    font-size: 0.85rem; color: #fda4af;
     animation: shakeError 0.3s ease;
 }
 @keyframes shakeError {
@@ -587,8 +587,8 @@
     color: #b0c4de; font-size: 0.82rem;
 }
 .station-dir-item:hover {
-    border-color: rgba(0, 242, 255, 0.3);
-    background: rgba(0, 242, 255, 0.04);
+    border-color: rgba(0, 242, 255, 0.55);
+    background: #0c2a40;
     color: #fff; transform: translateY(-1px);
 }
 .station-dir-dot {
@@ -1198,15 +1198,15 @@ html.lenis, html.lenis body {
     transition: all 0.4s;
     flex-shrink: 0;
 }
-.feature-icon-blue { background: rgba(0, 136, 255, 0.15) !important; color: #4facfe !important; }
-.feature-icon-green { background: rgba(0, 200, 100, 0.15) !important; color: #51cf66 !important; }
-.feature-icon-purple { background: rgba(150, 100, 255, 0.15) !important; color: #cc5de8 !important; }
-.feature-icon-cyan { background: rgba(0, 242, 255, 0.15) !important; color: #00f2ff !important; }
+.feature-icon-blue { background: #0c2a40 !important; color: #4facfe !important; }
+.feature-icon-green { background: #064e3b !important; color: #51cf66 !important; }
+.feature-icon-purple { background: #3b0764 !important; color: #cc5de8 !important; }
+.feature-icon-cyan { background: #083344 !important; color: #00f2ff !important; }
 
 .landing-feature-title {
     font-size: 1.4rem !important; font-weight: 800 !important; color: #fff !important; margin-bottom: 16px !important;
-    background: linear-gradient(to right, #fff, #00f2ff) !important;
-    -webkit-background-clip: text !important; -webkit-text-fill-color: transparent !important;
+    background: none !important;
+    -webkit-text-fill-color: #fff !important;
 }
 .landing-feature-desc {
     font-size: 1rem !important; color: #8892b0 !important; line-height: 1.6 !important;
@@ -1219,7 +1219,7 @@ html.lenis, html.lenis body {
 }
 .back-badge {
     position: absolute !important; top: 24px !important; right: 24px !important;
-    background: rgba(0, 242, 255, 0.2) !important; color: #00f2ff !important;
+    background: #083344 !important; color: #67e8f9 !important;
     font-size: 0.7rem !important; font-weight: 800 !important; padding: 4px 12px !important;
     border-radius: 20px !important; text-transform: uppercase !important; letter-spacing: 1px !important;
 }
@@ -1436,8 +1436,8 @@ html.lenis, html.lenis body {
 
 .cta-contact-link:hover {
     color: #fff;
-    border-color: rgba(0, 242, 255, 0.34);
-    background: rgba(0, 242, 255, 0.08);
+    border-color: rgba(0, 242, 255, 0.55);
+    background: #075985;
     transform: translateY(-1px);
 }
 

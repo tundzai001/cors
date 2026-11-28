@@ -339,9 +339,9 @@ body.dashboard-fixed-layout .details-panel-scroll {
     border-radius: 6px;
     font-weight: 600;
     letter-spacing: 0.5px;
-    background: rgba(255, 255, 255, 0.08);
+    background: #0f172a;
     border: 1px solid rgba(255, 255, 255, 0.15);
-    color: #adb5bd;
+    color: #cbd5e1;
     transition: all 0.2s ease;
 }
 
@@ -479,7 +479,7 @@ body.cors-manager-page .admin-avatar {
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    background: linear-gradient(135deg, #3b82f6, #22c55e);
+    background: linear-gradient(135deg, #1d4ed8, #15803d);
     color: #fff;
     font-weight: 700;
     font-size: 0.9rem;
@@ -650,9 +650,9 @@ body.cors-manager-page .alert-strip {
     padding: 14px 16px;
     border-radius: 18px;
     margin-bottom: 16px;
-    background: linear-gradient(180deg, rgba(250, 204, 21, 0.16), rgba(250, 204, 21, 0.08));
-    border: 1px solid rgba(250, 204, 21, 0.24);
-    color: #f8fafc;
+    background: #713f12;
+    border: 1px solid rgba(250, 204, 21, 0.36);
+    color: #fef3c7;
 }
 
 body.cors-manager-page .status-pill {
@@ -667,8 +667,8 @@ body.cors-manager-page .status-pill {
     text-transform: uppercase;
 }
 
-body.cors-manager-page .status-ok { background: rgba(34, 197, 94, 0.15); color: #86efac; border: 1px solid rgba(34, 197, 94, 0.22); }
-body.cors-manager-page .status-blocked { background: rgba(248, 113, 113, 0.15); color: #fca5a5; border: 1px solid rgba(248, 113, 113, 0.25); }
+body.cors-manager-page .status-ok { background: #064e3b; color: #86efac; border: 1px solid rgba(34, 197, 94, 0.35); }
+body.cors-manager-page .status-blocked { background: #7f1d1d; color: #fecaca; border: 1px solid rgba(248, 113, 113, 0.4); }
 
 body.cors-manager-page .table-shell {
     overflow: hidden;
@@ -761,9 +761,9 @@ body.cors-manager-page .rover-status {
     text-transform: uppercase;
 }
 
-body.cors-manager-page .status-active { background: rgba(52, 211, 153, 0.12); color: #86efac; border: 1px solid rgba(52, 211, 153, 0.18); }
-body.cors-manager-page .status-standby { background: rgba(96, 165, 250, 0.12); color: #bfdbfe; border: 1px solid rgba(96, 165, 250, 0.18); }
-body.cors-manager-page .status-blocked-dark { background: rgba(248, 113, 113, 0.12); color: #fca5a5; border: 1px solid rgba(248, 113, 113, 0.2); }
+body.cors-manager-page .status-active { background: #064e3b; color: #86efac; border: 1px solid rgba(52, 211, 153, 0.35); }
+body.cors-manager-page .status-standby { background: #1e3a8a; color: #bfdbfe; border: 1px solid rgba(96, 165, 250, 0.35); }
+body.cors-manager-page .status-blocked-dark { background: #7f1d1d; color: #fecaca; border: 1px solid rgba(248, 113, 113, 0.35); }
 
 body.cors-manager-page .action-menu {
     width: 38px;
@@ -863,8 +863,8 @@ body.cors-manager-page .alert-icon {
     width: 40px;
     height: 40px;
     border-radius: 12px;
-    background: rgba(250, 204, 21, 0.16);
-    color: #facc15;
+    background: #713f12;
+    color: #fde68a;
 }
 
 body.cors-manager-page .alert-copy { color: #cbd5e1 !important; }
@@ -912,9 +912,9 @@ body.cors-manager-page .toast-fixed-layer { z-index: 1090; }
 
 
 .device-card:hover .badge {
-    background: rgba(255, 255, 255, 0.12);
+    background: #1e293b;
     border-color: rgba(255, 255, 255, 0.25);
-    color: #dee2e6;
+    color: #f1f5f9;
 }
 
 /* ========== SERVER STATUS - REDESIGNED ========== */
@@ -1045,10 +1045,10 @@ body.cors-manager-page .toast-fixed-layer { z-index: 1090; }
     align-items: center;
     justify-content: center;
     
-    background: rgba(250, 82, 82, 0.1);
-    border: 1px solid rgba(250, 82, 82, 0.3);
+    background: #4c0519;
+    border: 1px solid rgba(250, 82, 82, 0.45);
     border-radius: 6px;
-    color: #fa5252;
+    color: #fda4af;
     
     transition: all 0.25s cubic-bezier(0.23, 1, 0.32, 1);
 }
@@ -1060,8 +1060,8 @@ body.cors-manager-page .toast-fixed-layer { z-index: 1090; }
 }
 
 .device-card .btn-delete:hover {
-    background: #fa5252;
-    border-color: #fa5252;
+    background: #b91c1c;
+    border-color: #b91c1c;
     color: white;
     transform: scale(1.1);
     box-shadow: 0 4px 12px rgba(250, 82, 82, 0.4);
@@ -1229,7 +1229,7 @@ body.cors-manager-page .toast-fixed-layer { z-index: 1090; }
     align-items: center;
     gap: 8px;
     padding: 8px 10px;
-    background: rgba(255, 255, 255, 0.03);
+    background: #0f172a;
     border-radius: 6px;
     border: 1px solid rgba(255, 255, 255, 0.05);
     transition: all 0.3s cubic-bezier(0.23, 1, 0.32, 1);
@@ -1258,7 +1258,7 @@ body.cors-manager-page .toast-fixed-layer { z-index: 1090; }
 .stat-value {
     font-size: 0.95rem;
     font-weight: 700;
-    color: #e9ecef;
+    color: #e2e8f0;
     font-family: 'Consolas', 'Monaco', monospace;
 }
 
@@ -1684,8 +1684,8 @@ body.cors-manager-page .toast-fixed-layer { z-index: 1090; }
 }
 
 .nav-tabs .nav-link:hover {
-    color: rgba(255, 255, 255, 0.9);
-    background: rgba(255, 255, 255, 0.04);
+    color: #fff;
+    background: #1e293b;
 }
 
 .nav-tabs .nav-link.active {
@@ -1836,8 +1836,8 @@ border: 1px solid rgba(255, 255, 255, 0.1);
 
 .navbar-nav .nav-link:hover,
 .navbar-nav .nav-link.active {
-    background: rgba(13, 110, 253, 0.15);
-    color: #4dabf7 !important;
+    background: #0c2a40;
+    color: #7dd3fc !important;
 }
 }
 /* === TABLET RESPONSIVE === */
@@ -2286,7 +2286,7 @@ contain-intrinsic-size: 100px;
 }
 
 .btn-ghost:hover {
-    background: rgba(255, 255, 255, 0.1);
+    background: #334155;
     border-color: rgba(255, 255, 255, 0.3);
     color: #fff;
 }
@@ -2975,8 +2975,8 @@ html {
 
 #publicMapModal .public-map-close:hover {
     color: #fff;
-    background: rgba(239, 68, 68, 0.16);
-    border-color: rgba(248, 113, 113, 0.38);
+    background: #7f1d1d;
+    border-color: rgba(248, 113, 113, 0.6);
     transform: translateY(-1px);
 }
 

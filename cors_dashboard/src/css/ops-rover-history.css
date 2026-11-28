@@ -41,7 +41,7 @@
 .rover-history-heading-title { flex-wrap: wrap; gap: 8px 10px; }
 .rover-history-heading-icon {
     align-items: center;
-    background: rgba(14, 165, 233, 0.12);
+    background: #0c2a40;
     border: 1px solid rgba(56, 189, 248, 0.28);
     border-radius: 13px;
     color: #7dd3fc;
@@ -54,7 +54,7 @@
 
 .rover-history-heading-title h5 { font-size: 1.04rem; font-weight: 750; margin: 0; }
 .rover-history-rover-name {
-    background: rgba(14, 165, 233, 0.1);
+    background: #0c2a40;
     border: 1px solid rgba(56, 189, 248, 0.24);
     border-radius: 999px;
     color: #bae6fd;
@@ -103,7 +103,7 @@
 .rover-history-stat strong { color: #f1f5f9; display: block; font-size: 1.08rem; line-height: 1.25; margin-top: 6px; overflow-wrap: anywhere; }
 .rover-history-stat > i {
     align-items: center;
-    background: rgba(14, 165, 233, 0.11);
+    background: #0c2a40;
     border: 1px solid rgba(56, 189, 248, 0.14);
     border-radius: 11px;
     color: #7dd3fc;
@@ -127,7 +127,7 @@
 .rover-history-section-heading h6 i { color: #38bdf8; font-size: 0.92rem; }
 .rover-history-section-heading p { color: #8fa1b7; font-size: 0.78rem; margin: 4px 0 0; }
 .rover-history-count {
-    background: rgba(14, 165, 233, 0.09);
+    background: #0c2a40;
     border: 1px solid rgba(56, 189, 248, 0.2);
     border-radius: 999px;
     color: #bae6fd;
@@ -191,7 +191,7 @@
 }
 
 .rover-history-status > i { background: #94a3b8; border-radius: 50%; height: 6px; width: 6px; }
-.rover-history-status.is-active { background: rgba(16, 185, 129, 0.08); border-color: rgba(52, 211, 153, 0.22); color: #a7f3d0; }
+.rover-history-status.is-active { background: #064e3b; border-color: rgba(52, 211, 153, 0.22); color: #a7f3d0; }
 .rover-history-status.is-active > i { background: #34d399; box-shadow: 0 0 8px rgba(52, 211, 153, 0.7); }
 
 .rover-history-meta { display: grid; gap: 8px; grid-template-columns: repeat(4, minmax(0, 1fr)); margin-top: 14px; }
@@ -212,7 +212,7 @@
 .rover-history-position-heading i { color: #38bdf8; margin-right: 5px; }
 .rover-history-map-link {
     align-items: center;
-    background: rgba(14, 165, 233, 0.11);
+    background: #0c2a40;
     border: 1px solid rgba(56, 189, 248, 0.24);
     border-radius: 999px;
     color: #bae6fd;
@@ -229,7 +229,7 @@
 
 .rover-history-map-link:hover,
 .rover-history-map-link:focus-visible {
-    background: rgba(14, 165, 233, 0.22);
+    background: #075985;
     border-color: rgba(56, 189, 248, 0.52);
     color: #e0f2fe;
 }
@@ -240,7 +240,7 @@
 .rover-history-coordinate-heading { align-items: center; display: flex; gap: 8px; justify-content: space-between; }
 .rover-history-copy {
     align-items: center;
-    background: rgba(56, 189, 248, 0.08);
+    background: #0c2a40;
     border: 1px solid rgba(125, 211, 252, 0.17);
     border-radius: 7px;
     color: #7dd3fc;
@@ -254,7 +254,7 @@
 }
 
 .rover-history-copy:hover,
-.rover-history-copy:focus-visible { background: rgba(14, 165, 233, 0.2); border-color: rgba(56, 189, 248, 0.5); color: #e0f2fe; outline: none; }
+.rover-history-copy:focus-visible { background: #075985; border-color: rgba(56, 189, 248, 0.5); color: #e0f2fe; outline: none; }
 .rover-history-coordinate strong { color: #f0f9ff; display: block; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; font-size: clamp(0.84rem, 2vw, 1rem); font-variant-numeric: tabular-nums; letter-spacing: -0.025em; line-height: 1.35; margin-top: 6px; overflow-wrap: anywhere; }
 .rover-history-recorded { align-items: center; color: #90a6bb; display: flex; font-size: 0.74rem; gap: 6px; line-height: 1.4; }
 .rover-history-recorded i { color: #38bdf8; }
@@ -283,7 +283,7 @@
 .rover-history-delete-point { min-height: 36px; padding: 6px 9px; }
 .rover-history-point-heading > div { align-items: center; display: flex; flex-wrap: wrap; gap: 8px; min-width: 0; }
 .rover-history-point-heading strong { color: #f1f5f9; font-size: 0.84rem; overflow-wrap: anywhere; }
-.rover-history-point-fix { background: rgba(16, 185, 129, 0.1); border: 1px solid rgba(52, 211, 153, 0.2); border-radius: 999px; color: #a7f3d0; font-size: 0.75rem; font-weight: 700; padding: 3px 7px; }
+.rover-history-point-fix { background: #064e3b; border: 1px solid rgba(52, 211, 153, 0.2); border-radius: 999px; color: #a7f3d0; font-size: 0.75rem; font-weight: 700; padding: 3px 7px; }
 .rover-history-point-meta { align-items: center; color: #9aabc0; display: flex; flex-wrap: wrap; font-size: 0.75rem; gap: 6px 14px; }
 .rover-history-point-meta span { align-items: center; display: inline-flex; gap: 5px; }
 .rover-history-point-meta i { color: #7dd3fc; }
@@ -301,13 +301,13 @@
 .rover-activity-account-options[hidden] { display: none !important; }
 .rover-activity-account-option { background: transparent; border: 1px solid transparent; border-radius: 6px; color: #cbd8e8; cursor: pointer; min-height: 38px; overflow: hidden; padding: 8px 10px; text-align: left; text-overflow: ellipsis; white-space: nowrap; width: 100%; }
 .rover-activity-account-option:hover,
-.rover-activity-account-option.is-active { background: rgba(14, 165, 233, 0.16); border-color: rgba(56, 189, 248, 0.3); color: #e0f2fe; }
+.rover-activity-account-option.is-active { background: #075985; border-color: rgba(56, 189, 248, 0.3); color: #e0f2fe; }
 .rover-activity-account-option.is-selected { color: #7dd3fc; font-weight: 750; }
 .rover-activity-account-options-empty { color: #8fa2b8; font-size: 0.77rem; padding: 10px; }
 .rover-history-filter-summary { align-self: center; color: #93a4b9; font-size: 0.77rem; }
 .rover-history-pagination { align-items: center; display: flex; flex-wrap: wrap; gap: 6px; justify-content: center; }
 .rover-history-pagination button { background: #111d2e; border: 1px solid rgba(148, 163, 184, 0.2); border-radius: 7px; color: #cbd5e1; min-height: 44px; min-width: 44px; padding: 5px 10px; }
-.rover-history-pagination button[aria-current="page"] { background: rgba(14, 165, 233, 0.2); border-color: rgba(56, 189, 248, 0.55); color: #e0f2fe; font-weight: 800; }
+.rover-history-pagination button[aria-current="page"] { background: #075985; border-color: rgba(56, 189, 248, 0.55); color: #e0f2fe; font-weight: 800; }
 .rover-history-pagination button:disabled { cursor: not-allowed; opacity: 0.45; }
 .rover-history-pagination span { color: #8193aa; padding: 0 3px; }
 
@@ -327,7 +327,7 @@
 .rover-activity-detail { background: rgba(15, 23, 42, 0.46); border: 1px solid rgba(148, 163, 184, 0.14); border-radius: 12px; min-width: 0; padding: 13px; }
 .rover-activity-section-heading { border-bottom: 1px solid rgba(148, 163, 184, 0.12); margin-bottom: 10px; padding-bottom: 10px; }
 .rover-activity-section-heading h3 { color: #e2eaf4; font-size: 0.9rem; font-weight: 750; margin: 0; }
-.rover-activity-total { background: rgba(14, 165, 233, 0.13); border: 1px solid rgba(56, 189, 248, 0.22); border-radius: 999px; color: #bae6fd; font-size: 0.83rem; padding: 6px 10px; white-space: nowrap; }
+.rover-activity-total { background: #0c2a40; border: 1px solid rgba(56, 189, 248, 0.22); border-radius: 999px; color: #bae6fd; font-size: 0.83rem; padding: 6px 10px; white-space: nowrap; }
 .rover-activity-days-list { display: flex; gap: 7px; overflow-x: auto; overflow-y: hidden; overscroll-behavior-x: contain; padding: 1px 2px 6px; scrollbar-color: rgba(56, 189, 248, 0.38) rgba(15, 23, 42, 0.6); scrollbar-width: thin; }
 .rover-activity-machines { display: grid; gap: 7px; max-height: 540px; min-width: 0; overflow-y: auto; overscroll-behavior: contain; padding-right: 3px; scrollbar-color: rgba(56, 189, 248, 0.38) rgba(15, 23, 42, 0.6); scrollbar-width: thin; }
 .rover-activity-day-button,
@@ -391,15 +391,15 @@
 .rover-activity-empty i { color: #7dd3fc; }
 
 .rover-history-session-actions { align-items: flex-end; display: flex; flex-wrap: wrap; gap: 10px; justify-content: space-between; margin-top: 12px; }
-.rover-history-action-button { align-items: center; background: rgba(14, 165, 233, 0.12); border: 1px solid rgba(56, 189, 248, 0.28); border-radius: 8px; color: #bae6fd; cursor: pointer; display: inline-flex; flex: 0 0 auto; font-size: 0.75rem; font-weight: 700; gap: 7px; justify-content: center; min-height: 42px; padding: 8px 12px; }
+.rover-history-action-button { align-items: center; background: #0c2a40; border: 1px solid rgba(56, 189, 248, 0.28); border-radius: 8px; color: #bae6fd; cursor: pointer; display: inline-flex; flex: 0 0 auto; font-size: 0.75rem; font-weight: 700; gap: 7px; justify-content: center; min-height: 42px; padding: 8px 12px; }
 .rover-history-action-button:hover:not(:disabled),
-.rover-history-action-button:focus-visible { background: rgba(14, 165, 233, 0.23); border-color: rgba(56, 189, 248, 0.55); color: #f0f9ff; }
+.rover-history-action-button:focus-visible { background: #075985; border-color: rgba(56, 189, 248, 0.55); color: #f0f9ff; }
 .rover-history-action-button:active:not(:disabled) { filter: brightness(1.15); }
 .rover-history-action-button:focus-visible { outline: 2px solid #38bdf8; outline-offset: 2px; }
 .rover-history-action-button:disabled { cursor: not-allowed; opacity: 0.48; }
-.rover-history-delete-session { background: rgba(244, 63, 94, 0.08); border-color: rgba(251, 113, 133, 0.24); color: #fda4af; }
+.rover-history-delete-session { background: #4c0519; border-color: rgba(251, 113, 133, 0.24); color: #fda4af; }
 .rover-history-delete-session:hover:not(:disabled),
-.rover-history-delete-session:focus-visible { background: rgba(244, 63, 94, 0.17); border-color: rgba(251, 113, 133, 0.5); color: #ffe4e6; }
+.rover-history-delete-session:focus-visible { background: #881337; border-color: rgba(251, 113, 133, 0.5); color: #ffe4e6; }
 .rover-history-delete-session:focus-visible { outline-color: #fb7185; }
 .rover-history-delete-note { color: #8497ad; font-size: 0.75rem; line-height: 1.4; margin: 5px 0 0; }
 .rover-history-delete-note { align-self: center; margin: 0; }

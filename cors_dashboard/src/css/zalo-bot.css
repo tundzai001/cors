@@ -43,10 +43,10 @@
     width: 38px;
 }
 
-.zalo-stat-card.stat-total .stat-icon { background: rgba(100, 116, 139, 0.15); color: #94a3b8; }
-.zalo-stat-card.stat-active .stat-icon { background: rgba(34, 197, 94, 0.15); color: #4ade80; }
-.zalo-stat-card.stat-private .stat-icon { background: rgba(6, 182, 212, 0.15); color: #22d3ee; }
-.zalo-stat-card.stat-groups .stat-icon { background: rgba(245, 158, 11, 0.15); color: #fbbf24; }
+.zalo-stat-card.stat-total .stat-icon { background: #334155; color: #cbd5e1; }
+.zalo-stat-card.stat-active .stat-icon { background: #064e3b; color: #4ade80; }
+.zalo-stat-card.stat-private .stat-icon { background: #083344; color: #22d3ee; }
+.zalo-stat-card.stat-groups .stat-icon { background: #78350f; color: #fbbf24; }
 
 .zalo-stat-card .stat-label {
     color: var(--ops-muted);
@@ -208,8 +208,8 @@
 }
 
 .zalo-cmd-card .cmd-code {
-    background: rgba(6, 182, 212, 0.08);
-    border: 1px solid rgba(6, 182, 212, 0.18);
+    background: #083344;
+    border: 1px solid rgba(6, 182, 212, 0.32);
     border-radius: 6px;
     color: #67e8f9;
     display: block;
@@ -291,15 +291,15 @@
 }
 
 .ops-zalo-page .badge.scope-full {
-    background: rgba(34, 197, 94, 0.18) !important;
-    border: 1px solid rgba(34, 197, 94, 0.3);
+    background: #064e3b !important;
+    border: 1px solid rgba(34, 197, 94, 0.4);
     color: #4ade80 !important;
 }
 
 .ops-zalo-page .badge.scope-partial {
-    background: rgba(148, 163, 184, 0.12) !important;
-    border: 1px solid rgba(148, 163, 184, 0.2);
-    color: #94a3b8 !important;
+    background: #334155 !important;
+    border: 1px solid rgba(148, 163, 184, 0.32);
+    color: #cbd5e1 !important;
 }
 
 .ops-zalo-page #zalo-system-section {

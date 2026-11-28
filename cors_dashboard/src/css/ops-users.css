@@ -75,8 +75,8 @@
 
 .ops-user-avatar {
     align-items: center;
-    background: rgba(14, 165, 233, 0.13);
-    border: 1px solid rgba(56, 189, 248, 0.24);
+    background: #0c2a40;
+    border: 1px solid rgba(56, 189, 248, 0.32);
     border-radius: 50%;
     color: #bae6fd;
     display: inline-flex;
@@ -101,26 +101,26 @@
 }
 
 .ops-role-admin {
-    background: rgba(239, 68, 68, 0.12);
-    border-color: rgba(248, 113, 113, 0.28);
+    background: #4c0519;
+    border-color: rgba(248, 113, 113, 0.4);
     color: #fecaca;
 }
 
 .ops-role-coordinator {
-    background: rgba(14, 165, 233, 0.12);
-    border-color: rgba(56, 189, 248, 0.28);
+    background: #0c2a40;
+    border-color: rgba(56, 189, 248, 0.36);
     color: #bae6fd;
 }
 
 .ops-role-operator {
-    background: rgba(6, 182, 212, 0.13);
-    border-color: rgba(34, 211, 238, 0.28);
+    background: #083344;
+    border-color: rgba(34, 211, 238, 0.36);
     color: #a5f3fc;
 }
 
 .ops-role-viewer {
-    background: rgba(148, 163, 184, 0.1);
-    border-color: rgba(148, 163, 184, 0.22);
+    background: #1e293b;
+    border-color: rgba(148, 163, 184, 0.32);
     color: #cbd5e1;
 }
 
@@ -136,8 +136,8 @@
 }
 
 .ops-status-pill.is-active {
-    background: rgba(34, 197, 94, 0.1);
-    border-color: rgba(74, 222, 128, 0.24);
+    background: #064e3b;
+    border-color: rgba(74, 222, 128, 0.36);
     color: #bbf7d0;
 }
 
@@ -147,8 +147,8 @@
 }
 
 .ops-status-pill.is-inactive {
-    background: rgba(148, 163, 184, 0.08);
-    border-color: rgba(148, 163, 184, 0.2);
+    background: #1e293b;
+    border-color: rgba(148, 163, 184, 0.32);
     color: #cbd5e1;
 }
 
@@ -174,12 +174,12 @@
 }
 
 .ops-table-action:hover {
-    background: rgba(14, 165, 233, 0.14);
+    background: #075985;
     color: #e0f2fe;
 }
 
 .ops-table-action.danger:hover {
-    background: rgba(239, 68, 68, 0.14);
+    background: #7f1d1d;
     color: #fecaca;
 }
 
@@ -190,8 +190,8 @@
 }
 
 .ops-alert-danger {
-    background: rgba(239, 68, 68, 0.11);
-    border: 1px solid rgba(239, 68, 68, 0.32);
+    background: #4c0519;
+    border: 1px solid rgba(239, 68, 68, 0.48);
     color: #fecdd3;
 }
 
