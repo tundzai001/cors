@@ -7792,12 +7792,7 @@ async def _run_auto_base_setup(agent: AgentManager, gnss_reader: GNSSReader, mqt
 # ==============================================================================
 # === MAIN FUNCTION                                                         ===
 # ==============================================================================
-async def main():
-    global current_state, agent, MACHINE_SERIAL, active_auto_base_task
-    logging.info(f"Agent script path: {os.path.abspath(__file__)}")
-    logging.info(f"Parser debug default: enabled={PARSER_DEBUG_ENABLED} interval={PARSER_DEBUG_INTERVAL_SECONDS}s")
-    
-    # ========== Lock File Check ==========
+async def _ensure_startup_lock():
     if not cleanup_lock_file():
         logging.error("Lock file issue. Another agent instance may be running. Exiting.")
         if IS_WINDOWS:
@@ -7808,65 +7803,63 @@ async def main():
         logging.error("Failed to create lock file. Exiting.")
         sys.exit(1)
 
-    loop = asyncio.get_running_loop()
-    
-    # ========== Remote Lock Check ==========
-    if is_remote_locked():
-        current_state = "LOCKED"
-        logging.warning("Device is remotely locked. Running in restricted mode.")
-        MACHINE_SERIAL = get_machine_serial()
-        remote_unlock_event.clear()
+async def _run_remote_lock_mode(loop):
+    global current_state, agent, MACHINE_SERIAL
+    current_state = "LOCKED"
+    logging.warning("Device is remotely locked. Running in restricted mode.")
+    MACHINE_SERIAL = get_machine_serial()
+    remote_unlock_event.clear()
 
-        agent = AgentManager(MACHINE_SERIAL)
-        mqtt_client = setup_mqtt_client(loop, agent, None)
-        
-        initialization_complete.set()
+    agent = AgentManager(MACHINE_SERIAL)
+    mqtt_client = setup_mqtt_client(loop, agent, None)
 
-        status_task = asyncio.create_task(status_publisher_task(agent, mqtt_client))
-        ws_task = asyncio.create_task(websocket_task(agent, None, mqtt_client))
-        unlock_task = asyncio.create_task(remote_unlock_event.wait())
-        try:
-            done, _ = await asyncio.wait(
-                {status_task, ws_task, unlock_task},
-                return_when=asyncio.FIRST_COMPLETED,
-            )
-            for task in done - {unlock_task}:
-                task.result()
-            if unlock_task not in done:
-                raise RuntimeError("Restricted agent control task stopped before unlock")
-        finally:
-            for task in (status_task, ws_task, unlock_task):
-                task.cancel()
-            await asyncio.gather(status_task, ws_task, unlock_task, return_exceptions=True)
-            if mqtt_client:
-                mqtt_client.loop_stop()
-                mqtt_client.disconnect()
-        logging.info("Remote lock cleared. Continuing normal agent startup.")
-    
-    # ========== License Check ==========
-    if not license_is_valid():
-        current_state = "AWAITING_LICENSE"
-        logging.warning("=" * 60)
-        logging.warning("LICENSE INVALID OR MISSING")
-        logging.warning("Running in limited mode - awaiting license deployment")
-        logging.warning("=" * 60)
-        
-        agent = AgentManager(MACHINE_SERIAL) 
-        mqtt_client = setup_mqtt_client(loop, agent, None)
-        
-        initialization_complete.set()
-        
-        try:
-            await asyncio.gather(
-                status_publisher_task(agent, mqtt_client),
-                websocket_task(agent, None, mqtt_client)
-            )
-        finally:
-            if mqtt_client: mqtt_client.loop_stop(); mqtt_client.disconnect()
-            remove_lock_file()
-        return
-    
-    # ========== Full Agent Startup ==========
+    initialization_complete.set()
+    status_task = asyncio.create_task(status_publisher_task(agent, mqtt_client))
+    ws_task = asyncio.create_task(websocket_task(agent, None, mqtt_client))
+    unlock_task = asyncio.create_task(remote_unlock_event.wait())
+    try:
+        done, _ = await asyncio.wait(
+            {status_task, ws_task, unlock_task},
+            return_when=asyncio.FIRST_COMPLETED,
+        )
+        for task in done - {unlock_task}:
+            task.result()
+        if unlock_task not in done:
+            raise RuntimeError("Restricted agent control task stopped before unlock")
+    finally:
+        for task in (status_task, ws_task, unlock_task):
+            task.cancel()
+        await asyncio.gather(status_task, ws_task, unlock_task, return_exceptions=True)
+        if mqtt_client:
+            mqtt_client.loop_stop()
+            mqtt_client.disconnect()
+    logging.info("Remote lock cleared. Continuing normal agent startup.")
+
+
+async def _run_license_wait_mode(loop):
+    global current_state, agent
+    current_state = "AWAITING_LICENSE"
+    logging.warning("=" * 60)
+    logging.warning("LICENSE INVALID OR MISSING")
+    logging.warning("Running in limited mode - awaiting license deployment")
+    logging.warning("=" * 60)
+
+    agent = AgentManager(MACHINE_SERIAL)
+    mqtt_client = setup_mqtt_client(loop, agent, None)
+    initialization_complete.set()
+
+    try:
+        await asyncio.gather(
+            status_publisher_task(agent, mqtt_client),
+            websocket_task(agent, None, mqtt_client)
+        )
+    finally:
+        if mqtt_client: mqtt_client.loop_stop(); mqtt_client.disconnect()
+        remove_lock_file()
+
+
+async def _prepare_full_agent(loop):
+    global current_state, agent
     logging.info("=" * 60)
     logging.info(f"License is valid. Starting full agent on {platform.system()}.")
     logging.info(f"  Serial: {MACHINE_SERIAL}")
@@ -7912,83 +7905,107 @@ async def main():
     logging.info(f"Agent is now running. State: {current_state}")
     
     initialization_complete.set()
-    
-    # ========== Start Background Tasks ==========
+
+    return agent, gnss_reader, mqtt_client
+
+
+async def _run_startup_auto_base(task):
+    try:
+        await task
+    except asyncio.CancelledError:
+        if asyncio.current_task().cancelling():
+            raise
+        logging.info("Startup Auto Base task cancelled")
+
+
+async def _cleanup_agent_runtime(agent, gnss_reader, mqtt_client):
+    logging.info("="*60)
+    logging.info("Main loop interrupted. Starting cleanup...")
+
+    if agent.nmea_publisher and agent.nmea_publisher.is_alive():
+        agent.nmea_publisher.stop()
+    if hasattr(agent, "rtcm_mqtt_publisher") and agent.rtcm_mqtt_publisher and agent.rtcm_mqtt_publisher.is_alive():
+        agent.rtcm_mqtt_publisher.stop()
+        agent.nmea_publisher.join(timeout=2)
+
+    agent.restart_services()
+
+    if hasattr(agent, 'ntrip_client_worker') and agent.ntrip_client_worker:
+        if agent.ntrip_client_worker.is_alive():
+            agent.ntrip_client_worker.stop()
+            agent.ntrip_client_worker.join(timeout=2)
+
+    if gnss_reader and gnss_reader.is_alive():
+        gnss_reader.stop()
+        gnss_reader.join(timeout=3)
+        logging.info("GNSS Reader stopped")
+
+    if mqtt_client:
+        try:
+            offline_msg = json.dumps({
+                "serial": MACHINE_SERIAL,
+                "status": "offline",
+                "timestamp": int(time.time()),
+                "agent_timestamp": int(time.time()),
+                "status_boot_id": STATUS_BOOT_ID,
+                "status_sequence": STATUS_SEQUENCE,
+                "status_event": "cleanup",
+                "cleanup": True
+            })
+            mqtt_client.publish(f"pi/devices/{MACHINE_SERIAL}/status", offline_msg, qos=1, retain=True)
+            await asyncio.sleep(0.5)
+        except Exception as e:
+            logging.exception(f"Failed to send final offline status: {e}")
+
+        mqtt_client.loop_stop()
+        mqtt_client.disconnect()
+
+    remove_lock_file()
+    logging.info("Cleanup complete. Agent stopped.")
+
+
+async def _run_agent_background_tasks(agent, gnss_reader, mqtt_client):
+    global active_auto_base_task
     status_task = asyncio.create_task(status_publisher_task(agent, mqtt_client))
     ws_task = asyncio.create_task(websocket_task(agent, gnss_reader, mqtt_client))
     control_plane_task = asyncio.create_task(control_plane_watchdog_task(agent))
 
-    async def run_startup_auto_base(task):
-        try:
-            await task
-        except asyncio.CancelledError:
-            if asyncio.current_task().cancelling():
-                raise
-            logging.info("Startup Auto Base task cancelled")
-
     active_auto_base_task = asyncio.create_task(auto_base_state_machine(agent, gnss_reader, mqtt_client))
     mem_guard_task = asyncio.create_task(memory_guard_task())
-    
+
     try:
         await asyncio.gather(
             status_task,
             ws_task,
             control_plane_task,
-            run_startup_auto_base(active_auto_base_task),
+            _run_startup_auto_base(active_auto_base_task),
             mem_guard_task,
         )
     except asyncio.CancelledError:
         logging.info("Tasks cancelled - shutting down gracefully")
         raise
     finally:
-        logging.info("="*60)
-        logging.info("Main loop interrupted. Starting cleanup...")
-        
-        # Stop NMEA publisher
-        if agent.nmea_publisher and agent.nmea_publisher.is_alive():
-            agent.nmea_publisher.stop()
-        if hasattr(agent, "rtcm_mqtt_publisher") and agent.rtcm_mqtt_publisher and agent.rtcm_mqtt_publisher.is_alive():
-            agent.rtcm_mqtt_publisher.stop()
-            agent.nmea_publisher.join(timeout=2)
-        
-        # Stop services
-        agent.restart_services()
-        
-        # Stop NTRIP client if exists
-        if hasattr(agent, 'ntrip_client_worker') and agent.ntrip_client_worker:
-            if agent.ntrip_client_worker.is_alive():
-                agent.ntrip_client_worker.stop()
-                agent.ntrip_client_worker.join(timeout=2)
-        
-        if gnss_reader and gnss_reader.is_alive():
-            gnss_reader.stop()
-            gnss_reader.join(timeout=3)
-            logging.info("GNSS Reader stopped")
-        
-        # Stop MQTT
-        if mqtt_client:
-            try:
-                # Explicitly publish offline status before disconnecting
-                offline_msg = json.dumps({
-                    "serial": MACHINE_SERIAL,
-                    "status": "offline",
-                    "timestamp": int(time.time()),
-                    "agent_timestamp": int(time.time()),
-                    "status_boot_id": STATUS_BOOT_ID,
-                    "status_sequence": STATUS_SEQUENCE,
-                    "status_event": "cleanup",
-                    "cleanup": True
-                })
-                mqtt_client.publish(f"pi/devices/{MACHINE_SERIAL}/status", offline_msg, qos=1, retain=True)
-                await asyncio.sleep(0.5)  # Give MQTT time to send
-            except Exception as e:
-                logging.exception(f"Failed to send final offline status: {e}")
+        await _cleanup_agent_runtime(agent, gnss_reader, mqtt_client)
 
-            mqtt_client.loop_stop()
-            mqtt_client.disconnect()
-        
-        remove_lock_file()
-        logging.info("Cleanup complete. Agent stopped.")
+
+async def _run_full_agent_mode(loop):
+    agent, gnss_reader, mqtt_client = await _prepare_full_agent(loop)
+    await _run_agent_background_tasks(agent, gnss_reader, mqtt_client)
+
+
+async def main():
+    global agent, MACHINE_SERIAL
+    logging.info(f"Agent script path: {os.path.abspath(__file__)}")
+    logging.info(f"Parser debug default: enabled={PARSER_DEBUG_ENABLED} interval={PARSER_DEBUG_INTERVAL_SECONDS}s")
+    await _ensure_startup_lock()
+    loop = asyncio.get_running_loop()
+
+    if is_remote_locked():
+        await _run_remote_lock_mode(loop)
+    if not license_is_valid():
+        await _run_license_wait_mode(loop)
+        return
+    await _run_full_agent_mode(loop)
 
 # ==============================================================================
 # === ENTRY POINT                                                           ===

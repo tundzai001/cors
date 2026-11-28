@@ -196,125 +196,125 @@ def on_message(client, userdata, msg, *args, **kwargs):
                 pass
 
 # --- NTRIP CLIENT MONITOR ---
+async def _read_ntrip_response_header(reader):
+    header_buffer = bytearray()
+    while len(header_buffer) < 2048:
+        chunk = await reader.read(256)
+        if not chunk:
+            break
+        header_buffer.extend(chunk)
+
+        for separator in [b'\r\n\r\n', b'\n\n']:
+            idx = header_buffer.find(separator)
+            if idx != -1:
+                return header_buffer[:idx], header_buffer[idx + len(separator):]
+
+        if b'200' in header_buffer or b'ICY' in header_buffer:
+            idx_d3 = header_buffer.find(0xD3)
+            if idx_d3 != -1 and idx_d3 > 10:
+                return header_buffer[:idx_d3], header_buffer[idx_d3:]
+    return None, None
+
+
+def _log_ntrip_rtcm_frames(frames, now, rtcm_len):
+    if not HAS_PYRTCM:
+        return
+    try:
+        idents = []
+        for frame in frames:
+            stream = BytesIO(frame)
+            reader = RTCMReader(stream, quitonerror=False)
+            for _, parsed_data in reader:
+                if parsed_data:
+                    msg_type = str(parsed_data.identity)
+                    prev = last_seen["ntrip"].get(msg_type, 0)
+                    dt_str = f"{now - prev:.1f}s" if prev > 0 else FIRST_SAMPLE_LABEL
+                    last_seen["ntrip"][msg_type] = now
+                    idents.append(f"{msg_type} (cách {dt_str})")
+        if idents:
+            t_str = time.strftime('%H:%M:%S', time.localtime(now)) + f".{int((now % 1) * 1000):03d}"
+            logging.info(f"[{t_str}] [NTRIP RTCM] Caster gửi: {', '.join(idents)} | Tổng: {rtcm_len} bytes")
+    except Exception:
+        pass
+
+
+def _handle_ntrip_data(data, now):
+    data_len = len(data)
+    stats["ntrip"]["total_bytes"] += data_len
+    stats["ntrip"]["last_recv_time"] = now
+    stats["ntrip"]["history"].append((now, data_len))
+
+    ntrip_buffer.extend(data)
+    frames = extract_rtcm3_frames(ntrip_buffer)
+    if not frames:
+        return
+    rtcm_len = sum(len(frame) for frame in frames)
+    stats["ntrip"]["rtcm_bytes"] += rtcm_len
+    stats["ntrip"]["rtcm_history"].append((now, rtcm_len))
+    _log_ntrip_rtcm_frames(frames, now, rtcm_len)
+
+
+async def _receive_ntrip_stream(reader, binary_start):
+    if binary_start:
+        _handle_ntrip_data(binary_start, time.time())
+
+    while True:
+        data = await reader.read(4096)
+        if not data:
+            logging.warning("[NTRIP] Kết nối bị ngắt từ caster (EOF).")
+            return
+        _handle_ntrip_data(data, time.time())
+
+
+async def _run_ntrip_session(reader, writer, auth_b64):
+    request_headers = (
+        f"GET /{NTRIP_MP} HTTP/1.0\r\n"
+        f"User-Agent: NTRIP Client/1.0\r\n"
+        f"Authorization: Basic {auth_b64}\r\n\r\n"
+    )
+    writer.write(request_headers.encode('utf-8'))
+    await writer.drain()
+
+    header_bytes, binary_start = await _read_ntrip_response_header(reader)
+    if header_bytes is None:
+        logging.error("[NTRIP] Không nhận được phản hồi hợp lệ từ Caster.")
+        writer.close()
+        await writer.wait_closed()
+        await asyncio.sleep(5)
+        return False
+
+    response_str = header_bytes.decode('utf-8', errors='ignore').strip()
+    logging.info(f"[NTRIP] Caster phản hồi headers:\n{response_str}")
+    if "200" not in response_str and "ICY" not in response_str:
+        logging.error("[NTRIP] Kết nối bị từ chối hoặc mountpoint không khả dụng.")
+        writer.close()
+        await writer.wait_closed()
+        await asyncio.sleep(5)
+        return False
+
+    logging.info(f"[NTRIP] Kết nối thành công! Đang nhận stream từ '{NTRIP_MP}'...")
+    stats["ntrip"]["connected"] = True
+    stats["ntrip"]["last_recv_time"] = time.time()
+    await _receive_ntrip_stream(reader, binary_start)
+    return True
+
+
 async def start_ntrip_monitor():
-    global ntrip_buffer
     auth_str = f"{NTRIP_USER}:{NTRIP_PASS}"
     auth_b64 = base64.b64encode(auth_str.encode('utf-8')).decode('utf-8')
-    
+
     while True:
         logging.info(f"[NTRIP] Đang kết nối tới NTRIP Caster {NTRIP_HOST}:{NTRIP_PORT}...")
         stats["ntrip"]["connected"] = False
-        
+
         try:
             reader, writer = await asyncio.open_connection(NTRIP_HOST, NTRIP_PORT)
-            
-            # Gửi HTTP GET request chuẩn NTRIP 1.0
-            request_headers = (
-                f"GET /{NTRIP_MP} HTTP/1.0\r\n"
-                f"User-Agent: NTRIP Client/1.0\r\n"
-                f"Authorization: Basic {auth_b64}\r\n\r\n"
-            )
-            writer.write(request_headers.encode('utf-8'))
-            await writer.drain()
-            
-            # Phân tích headers
-            header_buffer = bytearray()
-            headers_done = False
-            header_bytes = bytearray()
-            binary_start = bytearray()
-            
-            while len(header_buffer) < 2048:
-                chunk = await reader.read(256)
-                if not chunk:
-                    break
-                header_buffer.extend(chunk)
-                
-                for separator in [b'\r\n\r\n', b'\n\n']:
-                    idx = header_buffer.find(separator)
-                    if idx != -1:
-                        header_bytes = header_buffer[:idx]
-                        binary_start = header_buffer[idx + len(separator):]
-                        headers_done = True
-                        break
-                if headers_done:
-                    break
-                    
-                if b'200' in header_buffer or b'ICY' in header_buffer:
-                    idx_d3 = header_buffer.find(0xD3)
-                    if idx_d3 != -1 and idx_d3 > 10:
-                        header_bytes = header_buffer[:idx_d3]
-                        binary_start = header_buffer[idx_d3:]
-                        headers_done = True
-                        break
-            
-            if not headers_done:
-                logging.error("[NTRIP] Không nhận được phản hồi hợp lệ từ Caster.")
-                writer.close()
-                await writer.wait_closed()
-                await asyncio.sleep(5)
+            accepted = await _run_ntrip_session(reader, writer, auth_b64)
+            if not accepted:
                 continue
-                
-            response_str = header_bytes.decode('utf-8', errors='ignore').strip()
-            logging.info(f"[NTRIP] Caster phản hồi headers:\n{response_str}")
-            
-            if "200" not in response_str and "ICY" not in response_str:
-                logging.error("[NTRIP] Kết nối bị từ chối hoặc mountpoint không khả dụng.")
-                writer.close()
-                await writer.wait_closed()
-                await asyncio.sleep(5)
-                continue
-                
-            logging.info(f"[NTRIP] Kết nối thành công! Đang nhận stream từ '{NTRIP_MP}'...")
-            stats["ntrip"]["connected"] = True
-            stats["ntrip"]["last_recv_time"] = time.time()
-            
-            # Hàm phụ xử lý data NTRIP nhận được
-            def handle_ntrip_data(data, now):
-                data_len = len(data)
-                stats["ntrip"]["total_bytes"] += data_len
-                stats["ntrip"]["last_recv_time"] = now
-                stats["ntrip"]["history"].append((now, data_len))
-                
-                # Trích xuất RTCM từ NTRIP stream
-                ntrip_buffer.extend(data)
-                frames = extract_rtcm3_frames(ntrip_buffer)
-                if frames:
-                    rtcm_len = sum(len(f) for f in frames)
-                    stats["ntrip"]["rtcm_bytes"] += rtcm_len
-                    stats["ntrip"]["rtcm_history"].append((now, rtcm_len))
-                    
-                    if HAS_PYRTCM:
-                        try:
-                            idents = []
-                            for f in frames:
-                                stream = BytesIO(f)
-                                rtr = RTCMReader(stream, quitonerror=False)
-                                for _, parsed_data in rtr:
-                                    if parsed_data:
-                                        msg_type = str(parsed_data.identity)
-                                        prev = last_seen["ntrip"].get(msg_type, 0)
-                                        dt_str = f"{now - prev:.1f}s" if prev > 0 else FIRST_SAMPLE_LABEL
-                                        last_seen["ntrip"][msg_type] = now
-                                        idents.append(f"{msg_type} (cách {dt_str})")
-                            if idents:
-                                t_str = time.strftime('%H:%M:%S', time.localtime(now)) + f".{int((now % 1) * 1000):03d}"
-                                logging.info(f"[{t_str}] [NTRIP RTCM] Caster gửi: {', '.join(idents)} | Tổng: {rtcm_len} bytes")
-                        except Exception:
-                            pass
-
-            if len(binary_start) > 0:
-                handle_ntrip_data(binary_start, time.time())
-            
-            while True:
-                data = await reader.read(4096)
-                if not data:
-                    logging.warning("[NTRIP] Kết nối bị ngắt từ caster (EOF).")
-                    break
-                handle_ntrip_data(data, time.time())
-                
         except Exception as e:
             logging.exception(f"[NTRIP] Lỗi đường truyền: {e}")
-        
+
         stats["ntrip"]["connected"] = False
         stats["ntrip"]["reconnect_count"] += 1
         logging.warning("[NTRIP] Kết nối lại sau 5 giây...")
