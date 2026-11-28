@@ -5897,6 +5897,428 @@ def _validate_command_payload(command: str, payload: dict, data: dict, agent: Ag
         return False, f"unsupported command: {command}"
     return True, ""
 
+async def _handle_command_provision_device(context):
+    global current_state
+    payload = context['payload']
+    agent = context['agent']
+    if agent.update_name(payload.get("name")):
+        current_state = "ONLINE" if license_is_valid() else "AWAITING_LICENSE"
+        if current_state == "ONLINE":
+            agent.restart_services()
+
+
+async def _handle_command_deploy_license(context):
+    global current_state
+    command = context['command']
+    source = context['source']
+    payload = context['payload']
+    command_id = context['command_id']
+    agent = context['agent']
+    mqtt_client = context['mqtt_client']
+    if payload.get("license_key"):
+        license_key = str(payload["license_key"]).strip()
+        if not is_valid_license_key(license_key, MACHINE_SERIAL):
+            raise ValueError("Invalid device token format")
+        await asyncio.to_thread(_write_license_key, license_key)
+        current_state = "REBOOTING"
+        _record_command_result(command, source, "success", "license deployed; rebooting", command_id)
+        await send_status(agent, mqtt_client)
+        await asyncio.sleep(2)
+        remove_lock_file()
+        os.execv(sys.executable, [sys.executable, os.path.abspath(__file__)])
+
+
+async def _handle_command_trigger_auto_base(context):
+    global active_auto_base_task
+    payload = context['payload']
+    agent = context['agent']
+    gnss_reader = context['gnss_reader']
+    mqtt_client = context['mqtt_client']
+    logging.info("Received TRIGGER_AUTO_BASE command. Configuring and starting state machine...")
+    await _stop_auto_base(agent, gnss_reader)
+    auto_setup_metadata = payload
+    raw_mp = str(auto_setup_metadata.get("mountpoint") or "").strip()
+
+    agent.config['auto_base_setup'] = {
+        "enabled": True,
+        "ip": str(auto_setup_metadata.get("ip") or "").strip(),
+        "port": int(auto_setup_metadata.get("port")),
+        "user": str(auto_setup_metadata.get("user") or "").strip(),
+        "password": str(auto_setup_metadata.get("password") or ""),
+        "mountpoint": raw_mp,
+        "timeout": auto_setup_metadata.get("timeout", 3600),
+        "samples": auto_setup_metadata.get("samples", 60),
+        "sensor_type": auto_setup_metadata.get("sensor_type"),
+        "review_only": True,
+        "enable_itrf_vn2000_transform": auto_setup_metadata.get("enable_itrf_vn2000_transform", True),
+        "l0_deg": auto_setup_metadata.get("l0_deg"),
+        "k0": auto_setup_metadata.get("k0"),
+        **{key: auto_setup_metadata.get(key, 0.0) for key in ("resN", "resE", "resHS")}
+    }
+    agent.save_config()
+    _set_auto_base_progress("queued", step=0, total_steps=4)
+    await send_status(agent, mqtt_client)
+
+    # Start the state machine as a background task
+    active_auto_base_task = asyncio.create_task(auto_base_state_machine(agent, gnss_reader, mqtt_client))
+
+
+def _parse_reference_coordinates(coords, missing_error, range_error):
+    try:
+        parsed = {
+            "lat": float(coords["lat"]),
+            "lon": float(coords["lon"]),
+            "alt": float(coords["alt"]),
+        }
+    except (KeyError, TypeError, ValueError):
+        raise ValueError(missing_error)
+    if not (-90.0 <= parsed["lat"] <= 90.0 and -180.0 <= parsed["lon"] <= 180.0):
+        raise ValueError(range_error)
+    return parsed
+
+
+def _build_reference_check_config(payload, reference, restore_coords, original_base_config):
+    config = {
+        "ip": str(payload.get("ip") or "").strip(),
+        "port": int(payload.get("port") or 0),
+        "user": str(payload.get("user") or ""),
+        "password": str(payload.get("password") or ""),
+        "mountpoint": str(payload.get("mountpoint") or "").strip(),
+        "timeout": int(payload.get("timeout") or 300),
+        "samples": int(payload.get("samples") or 60),
+        "reference_coords": reference,
+        "restore_coords": restore_coords,
+        "original_base_config": original_base_config,
+    }
+    if not all((config["ip"], config["mountpoint"], config["user"], config["password"])):
+        raise ValueError("NTRIP host, credentials, and mountpoint are required")
+    return config
+
+
+async def _handle_command_trigger_base_reference_check(context):
+    global active_auto_base_task
+    payload = context['payload']
+    agent = context['agent']
+    gnss_reader = context['gnss_reader']
+    mqtt_client = context['mqtt_client']
+    logging.info("Received TRIGGER_BASE_REFERENCE_CHECK command.")
+    reference = _parse_reference_coordinates(
+        payload.get("reference_coords") or {},
+        "reference_coords must contain valid lat, lon, alt",
+        "reference_coords is out of range",
+    )
+    original_base_config = copy.deepcopy(agent.get_base_config() or {})
+    original_coords = original_base_config.get("coords") or original_base_config
+    restore_coords = _parse_reference_coordinates(
+        original_coords,
+        "stored base coordinate is missing; refusing reference check",
+        "stored base coordinate is out of range",
+    )
+
+    if active_auto_base_task and not active_auto_base_task.done():
+        raise RuntimeError("an automatic base task is already running")
+    reference_check_cfg = _build_reference_check_config(
+        payload, reference, restore_coords, original_base_config
+    )
+    agent.config["pending_base_restore"] = {
+        "coords": restore_coords,
+        "base_config": original_base_config,
+    }
+    agent.save_config()
+    _set_auto_base_progress("reference_check_queued", step=0, total_steps=4)
+    await send_status(agent, mqtt_client)
+    active_auto_base_task = asyncio.create_task(
+        base_reference_check_state_machine(agent, gnss_reader, mqtt_client, reference_check_cfg)
+    )
+
+
+async def _handle_command_stop_auto_base(context):
+    global current_state
+    agent = context['agent']
+    gnss_reader = context['gnss_reader']
+    mqtt_client = context['mqtt_client']
+    logging.info("Received STOP_AUTO_BASE command")
+    await _stop_auto_base(agent, gnss_reader)
+    current_state = "ONLINE"
+    _set_auto_base_progress("stopped", step=0, total_steps=4, reason="Stopped by user")
+    await send_status(agent, mqtt_client)
+
+
+async def _handle_command_apply_vn2000_province(context):
+    if context["command"] == "APPLY_VN2000_PROVINCE":
+        raise ValueError('Province overrides no longer write the receiver. Review Auto Base results and apply Fixed LLA.')
+
+
+async def _handle_command_execute_raw_commands(context):
+    data = context['data']
+    payload = context['payload']
+    agent = context['agent']
+    gnss_reader = context['gnss_reader']
+    mqtt_client = context['mqtt_client']
+    _remember_output_mode_from_original_config(data)
+    original_config = data.get("original_config") or {}
+    configuring_base = original_config.get("mode") == "BASE"
+    await _prepare_raw_command_execution(agent, gnss_reader, configuring_base)
+    commands_b64 = payload.get("commands_b64", [])
+    port = agent.detected_chip.get("port")
+    await _execute_raw_gnss_commands(
+        commands_b64, port, payload, data, original_config, configuring_base,
+        agent, gnss_reader, mqtt_client,
+    )
+
+async def _prepare_raw_command_execution(agent, gnss_reader, configuring_base):
+    if not configuring_base:
+        return
+    agent.config['gnss_config_pending'] = True
+    await _stop_auto_base(agent, gnss_reader)
+    agent.save_config()
+    globals()['AUTO_BASE_PROGRESS'] = {}
+    _mark_gnss_data_stale()
+
+
+def _verify_raw_command_receiver(ser, profile):
+    if not profile.get('modern'):
+        return
+    logging.info('[GNSS][CONFIG] firmware=%s interface=VALSET layers=RAM/BBR/Flash', profile.get('firmware'))
+    actual_info = _ubx_version_payload(_query_ubx_serial(ser, 0x0a, 4))
+    if actual_info.get('firmware') != profile.get('firmware') or actual_info.get('model') != 'ZED-F9P':
+        raise RuntimeError('GNSS firmware changed; refresh receiver information before applying')
+
+
+async def _send_raw_gnss_command(ser, cmd_b64, profile, expected_values):
+    decoded_cmd = base64.b64decode(cmd_b64)
+    delay_seconds = _delay_marker_seconds(decoded_cmd)
+    if delay_seconds is not None:
+        await asyncio.sleep(delay_seconds)
+        return None
+    expected_tmode = decoded_cmd if decoded_cmd[:4] == b"\xb5\x62\x06\x71" and len(decoded_cmd) == 48 else None
+    if profile.get('modern'):
+        expected_values.update(_ubx_valset_values(decoded_cmd))
+    logging.info(f"  -> Sending: {decoded_cmd.decode('ascii', errors='ignore').strip()}")
+    ser.write(decoded_cmd)
+    ser.flush()
+    await asyncio.sleep(0.5)
+    return expected_tmode
+
+
+def _verify_raw_gnss_commands(ser, profile, expected_values, expected_tmode):
+    if profile.get('modern'):
+        _verify_ublox_values(ser, expected_values)
+    if expected_tmode is not None:
+        _verify_ublox_tmode(ser, expected_tmode)
+
+
+async def _write_raw_gnss_commands(ser, commands_b64, profile):
+    _verify_raw_command_receiver(ser, profile)
+    expected_tmode = None
+    expected_values = {}
+    for cmd_b64 in commands_b64:
+        command_tmode = await _send_raw_gnss_command(ser, cmd_b64, profile, expected_values)
+        if command_tmode is not None:
+            expected_tmode = command_tmode
+    _verify_raw_gnss_commands(ser, profile, expected_values, expected_tmode)
+
+
+def _apply_raw_command_base_config(agent, original_config):
+    agent.config['base_config'] = copy.deepcopy(original_config['params'])
+    agent.config.pop('auto_base_candidate', None)
+    agent.config['gnss_config_pending'] = False
+    agent.receiver_base_readback = {}
+    agent.receiver_base_readback_at = None
+    if agent.config['base_config'].get('base_setup_method') == 'SURVEY_IN':
+        agent.survey_in_started_at = time.monotonic()
+        agent.config.pop('survey_in_result', None)
+    else:
+        agent.survey_in_started_at = None
+    agent.save_config()
+
+
+async def _execute_raw_gnss_commands(commands_b64, port, payload, data, original_config,
+                                     configuring_base, agent, gnss_reader, mqtt_client):
+    global current_state
+    if not commands_b64 or not port:
+        return
+    if gnss_reader:
+        gnss_reader.pause()
+        await asyncio.sleep(1.0)
+    try:
+        baud = _runtime_serial_baud(agent, gnss_reader)
+        logging.info(f"Opening GNSS command port {port} @ {baud} baud")
+        with serial_port_lock, serial.Serial(port, baud, timeout=2) as ser:
+            _write_raw_gnss_commands(ser, commands_b64, payload.get('receiver_profile') or {})
+        if configuring_base:
+            _apply_raw_command_base_config(agent, original_config)
+        current_state = "ONLINE"
+        logging.info("All base station commands executed successfully")
+        if data.get("original_config", {}).get("mode") == "BASE":
+            agent.restart_services()
+    except Exception as error:
+        logging.exception(f"Raw command execution error: {error}")
+        raise
+    finally:
+        if gnss_reader:
+            await asyncio.sleep(2.0)  # Wait for chip to stabilize
+            gnss_reader.resume()
+        current_state = "ONLINE"
+        logging.info("GNSS command port released; reader resumed")
+        await send_status(agent, mqtt_client)
+
+
+async def _handle_command_deploy_service_config(context):
+    global current_state
+    payload = context['payload']
+    agent = context['agent']
+    mqtt_client = context['mqtt_client']
+    agent.update_service_config(payload)
+    agent.restart_services()
+    current_state = "ONLINE"
+    await send_status(agent, mqtt_client)
+
+
+async def _handle_command_set_rtcm_stream_active(context):
+    global current_state, rtcm_stream_active_flag
+    payload = context['payload']
+    agent = context['agent']
+    mqtt_client = context['mqtt_client']
+    active = bool(payload.get("active", False))
+    mountpoint = payload.get("mountpoint")
+    address = (
+        payload.get("address")
+        or payload.get("caster_host")
+        or payload.get("ip")
+        or payload.get("host")
+    )
+    raw_server_id = payload.get(
+        "server_id",
+        payload.get("server_idx", payload.get("server")),
+    )
+    server_id = None
+    try:
+        if raw_server_id is not None:
+            parsed_server_id = int(raw_server_id)
+            if parsed_server_id in _get_ntrip_server_ids(agent.get_service_config() or {}):
+                server_id = parsed_server_id
+    except (TypeError, ValueError):
+        server_id = None
+
+    agent.set_rtcm_stream_active(active, mountpoint=mountpoint, server_id=server_id, address=address)
+    rtcm_stream_active_flag = bool(agent.rtcm_stream_active)  # Update global dispatch gate immediately
+
+    if active:
+        if server_id:
+            logging.info(f"[RTCM] Stream activated for server {server_id} by control plane")
+        elif address:
+            logging.info(f"[RTCM] Stream activated for address '{address}' by control plane")
+        elif mountpoint:
+            logging.info(f"[RTCM] Stream activated for mountpoint '{mountpoint}' by control plane")
+        else:
+            logging.info("[RTCM] Stream activated by control plane - forwarding to NTRIP caster enabled")
+    else:
+        if server_id:
+            logging.info(f"[RTCM] Stream set to standby for server {server_id} by control plane")
+        else:
+            logging.info("[RTCM] Stream set to standby by control plane - forwarding to NTRIP caster disabled")
+    current_state = "ONLINE"
+    await send_status(agent, mqtt_client)
+
+
+async def _handle_command_reboot_device(context):
+    global current_state
+    command = context['command']
+    source = context['source']
+    command_id = context['command_id']
+    agent = context['agent']
+    gnss_reader = context['gnss_reader']
+    mqtt_client = context['mqtt_client']
+    current_state = "REBOOTING"
+    _record_command_result(command, source, "success", "device reboot requested", command_id)
+    await send_status(agent, mqtt_client)
+    await asyncio.sleep(1) # Chờ để MQTT kịp gửi bản tin
+
+    if agent.nmea_publisher:
+        agent.nmea_publisher.stop()
+    agent.restart_services()
+    if gnss_reader and gnss_reader.is_alive():
+        gnss_reader.stop()
+        gnss_reader.join(timeout=2)
+    if mqtt_client:
+        mqtt_client.loop_stop()
+        mqtt_client.disconnect()
+
+    await asyncio.sleep(2)
+    remove_lock_file()
+
+    # Restart tiến trình (process) thay vì khởi động lại OS
+    logging.info("[REBOOT] Restarting Agent process...")
+    sys.exit(0)
+
+
+async def _handle_command_delete_device(context):
+    global current_state
+    command = context['command']
+    source = context['source']
+    command_id = context['command_id']
+    agent = context['agent']
+    gnss_reader = context['gnss_reader']
+    mqtt_client = context['mqtt_client']
+    current_state = "REBOOTING_FOR_RESET"
+    _record_command_result(command, source, "success", "device reset requested", command_id)
+    await send_status(agent, mqtt_client)
+    await asyncio.sleep(1)
+
+    if agent.nmea_publisher:
+        agent.nmea_publisher.stop()
+    agent.restart_services()
+    if gnss_reader and gnss_reader.is_alive():
+        gnss_reader.stop()
+        gnss_reader.join(timeout=2)
+    if mqtt_client:
+        mqtt_client.loop_stop()
+        mqtt_client.disconnect()
+    for path in [CONFIG_PATH, LICENSE_PATH]:
+        if os.path.exists(path):
+            os.remove(path)
+
+    await asyncio.sleep(2)
+    remove_lock_file()
+
+    logging.info("[REBOOT_FOR_RESET] Restarting Agent process...")
+    sys.exit(0)
+
+
+async def _handle_command_verify_gnss_config(context):
+    payload = context['payload']
+    command_id = context['command_id']
+    agent = context['agent']
+    gnss_reader = context['gnss_reader']
+    if active_auto_base_task and not active_auto_base_task.done():
+        raise RuntimeError('Base workflow is running; wait before verifying configuration')
+    await verify_receiver_configuration(agent, gnss_reader, payload, command_id)
+
+
+async def _handle_command_check_base_status(context):
+    agent = context['agent']
+    gnss_reader = context['gnss_reader']
+    await refresh_receiver_base_status(agent, gnss_reader)
+
+
+_COMMAND_HANDLERS = {
+    'PROVISION_DEVICE': _handle_command_provision_device,
+    'DEPLOY_LICENSE': _handle_command_deploy_license,
+    'TRIGGER_AUTO_BASE': _handle_command_trigger_auto_base,
+    'TRIGGER_BASE_REFERENCE_CHECK': _handle_command_trigger_base_reference_check,
+    'STOP_AUTO_BASE': _handle_command_stop_auto_base,
+    'APPLY_VN2000_PROVINCE': _handle_command_apply_vn2000_province,
+    'EXECUTE_RAW_COMMANDS': _handle_command_execute_raw_commands,
+    'DEPLOY_SERVICE_CONFIG': _handle_command_deploy_service_config,
+    'SET_RTCM_STREAM_ACTIVE': _handle_command_set_rtcm_stream_active,
+    'REBOOT_DEVICE': _handle_command_reboot_device,
+    'DELETE_DEVICE': _handle_command_delete_device,
+    'VERIFY_GNSS_CONFIG': _handle_command_verify_gnss_config,
+    'CHECK_BASE_STATUS': _handle_command_check_base_status,
+}
+
+
 async def process_command(source: str, data: dict, agent: AgentManager, gnss_reader: GNSSReader, mqtt_client: mqtt.Client):
     async with command_execution_lock:
         await _process_command(source, data, agent, gnss_reader, mqtt_client)
@@ -5907,12 +6329,11 @@ def _write_license_key(license_key: str) -> None:
         license_file.write(license_key)
 
 
-async def _process_command(source: str, data: dict, agent: AgentManager, gnss_reader: GNSSReader, mqtt_client: mqtt.Client):
-    global current_state, rtcm_stream_active_flag, active_auto_base_task, active_auto_base_client
+async def _extract_command_payload(data, source, agent, mqtt_client):
     if not isinstance(data, dict):
         _record_command_result("UNKNOWN", source, "rejected", "command envelope must be an object")
         logging.warning("Rejected malformed command envelope from %s", source)
-        return
+        return None
     command = data.get("command")
     payload = data.get("payload", {})
     if payload is None:
@@ -5920,49 +6341,51 @@ async def _process_command(source: str, data: dict, agent: AgentManager, gnss_re
     if not isinstance(payload, dict):
         _record_command_result(str(command or "UNKNOWN"), source, "rejected", "command payload must be an object")
         await send_status(agent, mqtt_client)
-        return
-    command_id = str(data.get("command_id") or "")
+        return None
+    return command, payload, str(data.get("command_id") or "")
+
+
+async def _accept_command_envelope(command, source, command_id, data, agent, mqtt_client):
     now = int(time.time())
     try:
         issued_at = int(data.get("issued_at"))
         expires_at = int(data.get("expires_at"))
     except (TypeError, ValueError):
         issued_at = expires_at = 0
-    if (
-        not re.fullmatch(r"[A-Za-z0-9_-]{16,100}", command_id)
-        or issued_at > now + 60
-        or issued_at < now - 300
-        or expires_at < now
-        or expires_at > issued_at + 300
-    ):
+    id_is_valid = bool(re.fullmatch(r"[A-Za-z0-9_-]{16,100}", command_id))
+    if (not id_is_valid or issued_at > now + 60 or issued_at < now - 300
+            or expires_at < now or expires_at > issued_at + 300):
         _record_command_result(command, source, "rejected", "missing or expired command envelope", command_id or None)
         logging.warning(
             "Rejected command freshness from %s: id_valid=%s issued_at=%s expires_at=%s now=%s",
-            source.upper(), bool(re.fullmatch(r"[A-Za-z0-9_-]{16,100}", command_id)),
-            issued_at, expires_at, now,
+            source.upper(), id_is_valid, issued_at, expires_at, now,
         )
         await send_status(agent, mqtt_client)
-        return
+        return False
     if command_id in seen_command_ids:
         _record_command_result(command, source, "rejected", "replayed command id", command_id)
         await send_status(agent, mqtt_client)
-        return
+        return False
     seen_command_ids[command_id] = expires_at
     while len(seen_command_ids) > 2048:
         seen_command_ids.popitem(last=False)
     for old_id, old_expiry in list(seen_command_ids.items()):
         if old_expiry < now:
             seen_command_ids.pop(old_id, None)
-    logging.info(f"Received command '{command}' from {source.upper()}")
+    return True
 
+
+async def _validate_received_command(command, source, payload, data, command_id, agent, gnss_reader, mqtt_client):
     is_valid, validation_error = _validate_command_payload(command, payload, data, agent, gnss_reader)
-    if not is_valid:
-        _record_command_result(command, source, "rejected", validation_error, command_id)
-        logging.warning(f"Rejected command '{command}' from {source.upper()}: {validation_error}")
-        await send_status(agent, mqtt_client)
-        return
-    _record_command_result(command, source, "running", "", command_id)
-    
+    if is_valid:
+        return True
+    _record_command_result(command, source, "rejected", validation_error, command_id)
+    logging.warning(f"Rejected command '{command}' from {source.upper()}: {validation_error}")
+    await send_status(agent, mqtt_client)
+    return False
+
+
+async def _handle_device_lock_commands(command, source, payload, command_id, agent, mqtt_client):
     if command == "LOCK_DEVICE":
         if create_remote_lock(payload.get("locked_servers") if "locked_servers" in payload else None):
             # Scoped locks do not restart services or interrupt the other host.
@@ -5974,353 +6397,87 @@ async def _process_command(source: str, data: dict, agent: AgentManager, gnss_re
             logging.error("!!! Failed to create remote lock file.")
             _record_command_result(command, source, "error", "failed to create remote lock", command_id)
         await send_status(agent, mqtt_client)
-        return
-    
-    if command == "UNLOCK_DEVICE":
-        unlocked = remove_remote_lock()
-        if unlocked:
-            logging.info(" DEVICE UNLOCKED")
-            _record_command_result(command, source, "success", "device unlocked", command_id)
-        else:
-            logging.error("!!! Failed to remove remote lock file.")
-            _record_command_result(command, source, "error", "failed to remove remote lock", command_id)
-        await send_status(agent, mqtt_client)
-        if unlocked and current_state == "LOCKED":
-            remote_unlock_event.set()
-        return
-    
-    if is_remote_locked():
-        logging.warning(f"Command '{command}' REJECTED - Device is locked")
-        _record_command_result(command, source, "rejected", "device is locked", command_id)
-        await send_status(agent, mqtt_client)
-        return
-    
+        return True
+    if command != "UNLOCK_DEVICE":
+        return False
+    unlocked = remove_remote_lock()
+    if unlocked:
+        logging.info(" DEVICE UNLOCKED")
+        _record_command_result(command, source, "success", "device unlocked", command_id)
+    else:
+        logging.error("!!! Failed to remove remote lock file.")
+        _record_command_result(command, source, "error", "failed to remove remote lock", command_id)
+    await send_status(agent, mqtt_client)
+    if unlocked and current_state == "LOCKED":
+        remote_unlock_event.set()
+    return True
+
+
+async def _reject_when_device_locked(command, source, command_id, agent, mqtt_client):
+    if not is_remote_locked():
+        return False
+    logging.warning(f"Command '{command}' REJECTED - Device is locked")
+    _record_command_result(command, source, "rejected", "device is locked", command_id)
+    await send_status(agent, mqtt_client)
+    return True
+
+
+async def _start_command_execution(command, source, command_id, agent, mqtt_client):
+    global current_state
     previous_state = current_state
-    is_long_running = command in [
-        "EXECUTE_RAW_COMMANDS",
-        "DELETE_DEVICE",
-        "PROVISION_DEVICE",
-        "DEPLOY_LICENSE",
-        "TRIGGER_AUTO_BASE",
-        "TRIGGER_BASE_REFERENCE_CHECK",
-        "APPLY_VN2000_PROVINCE",
-    ]
-    
+    is_long_running = command in {
+        "EXECUTE_RAW_COMMANDS", "DELETE_DEVICE", "PROVISION_DEVICE", "DEPLOY_LICENSE",
+        "TRIGGER_AUTO_BASE", "TRIGGER_BASE_REFERENCE_CHECK", "APPLY_VN2000_PROVINCE",
+    }
     if is_long_running:
         if not create_lock_file():
             logging.warning(f"Rejected command '{command}', device is busy.")
             _record_command_result(command, source, "rejected", "device is busy", command_id)
             await send_status(agent, mqtt_client)
-            return
+            return previous_state, is_long_running, False
         current_state = "CONFIGURING"
         await send_status(agent, mqtt_client)
-    
+    return previous_state, is_long_running, True
+
+
+async def _process_command(source: str, data: dict, agent: AgentManager, gnss_reader: GNSSReader, mqtt_client: mqtt.Client):
+    global current_state
+    parsed = await _extract_command_payload(data, source, agent, mqtt_client)
+    if parsed is None:
+        return
+    command, payload, command_id = parsed
+    if not await _accept_command_envelope(command, source, command_id, data, agent, mqtt_client):
+        return
+    logging.info(f"Received command '{command}' from {source.upper()}")
+    if not await _validate_received_command(
+        command, source, payload, data, command_id, agent, gnss_reader, mqtt_client
+    ):
+        return
+    _record_command_result(command, source, "running", "", command_id)
+
+    if await _handle_device_lock_commands(command, source, payload, command_id, agent, mqtt_client):
+        return
+    if await _reject_when_device_locked(command, source, command_id, agent, mqtt_client):
+        return
+    previous_state, is_long_running, started = await _start_command_execution(
+        command, source, command_id, agent, mqtt_client
+    )
+    if not started:
+        return
+
     try:
-        if command == "PROVISION_DEVICE":
-            if agent.update_name(payload.get("name")):
-                current_state = "ONLINE" if license_is_valid() else "AWAITING_LICENSE"
-                if current_state == "ONLINE":
-                    agent.restart_services()
-        
-        elif command == "DEPLOY_LICENSE":
-            if payload.get("license_key"):
-                license_key = str(payload["license_key"]).strip()
-                if not is_valid_license_key(license_key, MACHINE_SERIAL):
-                    raise ValueError("Invalid device token format")
-                await asyncio.to_thread(_write_license_key, license_key)
-                current_state = "REBOOTING"
-                _record_command_result(command, source, "success", "license deployed; rebooting", command_id)
-                await send_status(agent, mqtt_client)
-                await asyncio.sleep(2)
-                remove_lock_file()
-                os.execv(sys.executable, [sys.executable, os.path.abspath(__file__)])
-        
-        elif command == "TRIGGER_AUTO_BASE":
-            logging.info("Received TRIGGER_AUTO_BASE command. Configuring and starting state machine...")
-            await _stop_auto_base(agent, gnss_reader)
-            auto_setup_metadata = payload
-            raw_mp = str(auto_setup_metadata.get("mountpoint") or "").strip()
-                
-            agent.config['auto_base_setup'] = {
-                "enabled": True,
-                "ip": str(auto_setup_metadata.get("ip") or "").strip(),
-                "port": int(auto_setup_metadata.get("port")),
-                "user": str(auto_setup_metadata.get("user") or "").strip(),
-                "password": str(auto_setup_metadata.get("password") or ""),
-                "mountpoint": raw_mp,
-                "timeout": auto_setup_metadata.get("timeout", 3600),
-                "samples": auto_setup_metadata.get("samples", 60),
-                "sensor_type": auto_setup_metadata.get("sensor_type"),
-                "review_only": True,
-                "enable_itrf_vn2000_transform": auto_setup_metadata.get("enable_itrf_vn2000_transform", True),
-                "l0_deg": auto_setup_metadata.get("l0_deg"),
-                "k0": auto_setup_metadata.get("k0"),
-                **{key: auto_setup_metadata.get(key, 0.0) for key in ("resN", "resE", "resHS")}
+        handler = _COMMAND_HANDLERS.get(command)
+        if handler is not None:
+            context = {
+                "command": command, "source": source, "data": data, "payload": payload,
+                "command_id": command_id, "agent": agent, "gnss_reader": gnss_reader,
+                "mqtt_client": mqtt_client,
             }
-            agent.save_config()
-            _set_auto_base_progress("queued", step=0, total_steps=4)
-            await send_status(agent, mqtt_client)
-            
-            # Start the state machine as a background task
-            active_auto_base_task = asyncio.create_task(auto_base_state_machine(agent, gnss_reader, mqtt_client))
-
-        elif command == "TRIGGER_BASE_REFERENCE_CHECK":
-            logging.info("Received TRIGGER_BASE_REFERENCE_CHECK command.")
-            reference = payload.get("reference_coords") or {}
-            try:
-                reference = {
-                    "lat": float(reference["lat"]),
-                    "lon": float(reference["lon"]),
-                    "alt": float(reference["alt"]),
-                }
-            except (KeyError, TypeError, ValueError):
-                raise ValueError("reference_coords must contain valid lat, lon, alt")
-            if not (-90.0 <= reference["lat"] <= 90.0 and -180.0 <= reference["lon"] <= 180.0):
-                raise ValueError("reference_coords is out of range")
-            original_base_config = copy.deepcopy(agent.get_base_config() or {})
-            original_coords = original_base_config.get("coords") or original_base_config
-            try:
-                restore_coords = {
-                    "lat": float(original_coords["lat"]),
-                    "lon": float(original_coords["lon"]),
-                    "alt": float(original_coords["alt"]),
-                }
-            except (KeyError, TypeError, ValueError):
-                raise ValueError("stored base coordinate is missing; refusing reference check")
-            if not (-90.0 <= restore_coords["lat"] <= 90.0 and -180.0 <= restore_coords["lon"] <= 180.0):
-                raise ValueError("stored base coordinate is out of range")
-
-            if active_auto_base_task and not active_auto_base_task.done():
-                raise RuntimeError("an automatic base task is already running")
-            reference_check_cfg = {
-                "ip": str(payload.get("ip") or "").strip(),
-                "port": int(payload.get("port") or 0),
-                "user": str(payload.get("user") or ""),
-                "password": str(payload.get("password") or ""),
-                "mountpoint": str(payload.get("mountpoint") or "").strip(),
-                "timeout": int(payload.get("timeout") or 300),
-                "samples": int(payload.get("samples") or 60),
-                "reference_coords": reference,
-                "restore_coords": restore_coords,
-                "original_base_config": original_base_config,
-            }
-            if not reference_check_cfg["ip"] or not reference_check_cfg["mountpoint"] or not reference_check_cfg["user"] or not reference_check_cfg["password"]:
-                raise ValueError("NTRIP host, credentials, and mountpoint are required")
-            agent.config["pending_base_restore"] = {
-                "coords": restore_coords,
-                "base_config": original_base_config,
-            }
-            agent.save_config()
-            _set_auto_base_progress("reference_check_queued", step=0, total_steps=4)
-            await send_status(agent, mqtt_client)
-            active_auto_base_task = asyncio.create_task(
-                base_reference_check_state_machine(agent, gnss_reader, mqtt_client, reference_check_cfg)
-            )
-
-        elif command == "STOP_AUTO_BASE":
-            logging.info("Received STOP_AUTO_BASE command")
-            await _stop_auto_base(agent, gnss_reader)
-            current_state = "ONLINE"
-            _set_auto_base_progress("stopped", step=0, total_steps=4, reason="Stopped by user")
-            await send_status(agent, mqtt_client)
-
-        elif command == "APPLY_VN2000_PROVINCE":
-            raise ValueError('Province overrides no longer write the receiver. Review Auto Base results and apply Fixed LLA.')
-
-        elif command == "EXECUTE_RAW_COMMANDS":
-            _remember_output_mode_from_original_config(data)
-            original_config = data.get("original_config") or {}
-            configuring_base = original_config.get("mode") == "BASE"
-            if configuring_base:
-                agent.config['gnss_config_pending'] = True
-                await _stop_auto_base(agent, gnss_reader)
-                agent.save_config()
-                globals()['AUTO_BASE_PROGRESS'] = {}
-                _mark_gnss_data_stale()
-
-            commands_b64 = payload.get("commands_b64", [])
-            port = agent.detected_chip.get("port")
-            
-            if commands_b64 and port:
-                if gnss_reader:
-                    gnss_reader.pause()
-                    await asyncio.sleep(1.0)
-                
-                try:
-                    baud = _runtime_serial_baud(agent, gnss_reader)
-                    logging.info(f"Opening GNSS command port {port} @ {baud} baud")
-                    with serial_port_lock, serial.Serial(port, baud, timeout=2) as ser:
-                        expected_tmode = None
-                        expected_values = {}
-                        profile = payload.get('receiver_profile') or {}
-                        if profile.get('modern'):
-                            logging.info('[GNSS][CONFIG] firmware=%s interface=VALSET layers=RAM/BBR/Flash', profile.get('firmware'))
-                            actual_info = _ubx_version_payload(_query_ubx_serial(ser, 0x0a, 4))
-                            if actual_info.get('firmware') != profile.get('firmware') or actual_info.get('model') != 'ZED-F9P':
-                                raise RuntimeError('GNSS firmware changed; refresh receiver information before applying')
-                        for cmd_b64 in commands_b64:
-                            decoded_cmd = base64.b64decode(cmd_b64)
-                            
-                            # Handle delay markers
-                            delay_seconds = _delay_marker_seconds(decoded_cmd)
-                            if delay_seconds is not None:
-                                await asyncio.sleep(delay_seconds)
-                                continue
-                            
-                            if decoded_cmd[:4] == b"\xb5\x62\x06\x71" and len(decoded_cmd) == 48:
-                                expected_tmode = decoded_cmd
-
-                            if profile.get('modern'):
-                                expected_values.update(_ubx_valset_values(decoded_cmd))
-
-                            # Send command
-                            logging.info(f"  -> Sending: {decoded_cmd.decode('ascii', errors='ignore').strip()}")
-                            ser.write(decoded_cmd)
-                            ser.flush()
-                            await asyncio.sleep(0.5)
-                            
-                        if profile.get('modern'):
-                            _verify_ublox_values(ser, expected_values)
-                        if expected_tmode is not None:
-                            _verify_ublox_tmode(ser, expected_tmode)
-
-                    if configuring_base:
-                        agent.config['base_config'] = copy.deepcopy(original_config['params'])
-                        agent.config.pop('auto_base_candidate', None)
-                        agent.config['gnss_config_pending'] = False
-                        agent.receiver_base_readback = {}
-                        agent.receiver_base_readback_at = None
-                        if agent.config['base_config'].get('base_setup_method') == 'SURVEY_IN':
-                            agent.survey_in_started_at = time.monotonic()
-                            agent.config.pop('survey_in_result', None)
-                        else:
-                            agent.survey_in_started_at = None
-                        agent.save_config()
-                    current_state = "ONLINE"
-                    logging.info("All base station commands executed successfully")
-                    if data.get("original_config", {}).get("mode") == "BASE":
-                        agent.restart_services()
-                    
-                except Exception as e:
-                    logging.exception(f"Raw command execution error: {e}")
-                    raise
-                finally:
-                    if gnss_reader:
-                        await asyncio.sleep(2.0)  # Wait for chip to stabilize
-                        gnss_reader.resume()
-                    current_state = "ONLINE"
-                    logging.info("GNSS command port released; reader resumed")
-
-                    await send_status(agent, mqtt_client)
-        
-        elif command == "DEPLOY_SERVICE_CONFIG":
-            agent.update_service_config(payload)
-            agent.restart_services()
-            current_state = "ONLINE"
-            await send_status(agent, mqtt_client)
-
-        elif command == "SET_RTCM_STREAM_ACTIVE":
-            active = bool(payload.get("active", False))
-            mountpoint = payload.get("mountpoint")
-            address = (
-                payload.get("address")
-                or payload.get("caster_host")
-                or payload.get("ip")
-                or payload.get("host")
-            )
-            raw_server_id = payload.get(
-                "server_id",
-                payload.get("server_idx", payload.get("server")),
-            )
-            server_id = None
-            try:
-                if raw_server_id is not None:
-                    parsed_server_id = int(raw_server_id)
-                    if parsed_server_id in _get_ntrip_server_ids(agent.get_service_config() or {}):
-                        server_id = parsed_server_id
-            except (TypeError, ValueError):
-                server_id = None
-
-            agent.set_rtcm_stream_active(active, mountpoint=mountpoint, server_id=server_id, address=address)
-            rtcm_stream_active_flag = bool(agent.rtcm_stream_active)  # Update global dispatch gate immediately
-
-            if active:
-                if server_id:
-                    logging.info(f"[RTCM] Stream activated for server {server_id} by control plane")
-                elif address:
-                    logging.info(f"[RTCM] Stream activated for address '{address}' by control plane")
-                elif mountpoint:
-                    logging.info(f"[RTCM] Stream activated for mountpoint '{mountpoint}' by control plane")
-                else:
-                    logging.info("[RTCM] Stream activated by control plane - forwarding to NTRIP caster enabled")
-            else:
-                if server_id:
-                    logging.info(f"[RTCM] Stream set to standby for server {server_id} by control plane")
-                else:
-                    logging.info("[RTCM] Stream set to standby by control plane - forwarding to NTRIP caster disabled")
-            current_state = "ONLINE"
-            await send_status(agent, mqtt_client)
-            
-        elif command == "REBOOT_DEVICE":
-            current_state = "REBOOTING"
-            _record_command_result(command, source, "success", "device reboot requested", command_id)
-            await send_status(agent, mqtt_client)
-            await asyncio.sleep(1) # Chờ để MQTT kịp gửi bản tin
-            
-            if agent.nmea_publisher:
-                agent.nmea_publisher.stop()
-            agent.restart_services()
-            if gnss_reader and gnss_reader.is_alive():
-                gnss_reader.stop()
-                gnss_reader.join(timeout=2)
-            if mqtt_client:
-                mqtt_client.loop_stop()
-                mqtt_client.disconnect()
-            
-            await asyncio.sleep(2)
-            remove_lock_file()
-            
-            # Restart tiến trình (process) thay vì khởi động lại OS
-            logging.info("[REBOOT] Restarting Agent process...")
-            sys.exit(0)
-            
-        elif command == "DELETE_DEVICE":
-            current_state = "REBOOTING_FOR_RESET"
-            _record_command_result(command, source, "success", "device reset requested", command_id)
-            await send_status(agent, mqtt_client)
-            await asyncio.sleep(1)
-            
-            if agent.nmea_publisher:
-                agent.nmea_publisher.stop()
-            agent.restart_services()
-            if gnss_reader and gnss_reader.is_alive():
-                gnss_reader.stop()
-                gnss_reader.join(timeout=2)
-            if mqtt_client:
-                mqtt_client.loop_stop()
-                mqtt_client.disconnect()
-            for path in [CONFIG_PATH, LICENSE_PATH]:
-                if os.path.exists(path):
-                    os.remove(path)
-            
-            await asyncio.sleep(2)
-            remove_lock_file()
-            
-            logging.info("[REBOOT_FOR_RESET] Restarting Agent process...")
-            sys.exit(0)
-        
-        elif command == "VERIFY_GNSS_CONFIG":
-            if active_auto_base_task and not active_auto_base_task.done():
-                raise RuntimeError('Base workflow is running; wait before verifying configuration')
-            await verify_receiver_configuration(agent, gnss_reader, payload, command_id)
-
-        elif command == "CHECK_BASE_STATUS":
-            await refresh_receiver_base_status(agent, gnss_reader)
-
+            await handler(context)
         _record_command_result(command, source, "success", "", command_id)
-    except Exception as e:
-        _record_command_result(command, source, "error", str(e), command_id)
-        logging.exception(f"Command '{command}' failed: {e}", exc_info=True)
+    except Exception as error:
+        _record_command_result(command, source, "error", str(error), command_id)
+        logging.exception(f"Command '{command}' failed: {error}", exc_info=True)
     finally:
         if current_state == "CONFIGURING":
             current_state = previous_state
