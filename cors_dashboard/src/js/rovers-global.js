@@ -2467,183 +2467,146 @@ function createRoverRowElement(r) {
         updateRoverBulkToolbar();
     }
 
-    // === HANDLE EDIT ROVER (LOGIC MỚI) ===
-    function handleEditRover(e) {
-        const id = Number.parseInt(e.currentTarget.dataset.id);
-        const username = e.currentTarget.dataset.username;
-        
-        let rover = allRovers.find(r => r.id === id);
+    function findRoverForEdit(id, username) {
+        let rover = allRovers.find(item => item.id === id);
         if (!rover && username) {
-            rover = allRovers.find(r => normalizeUsername(r.username) === normalizeUsername(username));
+            rover = allRovers.find(item => normalizeUsername(item.username) === normalizeUsername(username));
         }
-        
-        // Nếu không có ID trong DB (Unknown), tìm trong danh sách Caster
-        if (!rover && username) {
-            const cu = casterUsers.find(u => u.username === username);
-            if (cu) {
-                rover = {
-                    id: 0,
-                    username: cu.username,
-                    password: cu.password,
-                    mountpoints: cu.mountpoints.join(';'),
-                    show_position: cu.show_position,
-                    auto_save_sessions: true,
-                    auto_save_fixed_points: false,
-                    max_connections: (typeof cu.maxclient !== 'undefined' && cu.maxclient !== null) ? cu.maxclient : 1
-                };
-            }
-        }
-        
-        if (!rover) return;
+        if (rover || !username) return rover;
+        const casterUser = casterUsers.find(item => item.username === username);
+        if (!casterUser) return null;
+        return {
+            id: 0,
+            username: casterUser.username,
+            password: casterUser.password,
+            mountpoints: casterUser.mountpoints.join(';'),
+            show_position: casterUser.show_position,
+            auto_save_sessions: true,
+            auto_save_fixed_points: false,
+            max_connections: casterUser.maxclient ?? 1,
+        };
+    }
 
-        // 1. Điền thông tin cơ bản
-        document.getElementById('edit-rover-id').value = rover.id;
-        document.getElementById('edit-username').value = rover.username;
-        
-        // Hiển thị mật khẩu hiện tại trong modal sửa
-        document.getElementById('edit-password').value = rover.password || ''; 
-        const expirySelect = document.getElementById('edit-expiry');
-        
-        // Cập nhật text hiển thị của tùy chọn "Giữ nguyên" (options[0])
-        const liveExpiry = getCasterInfosForUsername(rover.username).find(i => Number.isFinite(Number(i?.status)));
+    function getEditExpiryOptionText(rover) {
+        const liveExpiry = getCasterInfosForUsername(rover.username).find(info => Number.isFinite(Number(info?.status)));
         const remainingSeconds = liveExpiry
             ? Number(liveExpiry.status)
-            : (rover.expires_at ? rover.expires_at - Date.now() / 1000 : null);
-        if (remainingSeconds !== null) {
-            const remainingDays = Math.ceil(remainingSeconds / 86400);
-            if (remainingDays >= 3650) {
-                expirySelect.options[0].text = '--- Giữ nguyên (Vĩnh viễn) ---';
-            } else if (remainingDays > 0) {
-                expirySelect.options[0].text = '--- Giữ nguyên (Còn ' + remainingDays + ' ngày) ---';
-            } else {
-                expirySelect.options[0].text = '--- Giữ nguyên (Đã hết hạn) ---';
-            }
-        } else {
-            expirySelect.options[0].text = '--- Giữ nguyên (Vĩnh viễn) ---';
-        }
+            : rover.expires_at ? rover.expires_at - Date.now() / 1000 : null;
+        if (remainingSeconds === null) return '--- Giữ nguyên (Vĩnh viễn) ---';
+        const remainingDays = Math.ceil(remainingSeconds / 86400);
+        if (remainingDays >= 3650) return '--- Giữ nguyên (Vĩnh viễn) ---';
+        if (remainingDays > 0) return `--- Giữ nguyên (Còn ${remainingDays} ngày) ---`;
+        return '--- Giữ nguyên (Đã hết hạn) ---';
+    }
 
+    function setEditShowPosition(rover) {
+        const toggle = document.getElementById('edit-show-position');
+        if (!toggle) return;
+        const liveInfos = getCasterInfosForUsername(rover.username);
+        const hasLiveValue = liveInfos.some(info => typeof info?.show_position !== 'undefined');
+        const effectiveValue = hasLiveValue ? liveInfos.every(info => info?.show_position !== false) : rover.show_position;
+        toggle.checked = effectiveValue !== false;
+    }
+
+    function setEditRoverCoreFields(rover) {
+        document.getElementById('edit-rover-id').value = rover.id;
+        document.getElementById('edit-username').value = rover.username;
+        document.getElementById('edit-password').value = rover.password || '';
+        const expirySelect = document.getElementById('edit-expiry');
+        expirySelect.options[0].text = getEditExpiryOptionText(rover);
         expirySelect.value = '';
         syncExpiryFields('edit');
+
         const liveMaxClients = getCasterInfosForUsername(rover.username)
-            .map(i => Number(i?.maxclient))
-            .filter(v => Number.isFinite(v) && v >= 0);
+            .map(info => Number(info?.maxclient)).filter(value => Number.isFinite(value) && value >= 0);
         const roverMaxConnections = Number(rover.max_connections);
-        document.getElementById('edit-max-connections').value = liveMaxClients.length > 0
+        document.getElementById('edit-max-connections').value = liveMaxClients.length
             ? liveMaxClients[0]
-            : (Number.isFinite(roverMaxConnections) && roverMaxConnections >= 0 ? roverMaxConnections : 1);
-        const showPosToggle = document.getElementById('edit-show-position');
-        const isSharedToggle = document.getElementById('edit-is-shared');
+            : Number.isFinite(roverMaxConnections) && roverMaxConnections >= 0 ? roverMaxConnections : 1;
+
+        const sharedToggle = document.getElementById('edit-is-shared');
         const autoSaveSessionsToggle = document.getElementById('edit-auto-save-sessions');
         const autoSaveFixedPointsToggle = document.getElementById('edit-auto-save-fixed-points');
-        if (isSharedToggle) isSharedToggle.checked = rover.is_shared_with_managers || false;
+        if (sharedToggle) sharedToggle.checked = rover.is_shared_with_managers || false;
         if (autoSaveSessionsToggle) autoSaveSessionsToggle.checked = rover.auto_save_sessions !== false;
         if (autoSaveFixedPointsToggle) autoSaveFixedPointsToggle.checked = rover.auto_save_fixed_points === true;
-        if (showPosToggle) {
-            const liveInfos = getCasterInfosForUsername(rover.username);
-            const hasLiveShowPos = liveInfos.some(i => typeof i?.show_position !== 'undefined');
-            const effectiveShowPos = hasLiveShowPos
-                ? liveInfos.every(i => i?.show_position !== false)
-                : rover.show_position;
-            showPosToggle.checked = effectiveShowPos !== false;
-        }
+        setEditShowPosition(rover);
 
-        // Load RTCM fields
         const rtcmCycleToggle = document.getElementById('edit-rtcm-cycle-enabled');
         if (rtcmCycleToggle) {
             rtcmCycleToggle.checked = rover.rtcm_cycle_enabled || false;
             const intervalGroup = document.getElementById('edit-rtcm-cycle-interval-group');
-            if (intervalGroup) {
-                if (rtcmCycleToggle.checked) {
-                    intervalGroup.classList.remove('d-none');
-                } else {
-                    intervalGroup.classList.add('d-none');
-                }
-            }
+            if (intervalGroup) intervalGroup.classList.toggle('d-none', !rtcmCycleToggle.checked);
         }
         const rtcmIntervalInput = document.getElementById('edit-rtcm-disconnect-interval');
-        if (rtcmIntervalInput) {
-            rtcmIntervalInput.value = rover.rtcm_disconnect_interval_seconds || 300;
-        }
+        if (rtcmIntervalInput) rtcmIntervalInput.value = rover.rtcm_disconnect_interval_seconds || 300;
         const rtcmDurationInput = document.getElementById('edit-rtcm-disconnect-duration');
-        if (rtcmDurationInput) {
-            rtcmDurationInput.value = rover.rtcm_disconnect_duration_seconds || 10;
-        }
+        if (rtcmDurationInput) rtcmDurationInput.value = rover.rtcm_disconnect_duration_seconds || 10;
+    }
 
-        // 1.5 Load Target Casters
+    function setEditCasterTargets(rover) {
         let targetCasters = parseCasterHosts(rover.target_casters);
-        if (targetCasters.length === 0) {
-            targetCasters = Array.from(
-                new Set(
-                    getCasterInfosForUsername(rover.username)
-                        .map(i => String(i?.server || '').trim())
-                        .filter(Boolean)
-                )
-            );
+        if (!targetCasters.length) {
+            targetCasters = Array.from(new Set(getCasterInfosForUsername(rover.username)
+                .map(info => String(info?.server || '').trim()).filter(Boolean)));
         }
-        document.querySelectorAll('.edit-caster-target-check').forEach(cb => {
-            cb.checked = targetCasters.includes(cb.value);
+        document.querySelectorAll('.edit-caster-target-check').forEach(checkbox => {
+            checkbox.checked = targetCasters.includes(checkbox.value);
         });
+    }
 
-        // 2. XỬ LÝ CHECKLIST TRẠM
+    function getDeviceMountpointHosts(device) {
+        const config = device.service_config || {};
+        return [1, 2].filter(id => config[`server${id}_enabled`] && config[`mountpoint${id}`])
+            .map(id => `${config[`mountpoint${id}`]}:${String(config[`serverhost${id}`] || '').trim()}`);
+    }
+
+    function renderEditStationChecklist(rover) {
         const container = document.getElementById('edit-station-checklist');
-        container.innerHTML = ''; 
-        
+        container.innerHTML = '';
         const currentRoverMps = normalizeMountpointList(rover.mountpoints);
-        document.getElementById('edit-mountpoints').value = (rover.mountpoints || '');
-
-        if (allDevices.length === 0) {
+        document.getElementById('edit-mountpoints').value = rover.mountpoints || '';
+        if (!allDevices.length) {
             container.innerHTML = '<div class="text-center small text-muted">Không có trạm nào khả dụng.</div>';
-        } else {
-            allDevices.forEach(d => {
-                const sConf = d.service_config || {};
-                let mpsWithHosts = [];
-                if (sConf.server1_enabled && sConf.mountpoint1) {
-                    mpsWithHosts.push(`${sConf.mountpoint1}:${String(sConf.serverhost1 || '').trim()}`);
-                }
-                if (sConf.server2_enabled && sConf.mountpoint2) {
-                    mpsWithHosts.push(`${sConf.mountpoint2}:${String(sConf.serverhost2 || '').trim()}`);
-                }
-
-                if (mpsWithHosts.length > 0) {
-                    const deviceMpsOnly = mpsWithHosts.map(m => m.split(':')[0]);
-                    const isChecked = deviceMpsOnly.some(mp => currentRoverMps.includes(mp));
-                    
-                    const div = document.createElement('div');
-                    div.className = 'form-check';
-                    div.innerHTML = `
-                        <input class="form-check-input edit-station-check" type="checkbox" 
-                            value="${d.serial}" 
-                            id="edit-check-${d.serial}"
-                            ${isChecked ? 'checked' : ''} 
-                            data-mps="${mpsWithHosts.join(';')}">
-                        <label class="form-check-label text-white small" for="edit-check-${d.serial}">
-                            ${d.name} <span class="text-muted">(${deviceMpsOnly.join(',')})</span>
-                        </label>
-                    `;
-                    container.appendChild(div);
-                }
-            });
-            // Add listeners
-            document.querySelectorAll('.edit-station-check').forEach(cb => {
-                cb.addEventListener('change', () => updateMountpointInput('edit-'));
-            });
+            return;
         }
+        allDevices.forEach(device => {
+            const mountpointHosts = getDeviceMountpointHosts(device);
+            if (!mountpointHosts.length) return;
+            const mountpoints = mountpointHosts.map(value => value.split(':')[0]);
+            const isChecked = mountpoints.some(mountpoint => currentRoverMps.includes(mountpoint));
+            const row = document.createElement('div');
+            row.className = 'form-check';
+            row.innerHTML = `<input class="form-check-input edit-station-check" type="checkbox" value="${device.serial}" id="edit-check-${device.serial}" ${isChecked ? 'checked' : ''} data-mps="${mountpointHosts.join(';')}">
+                <label class="form-check-label text-white small" for="edit-check-${device.serial}">${device.name} <span class="text-muted">(${mountpoints.join(',')})</span></label>`;
+            container.appendChild(row);
+        });
+        document.querySelectorAll('.edit-station-check').forEach(checkbox => {
+            checkbox.addEventListener('change', () => updateMountpointInput('edit-'));
+        });
+    }
 
-        // 2.5 LOAD LIVE MOUNTPOINTS FOR EDIT
+    function loadEditLiveMountpoints() {
         if (String(currentUser?.role || '').toLowerCase() === 'admin') {
             renderAdminLiveMountpoints('edit-');
-            fetchCasterSources({ force: true }).then(() => {
-                renderAdminLiveMountpoints('edit-');
-            }).catch(e => console.error("Error refreshing live mountpoints", e));
+            fetchCasterSources({force: true}).then(() => renderAdminLiveMountpoints('edit-'))
+                .catch(error => console.error('Error refreshing live mountpoints', error));
         } else if (currentUser?.extra_mountpoints) {
             renderCoordinatorExtraMountpoints('edit-');
         } else {
             document.getElementById('edit-admin-live-mountpoints-box')?.classList.add('d-none');
         }
+    }
 
-        // 3. Hiện Modal
-        const modal = new bootstrap.Modal(document.getElementById('editRoverModal'));
-        modal.show();
+    function handleEditRover(e) {
+        const id = Number.parseInt(e.currentTarget.dataset.id);
+        const rover = findRoverForEdit(id, e.currentTarget.dataset.username);
+        if (!rover) return;
+        setEditRoverCoreFields(rover);
+        setEditCasterTargets(rover);
+        renderEditStationChecklist(rover);
+        loadEditLiveMountpoints();
+        new bootstrap.Modal(document.getElementById('editRoverModal')).show();
     }
 
     // Xử lý Submit form Edit

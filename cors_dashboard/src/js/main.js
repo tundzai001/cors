@@ -1650,176 +1650,128 @@ function setupEventListeners() {
 }
 
 // === ENTRY POINT ===
-async function initializeCorsApp() {
-    // 1. Auth Check with Public Route Exceptions
-    const publicRoutes = ['/', '/station/', '/network-status', '/coverage', '/blog', '/api/docs'];
-    const currentPath = window.location.pathname;
-    const isPublicRoute = publicRoutes.some(route => 
-        route === '/' ? currentPath === '/' : currentPath.startsWith(route)
-    );
+const PUBLIC_ROUTES = ['/', '/station/', '/network-status', '/coverage', '/blog', '/api/docs'];
 
-    if (!isPublicRoute && !localStorage.getItem('access_token') && !sessionStorage.getItem('access_token')) {
-        if (typeof NavigationManager !== 'undefined') {
-            NavigationManager.forceLogout();
-        } else {
-            localStorage.removeItem('access_token');
-            sessionStorage.removeItem('access_token');
-            softGoHome();
-        }
+function isPublicRoute(path) {
+    return PUBLIC_ROUTES.some(route => route === '/' ? path === '/' : path.startsWith(route));
+}
+
+function hasAccessToken() {
+    return Boolean(localStorage.getItem('access_token') || sessionStorage.getItem('access_token'));
+}
+
+function redirectUnauthenticatedUser() {
+    if (typeof NavigationManager !== 'undefined') {
+        NavigationManager.forceLogout();
         return;
     }
+    localStorage.removeItem('access_token');
+    sessionStorage.removeItem('access_token');
+    softGoHome();
+}
 
-    // SPECIAL HANDLING FOR PUBLIC HOMEPAGE/STATION/BLOG (NO LOGIN REQUIRED)
-    if (isPublicRoute && !localStorage.getItem('access_token') && !sessionStorage.getItem('access_token')) {
-        //console.log("Serving Public Content...");
-        
-        const homepageContainer = document.getElementById('homepage-root');
-        if (homepageContainer && !window.homepageRoot) {
-            window.homepageRoot = ReactDOM.createRoot(homepageContainer);
-        }
+function createPublicPageRoots() {
+    const roots = [
+        ['homepage-root', 'homepageRoot'],
+        ['enterprise-detail-root', 'enterpriseDetailRoot'],
+        ['blog-root', 'blogRoot'],
+        ['api-docs-root', 'apiDocsRoot'],
+    ];
+    roots.forEach(([containerId, rootName]) => {
+        const container = document.getElementById(containerId);
+        if (container && !window[rootName]) window[rootName] = ReactDOM.createRoot(container);
+    });
+}
 
-        const enterpriseDetailContainer = document.getElementById('enterprise-detail-root');
-        if (enterpriseDetailContainer && !window.enterpriseDetailRoot) {
-            window.enterpriseDetailRoot = ReactDOM.createRoot(enterpriseDetailContainer);
-        }
-
-        const blogContainer = document.getElementById('blog-root');
-        if (blogContainer && !window.blogRoot) {
-            window.blogRoot = ReactDOM.createRoot(blogContainer);
-        }
-
-        const apiDocsContainer = document.getElementById('api-docs-root');
-        if (apiDocsContainer && !window.apiDocsRoot) {
-            window.apiDocsRoot = ReactDOM.createRoot(apiDocsContainer);
-        }
-        
-        if (currentPath === '/' || currentPath === '/network-status' || currentPath === '/coverage') {
-            // Paint the hero immediately. Network data updates the same root later and
-            // never blocks first content or basic landing interactions.
-            switchView('homepage');
-            dismissAppPreloader();
-            loadInitialDevices().then(() => {
-                if (globalState.currentView === 'homepage' && window.homepageRoot && window.HomePageEnterprise) {
-                    renderReactComponent(window.homepageRoot, window.HomePageEnterprise, {
-                        devices: globalState.devices,
-                        networkSummary: globalState.publicNetworkSummary
-                    });
-                }
-            }).catch((error) => console.warn('[Landing] Async station refresh failed:', error));
-        } else if (currentPath.startsWith('/blog')) {
-            switchView('blog');
-        } else if (currentPath.startsWith('/station/')) {
-             await loadInitialDevices();
-             const token = currentPath.split('/').pop();
-             const device = resolveDeviceFromStationPath(token);
-             if (device) globalState.selectedDeviceSerial = device.serial;
-             switchView('station-detail');
-             if (device) {
-                 const canonicalPath = buildPublicStationPath(device);
-                 if (window.location.pathname !== canonicalPath) {
-                     window.history.replaceState({}, '', canonicalPath);
-                 }
-             }
-        } else if (currentPath === '/api/docs') {
-            switchView('api-docs');
-        }
-        dismissAppPreloader();
-        return; // CRITICAL: Stop here for public visitors!
-    }
-
-    // Parallel load User info and Initial Devices to boost speed
-    const [userResponse, devicesResponse] = await Promise.allSettled([
-        loadCurrentUser(),
-        loadInitialDevices()
-    ]);
-
-    if (!globalState.currentUser) {
-        console.warn("[Main] Failed to load current user, stopping authenticated init.");
-        dismissAppPreloader();
-        return;
-    }
-
-    setupUIbasedOnPermissions();
-    setupEventListeners();
-
-    // Update auth buttons when user loaded
-    updateAuthButtons();
-
+function createAuthenticatedPageRoots() {
     deviceListRoot = ReactDOM.createRoot(document.getElementById('device-list-root'));
     detailsPanelRoot = ReactDOM.createRoot(document.getElementById('details-panel-root'));
-
-    const homepageContainer = document.getElementById('homepage-root');
-    if (homepageContainer) {
-        window.homepageRoot = ReactDOM.createRoot(homepageContainer);
-    }
-
-    const enterpriseDetailContainer = document.getElementById('enterprise-detail-root');
-    if (enterpriseDetailContainer) {
-        window.enterpriseDetailRoot = ReactDOM.createRoot(enterpriseDetailContainer);
-    }
-
-    const blogContainer = document.getElementById('blog-root');
-    if (blogContainer) {
-        window.blogRoot = ReactDOM.createRoot(blogContainer);
-    }
-
-    const apiDocsContainer = document.getElementById('api-docs-root');
-    if (apiDocsContainer) {
-        window.apiDocsRoot = ReactDOM.createRoot(apiDocsContainer);
-    }
-
-    const mapContainer = document.getElementById('map-root');
-    if (mapContainer) {
-        mapRoot = ReactDOM.createRoot(mapContainer);
-    }
+    const roots = [
+        ['homepage-root', value => { window.homepageRoot = value; }],
+        ['enterprise-detail-root', value => { window.enterpriseDetailRoot = value; }],
+        ['blog-root', value => { window.blogRoot = value; }],
+        ['api-docs-root', value => { window.apiDocsRoot = value; }],
+        ['map-root', value => { mapRoot = value; }],
+    ];
+    roots.forEach(([containerId, setRoot]) => {
+        const container = document.getElementById(containerId);
+        if (container) setRoot(ReactDOM.createRoot(container));
+    });
 
     const modalContainer = document.createElement('div');
     document.body.appendChild(modalContainer);
-    const modalRoot = ReactDOM.createRoot(modalContainer);
+    return ReactDOM.createRoot(modalContainer);
+}
 
-    // Async load - Babel may not have transpiled these yet
+function loadModalComponents(modalRoot) {
     waitForGlobalComponent('CasterConfigModal', 30000).then(comp => {
         if (comp) renderReactComponent(modalRoot, comp, {}, 'Caster config modal is not loaded');
     }).catch(() => {});
-
     waitForGlobalComponent('CasterSourcesModal', 30000).then(comp => {
-        if (comp) {
-            const sourcesContainer = document.createElement('div');
-            document.body.appendChild(sourcesContainer);
-            const sourcesRoot = ReactDOM.createRoot(sourcesContainer);
-            renderReactComponent(sourcesRoot, comp, {}, 'Caster sources modal is not loaded');
-        }
+        if (!comp) return;
+        const sourcesContainer = document.createElement('div');
+        document.body.appendChild(sourcesContainer);
+        const sourcesRoot = ReactDOM.createRoot(sourcesContainer);
+        renderReactComponent(sourcesRoot, comp, {}, 'Caster sources modal is not loaded');
     }).catch(() => {});
+}
 
+function renderLandingAfterRefresh() {
+    loadInitialDevices().then(() => {
+        if (globalState.currentView === 'homepage' && window.homepageRoot && window.HomePageEnterprise) {
+            renderReactComponent(window.homepageRoot, window.HomePageEnterprise, {
+                devices: globalState.devices,
+                networkSummary: globalState.publicNetworkSummary,
+            });
+        }
+    }).catch(error => console.warn('[Landing] Async station refresh failed:', error));
+}
 
-    window.fetchInitialDevices = loadInitialDevices;
-    // Note: loadInitialDevices already called in Promise.all above
-    connectWebSocket();
+async function initializePublicRoute(currentPath) {
+    createPublicPageRoots();
+    if (currentPath === '/' || currentPath === '/network-status' || currentPath === '/coverage') {
+        switchView('homepage');
+        dismissAppPreloader();
+        renderLandingAfterRefresh();
+    } else if (currentPath.startsWith('/blog')) {
+        switchView('blog');
+    } else if (currentPath.startsWith('/station/')) {
+        await loadInitialDevices();
+        const token = currentPath.split('/').pop();
+        const device = resolveDeviceFromStationPath(token);
+        if (device) globalState.selectedDeviceSerial = device.serial;
+        switchView('station-detail');
+        if (device) {
+            const canonicalPath = buildPublicStationPath(device);
+            if (window.location.pathname !== canonicalPath) window.history.replaceState({}, '', canonicalPath);
+        }
+    } else if (currentPath === '/api/docs') {
+        switchView('api-docs');
+    }
+    dismissAppPreloader();
+}
 
-    // 2. Dynamic Routing Handler (Clean URLs)
+function initializeAuthenticatedRoute(currentPath) {
     let initialView = 'dashboard';
     if (currentPath.startsWith('/station/')) {
         const token = currentPath.split('/').pop();
         const device = resolveDeviceFromStationPath(token);
         if (device) {
-            //console.log("Routing to Station Detail:", token);
             globalState.selectedDeviceSerial = device.serial;
             switchView('station-detail');
             const canonicalPath = buildPublicStationPath(device);
-            if (window.location.pathname !== canonicalPath) {
-                window.history.replaceState({}, '', canonicalPath);
-            }
+            if (window.location.pathname !== canonicalPath) window.history.replaceState({}, '', canonicalPath);
         }
     } else if (currentPath === '/network-status') {
         switchView('homepage');
     } else if (currentPath.startsWith('/blog')) {
         switchView('blog');
         dismissAppPreloader();
-        return;
+        return false;
     } else if (currentPath === '/api/docs') {
         switchView('api-docs');
         dismissAppPreloader();
-        return;
+        return false;
     } else if (selectDeviceFromDashboardQuery()) {
         initialView = 'dashboard';
     } else if (window.location.search.includes('view=map')) {
@@ -1828,15 +1780,46 @@ async function initializeCorsApp() {
     } else {
         switchView('dashboard');
     }
+    return initialView;
+}
 
-    window.renderBlog = (slug = null) => {
-    if (window.blogRoot) {
-        renderReactComponent(window.blogRoot, window.BlogSystem, { slug }, 'Blog component is not loaded');
+async function initializeAuthenticatedApp(currentPath) {
+    await Promise.allSettled([loadCurrentUser(), loadInitialDevices()]);
+    if (!globalState.currentUser) {
+        console.warn('[Main] Failed to load current user, stopping authenticated init.');
+        dismissAppPreloader();
+        return;
     }
-};
 
-dismissAppPreloader();
-//console.log(`✓ App initialized with Performance Optimization (view: ${initialView})`);
+    setupUIbasedOnPermissions();
+    setupEventListeners();
+    updateAuthButtons();
+    const modalRoot = createAuthenticatedPageRoots();
+    loadModalComponents(modalRoot);
+    window.fetchInitialDevices = loadInitialDevices;
+    connectWebSocket();
+
+    const initialView = initializeAuthenticatedRoute(currentPath);
+    if (initialView === false) return;
+    window.renderBlog = (slug = null) => {
+        if (window.blogRoot) renderReactComponent(window.blogRoot, window.BlogSystem, {slug}, 'Blog component is not loaded');
+    };
+    dismissAppPreloader();
+}
+
+async function initializeCorsApp() {
+    const currentPath = window.location.pathname;
+    const publicRoute = isPublicRoute(currentPath);
+    const authenticated = hasAccessToken();
+    if (!publicRoute && !authenticated) {
+        redirectUnauthenticatedUser();
+        return;
+    }
+    if (publicRoute && !authenticated) {
+        await initializePublicRoute(currentPath);
+        return;
+    }
+    await initializeAuthenticatedApp(currentPath);
 }
 
 if (document.readyState === 'loading') {
