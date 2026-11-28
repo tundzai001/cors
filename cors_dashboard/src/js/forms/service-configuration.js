@@ -1,4 +1,5 @@
 import { createDefaultServiceFormState, getCasterIds, toBool, useHydrateServiceForm } from './service-form-state.js';
+import { ServiceCommonSettings } from './service-form-sections.js';
 
 (() => {
 const { useState, memo, useRef } = React;
@@ -315,112 +316,9 @@ const ServiceConfigForm = memo(function ServiceConfigForm({ device, currentUser 
                 </div>
             )}
 
-            <div className="mb-4 p-3 border rounded border-secondary">
-                <h5 className="mb-3">Cài đặt chung</h5>
-                <div className="mb-3 p-2 rounded bg-dark border border-secondary-subtle">
-                    <div className="d-flex align-items-center justify-content-between mb-1">
-                        <span className="text-muted small">Phiên bản Agent:</span>
-                        <span className="fw-bold small text-light">{device.version || 'Không xác định'}</span>
-                    </div>
-                    <div className="d-flex align-items-center justify-content-between">
-                        <span className="text-muted small">Trạng thái đồng bộ:</span>
-                        {device.is_synced ? (
-                            <span className="badge bg-success-subtle text-success border border-success-subtle">
-                                <i className="bi bi-check-circle-fill me-1"></i>ĐÃ ĐỒNG BỘ (OK)
-                            </span>
-                        ) : (
-                            <span className="badge bg-warning-subtle text-warning border border-warning-subtle">
-                                <i className="bi bi-exclamation-triangle-fill me-1"></i>KHÔNG ĐỒNG BỘ
-                            </span>
-                        )}
-                    </div>
-                </div>
-                <fieldset disabled={disabled}>
-                    <div className="row g-3">
-                        <div className="col-md-6">
-                            <label htmlFor="ncomport" className="form-label">Định danh Trạm (ID)</label>
-                            <input
-                                type="text"
-                                className="form-control"
-                                id="ncomport"
-                                name="ncomport"
-                                value={formState.ncomport}
-                                onChange={handleChange}
-                                placeholder="Ví dụ: TRAM_HN_01"
-                            />
-                        </div>
-                        <div className="col-md-6">
-                            <label htmlFor="reconnectioninterval" className="form-label">Kết nối lại (giây)</label>
-                            <input
-                                type="number"
-                                className="form-control"
-                                id="reconnectioninterval"
-                                name="reconnectioninterval"
-                                value={formState.reconnectioninterval}
-                                onChange={handleChange}
-                            />
-                        </div>
-                        {showS1StreamToggle && (
-                            <div className="col-md-6">
-                                <span className="form-label">Server 1: Chế độ stream</span>
-                                {canManageStationMode ? (
-                                    <div className="form-check form-switch pt-2">
-                                        <input
-                                            className="form-check-input"
-                                            type="checkbox"
-                                            role="switch"
-                                            id="server1_stream_on_demand"
-                                            name="server1_stream_on_demand"
-                                            checked={!!formState.server1_stream_on_demand}
-                                            onChange={handleChange}
-                                        />
-                                        <label className="form-check-label" htmlFor="server1_stream_on_demand">
-                                            {formState.server1_stream_on_demand ? "Ngủ (On-Demand)" : "Luôn mở (Always-On)"}
-                                        </label>
-                                    </div>
-                                ) : (
-                                    <div className="pt-2">
-                                        <span className={`badge ${formState.server1_stream_on_demand ? 'bg-info' : 'bg-success'}`}>
-                                            <i className={`bi ${formState.server1_stream_on_demand ? 'bi-moon-stars-fill' : 'bi-broadcast-pin'} me-1`}></i>
-                                            {formState.server1_stream_on_demand ? "S1: Ngủ" : "S1: Luôn mở"}
-                                        </span>
-                                    </div>
-                                )}
-                            </div>
-                        )}
-
-                        {showS2StreamToggle && (
-                            <div className="col-md-6">
-                                <span className="form-label">Server 2: Chế độ stream</span>
-                                {canManageStationMode ? (
-                                    <div className="form-check form-switch pt-2">
-                                        <input
-                                            className="form-check-input"
-                                            type="checkbox"
-                                            role="switch"
-                                            id="server2_stream_on_demand"
-                                            name="server2_stream_on_demand"
-                                            checked={!!formState.server2_stream_on_demand}
-                                            onChange={handleChange}
-                                        />
-                                        <label className="form-check-label" htmlFor="server2_stream_on_demand">
-                                            {formState.server2_stream_on_demand ? "Ngủ (On-Demand)" : "Luôn mở (Always-On)"}
-                                        </label>
-                                    </div>
-                                ) : (
-                                    <div className="pt-2">
-                                        <span className={`badge ${formState.server2_stream_on_demand ? 'bg-info' : 'bg-success'}`}>
-                                            <i className={`bi ${formState.server2_stream_on_demand ? 'bi-moon-stars-fill' : 'bi-broadcast-pin'} me-1`}></i>
-                                            {formState.server2_stream_on_demand ? "S2: Ngủ" : "S2: Luôn mở"}
-                                        </span>
-                                    </div>
-                                )}
-                            </div>
-                        )}
-
-                    </div>
-                </fieldset>
-            </div>
+            <ServiceCommonSettings device={device} formState={formState} handleChange={handleChange}
+                disabled={disabled} canManageStationMode={canManageStationMode}
+                showS1StreamToggle={showS1StreamToggle} showS2StreamToggle={showS2StreamToggle} />
 
             <div className="accordion" id="service-config-accordion">
                 {isLteStation && (
