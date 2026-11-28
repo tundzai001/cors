@@ -6053,17 +6053,7 @@ class AgentManager:
 # ==============================================================================
 # === ASYNC FUNCTIONS                                                       ===
 # ==============================================================================
-async def send_status(agent: AgentManager, mqtt_client: mqtt.Client):
-    global STATUS_SEQUENCE
-    await initialization_complete.wait()
-    
-    status_payload = agent.get_full_status()
-    STATUS_SEQUENCE += 1
-    status_payload["status_boot_id"] = STATUS_BOOT_ID
-    status_payload["status_sequence"] = STATUS_SEQUENCE
-    status_payload["agent_timestamp"] = status_payload.get("timestamp", time.time())
-    agent.control_plane_failover.record_probe(STATUS_SEQUENCE)
-    
+def _attach_cached_system_info(status_payload):
     try:
         system_info = get_cached_system_info()
         if system_info:
@@ -6072,16 +6062,9 @@ async def send_status(agent: AgentManager, mqtt_client: mqtt.Client):
     except Exception as e:
         logging.exception(f"Failed to collect system info: {e}")
 
-    status_payload.setdefault("system_info", {}).update(receiver_base_system_info(agent))
-    status_payload["system_info"]["device_lock"] = get_device_lock_status()
-    status_payload["system_info"]["auto_base_review_supported"] = True
 
-    # Đếm byte của JSON payload cho telemetry (Mạng nhẹ)
-    json_payload = json.dumps(status_payload)
+def _update_status_telemetry(agent, json_payload: str, now: float) -> None:
     telemetry_bytes = len(json_payload.encode('utf-8'))
-    
-    # Tính Bps trung bình (giả định interval là 5s, hoặc cập nhật dồn)
-    now = time.time()
     if hasattr(agent, 'last_telemetry_time'):
         elapsed = now - agent.last_telemetry_time
         if elapsed > 0:
@@ -6090,38 +6073,65 @@ async def send_status(agent: AgentManager, mqtt_client: mqtt.Client):
         agent.telemetry_bps = round(telemetry_bytes / 5.0, 2)
     agent.last_telemetry_time = now
 
-    # Gửi qua WebSocket
-    if active_websocket_connection:
-        try:
-            ws_message = {"type": "status_update", "payload": status_payload}
-            await asyncio.wait_for(
-                active_websocket_connection.send(json.dumps(ws_message)),
-                timeout=2.0,
-            )
-        except Exception as e:
-            _set_transport_state("websocket", False)
-            logging.exception(f"Failed to send status via WebSocket: {e}")
 
-    # Gửi qua MQTT
-    if mqtt_client and mqtt_client.is_connected():
-        try:
-            topic = f"pi/devices/{MACHINE_SERIAL}/status"
-            publish_info = mqtt_client.publish(topic, json_payload, qos=1, retain=True)
-            if publish_info.rc != mqtt.MQTT_ERR_SUCCESS:
-                raise RuntimeError(f"MQTT status publish returned rc={publish_info.rc}")
-            await asyncio.to_thread(publish_info.wait_for_publish, timeout=3.0)
-            if not publish_info.is_published():
-                raise TimeoutError("MQTT status publish not acknowledged within 3s")
-            now_monotonic = time.monotonic()
-            if now_monotonic - getattr(agent, '_last_status_publish_log', float('-inf')) >= 60:
-                logging.info(
-                    "MQTT status acknowledged: topic=%s status=%s sequence=%s boot=%s broker=%s",
-                    topic, status_payload.get('status'), status_payload['status_sequence'],
-                    STATUS_BOOT_ID, transport_status.get('mqtt_broker'),
-                )
-                agent._last_status_publish_log = now_monotonic
-        except Exception as e:
-            logging.warning(f"MQTT publish failed: {e}")
+async def _send_status_websocket(status_payload) -> None:
+    if not active_websocket_connection:
+        return
+    try:
+        ws_message = {"type": "status_update", "payload": status_payload}
+        await asyncio.wait_for(
+            active_websocket_connection.send(json.dumps(ws_message)),
+            timeout=2.0,
+        )
+    except Exception as e:
+        _set_transport_state("websocket", False)
+        logging.exception(f"Failed to send status via WebSocket: {e}")
+
+
+async def _send_status_mqtt(agent, mqtt_client, status_payload, json_payload: str) -> None:
+    if not mqtt_client or not mqtt_client.is_connected():
+        return
+    try:
+        topic = f"pi/devices/{MACHINE_SERIAL}/status"
+        publish_info = mqtt_client.publish(topic, json_payload, qos=1, retain=True)
+        if publish_info.rc != mqtt.MQTT_ERR_SUCCESS:
+            raise RuntimeError(f"MQTT status publish returned rc={publish_info.rc}")
+        await asyncio.to_thread(publish_info.wait_for_publish, timeout=3.0)
+        if not publish_info.is_published():
+            raise TimeoutError("MQTT status publish not acknowledged within 3s")
+        now_monotonic = time.monotonic()
+        if now_monotonic - getattr(agent, '_last_status_publish_log', float('-inf')) >= 60:
+            logging.info(
+                "MQTT status acknowledged: topic=%s status=%s sequence=%s boot=%s broker=%s",
+                topic, status_payload.get('status'), status_payload['status_sequence'],
+                STATUS_BOOT_ID, transport_status.get('mqtt_broker'),
+            )
+            agent._last_status_publish_log = now_monotonic
+    except Exception as e:
+        logging.warning(f"MQTT publish failed: {e}")
+
+
+async def send_status(agent: AgentManager, mqtt_client: mqtt.Client):
+    global STATUS_SEQUENCE
+    await initialization_complete.wait()
+
+    status_payload = agent.get_full_status()
+    STATUS_SEQUENCE += 1
+    status_payload["status_boot_id"] = STATUS_BOOT_ID
+    status_payload["status_sequence"] = STATUS_SEQUENCE
+    status_payload["agent_timestamp"] = status_payload.get("timestamp", time.time())
+    agent.control_plane_failover.record_probe(STATUS_SEQUENCE)
+
+    _attach_cached_system_info(status_payload)
+    status_payload.setdefault("system_info", {}).update(receiver_base_system_info(agent))
+    status_payload["system_info"]["device_lock"] = get_device_lock_status()
+    status_payload["system_info"]["auto_base_review_supported"] = True
+
+    # Đếm byte của JSON payload cho telemetry (Mạng nhẹ)
+    json_payload = json.dumps(status_payload)
+    _update_status_telemetry(agent, json_payload, time.time())
+    await _send_status_websocket(status_payload)
+    await _send_status_mqtt(agent, mqtt_client, status_payload, json_payload)
 
 # ==============================================================================
 # === ASYNC FUNCTIONS - PROCESS COMMAND (UPDATED)                           ===

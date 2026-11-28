@@ -175,32 +175,27 @@ async def get_zalo_system_state(
 
 
 @router.patch("/api/admin/zalo/system", responses={400: {"description": "Bad Request"}, 403: {"description": "Forbidden"}, 500: {"description": "Internal Server Error"}})
-async def update_zalo_system_state(
-    payload: Dict[str, Any] = Body(...),
-    current_user: models.User = Depends(auth.require_permission(auth.Permission.MANAGE_USERS)),
-):
+def _requested_zalo_enabled(payload: Dict[str, Any], current_user: models.User) -> bool:
     if current_user.role != auth.Role.ADMIN:
         raise HTTPException(status_code=403, detail="Chỉ admin được bật/tắt hệ thống Zalo.")
-
     if not isinstance(payload, dict):
         raise HTTPException(status_code=400, detail="Payload không hợp lệ.")
-
     if "enabled" not in payload:
         raise HTTPException(status_code=400, detail="Thiếu trường enabled.")
-
     enabled = payload.get("enabled")
     if not isinstance(enabled, bool):
         raise HTTPException(status_code=400, detail="enabled phải là boolean.")
+    return enabled
 
-    current_state = _get_zalo_system_state()
+
+def _ensure_zalo_can_start(enabled: bool, current_state: Dict[str, Any]) -> None:
     if enabled and not current_state["available"]:
         if not current_state["sdk_available"]:
             raise HTTPException(status_code=400, detail="Thiếu Zalo SDK trong môi trường hiện tại nên không thể bật bot.")
         raise HTTPException(status_code=400, detail="Thiếu ZALO_BOT_TOKEN trong .env nên không thể bật bot.")
 
-    if enabled == current_state["enabled"]:
-        return current_state
 
+async def _apply_zalo_system_state(enabled: bool, current_state: Dict[str, Any]) -> None:
     from .zalo_bot_service import start_zalo_bots, stop_zalo_bots
 
     _persist_zalo_bot_enabled(enabled)
@@ -219,6 +214,17 @@ async def update_zalo_system_state(
         _persist_zalo_bot_enabled(not enabled)
         raise HTTPException(status_code=500, detail=f"Không thể cập nhật trạng thái Zalo Bot: {exc}")
 
+
+async def update_zalo_system_state(
+    payload: Dict[str, Any] = Body(...),
+    current_user: models.User = Depends(auth.require_permission(auth.Permission.MANAGE_USERS)),
+):
+    enabled = _requested_zalo_enabled(payload, current_user)
+    current_state = _get_zalo_system_state()
+    _ensure_zalo_can_start(enabled, current_state)
+    if enabled == current_state["enabled"]:
+        return current_state
+    await _apply_zalo_system_state(enabled, current_state)
     return _get_zalo_system_state()
 
 

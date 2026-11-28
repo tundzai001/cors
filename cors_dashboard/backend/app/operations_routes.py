@@ -193,35 +193,49 @@ async def _ops_visible_rovers(
         return []
     return await crud.get_visible_rovers_for_user(auth_db, devices_db, current_user)
 
+def _ops_clients_by_username(clients: list[dict]) -> dict[str, list[dict]]:
+    client_map: dict[str, list[dict]] = {}
+    for client in clients:
+        username = str(client.get("username") or "").strip().lower()
+        if username:
+            client_map.setdefault(username, []).append(client)
+    return client_map
+
+
+def _ops_cached_user_status(user: dict, host: str, last_update: int, client_map: dict) -> dict:
+    username = str(user.get("username") or "").strip()
+    active_clients = client_map.get(username.lower(), [])
+    return {
+        "username": username,
+        "server": host,
+        "mountpoints": user.get("mountpoints", []),
+        "status": user.get("status", 0),
+        "nclient": user.get("nclient", 0),
+        "maxclient": user.get("maxclient", 0),
+        "active": len(active_clients) > 0 or int(user.get("nclient") or 0) > 0,
+        "active_connections": active_clients,
+        "last_seen_at": last_update,
+    }
+
+
+def _ops_cached_host_statuses(cache_data: dict, usernames: set[str] | None) -> list[dict]:
+    host = cache_data.get("host", "unknown")
+    last_update = int(cache_data.get("last_update") or time.time())
+    client_map = _ops_clients_by_username(cache_data.get("clients", []) or [])
+    statuses = []
+    for user in cache_data.get("users", []) or []:
+        username = str(user.get("username") or "").strip()
+        if usernames and username.lower() not in usernames:
+            continue
+        statuses.append(_ops_cached_user_status(user, host, last_update, client_map))
+    return statuses
+
+
 async def _ops_cached_rover_status(usernames: set[str] | None = None) -> list[dict]:
     statuses = []
     async with global_caster_cache_lock:
         for cache_data in (await _get_all_caster_cache()).values():
-            host = cache_data.get("host", "unknown")
-            last_update = int(cache_data.get("last_update") or time.time())
-            clients = cache_data.get("clients", []) or []
-            client_map: dict[str, list[dict]] = {}
-            for client in clients:
-                uname = str(client.get("username") or "").strip().lower()
-                if uname:
-                    client_map.setdefault(uname, []).append(client)
-            for user in cache_data.get("users", []) or []:
-                username = str(user.get("username") or "").strip()
-                key = username.lower()
-                if usernames and key not in usernames:
-                    continue
-                active_clients = client_map.get(key, [])
-                statuses.append({
-                    "username": username,
-                    "server": host,
-                    "mountpoints": user.get("mountpoints", []),
-                    "status": user.get("status", 0),
-                    "nclient": user.get("nclient", 0),
-                    "maxclient": user.get("maxclient", 0),
-                    "active": len(active_clients) > 0 or int(user.get("nclient") or 0) > 0,
-                    "active_connections": active_clients,
-                    "last_seen_at": last_update,
-                })
+            statuses.extend(_ops_cached_host_statuses(cache_data, usernames))
     return statuses
 
 
