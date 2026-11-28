@@ -379,6 +379,23 @@ class ZaloBotService(
             event["outbound_count"] = len(event["outbound"])
         return outbound
 
+    async def _send_with_timeout_retries(
+        self, original_send_message, args, kwargs, chat_id, trace_id, outbound, attempts, base_delay
+    ):
+        for attempt in range(1, attempts + 1):
+            outbound["attempts"] = attempt
+            try:
+                return await self._maybe_await(original_send_message(*args, **kwargs))
+            except Exception as exc:
+                if not self._is_zalo_timeout(exc) or attempt >= attempts:
+                    raise
+                delay = base_delay * (2 ** (attempt - 1))
+                logger.warning(
+                    "[ZALO TRACE %s] outbound timeout chat_id=%s attempt=%s/%s; retrying in %.1fs",
+                    trace_id or "background", chat_id, attempt, attempts, delay,
+                )
+                await asyncio.sleep(delay)
+
     async def _send_traced_message(self, original_send_message, args, kwargs, chat_id, trace_id, outbound):
         attempts = max(1, min(int(getattr(settings, "ZALO_SEND_RETRY_ATTEMPTS", 3) or 3), 5))
         base_delay = max(0.1, min(float(getattr(settings, "ZALO_SEND_RETRY_BASE_DELAY_SECONDS", 0.4) or 0.4), 5.0))
@@ -387,20 +404,9 @@ class ZaloBotService(
         elif args:
             args = (raw_chat_id(chat_id), *args[1:])
         try:
-            for attempt in range(1, attempts + 1):
-                outbound["attempts"] = attempt
-                try:
-                    result = await self._maybe_await(original_send_message(*args, **kwargs))
-                    break
-                except Exception as exc:
-                    if not self._is_zalo_timeout(exc) or attempt >= attempts:
-                        raise
-                    delay = base_delay * (2 ** (attempt - 1))
-                    logger.warning(
-                        "[ZALO TRACE %s] outbound timeout chat_id=%s attempt=%s/%s; retrying in %.1fs",
-                        trace_id or "background", chat_id, attempt, attempts, delay,
-                    )
-                    await asyncio.sleep(delay)
+            result = await self._send_with_timeout_retries(
+                original_send_message, args, kwargs, chat_id, trace_id, outbound, attempts, base_delay
+            )
             outbound["status"] = "sent"
             outbound["result"] = self._safe_debug_value(
                 result.to_dict() if hasattr(result, "to_dict") else result

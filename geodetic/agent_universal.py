@@ -508,26 +508,19 @@ def _ubx_version_payload(payload):
                 'itfm_supported':False if firmware in ('HPG 1.50', 'HPG 1.51') else None}
 
 
-async def _refresh_ubx_receiver_info(reader):
-    info = {'source':'ubx_mon_ver', 'itfm_enabled':None}
+async def _refresh_ubx_jamming_sensitivity(reader, info):
     try:
-        packet = await reader.query_base(_ubx_packet(0x0a, 4), (0x0a, 4))
-        info.update(_ubx_version_payload(_base_ubx_payload(packet, (0x0a, 4))))
+        poll = bytes(4) + struct.pack('<I', 0x10f60051)
+        packet = await reader.query_base(_ubx_packet(6, 0x8b, poll), (6, 0x8b))
+        values = _ubx_cfg_values(_base_ubx_payload(packet, (6, 0x8b)))
+        if values.get(0x10f60051) not in (b'\0', b'\x01'):
+            raise ValueError('Invalid jamming sensitivity response')
+        info['jamming_sensitivity_high'] = values[0x10f60051] == b'\x01'
     except Exception as error:
-        info['error'] = (str(error) or type(error).__name__)[:160]
-    if info.get('itfm_supported') is False:
-        try:
-            poll = bytes(4) + struct.pack('<I', 0x10f60051)
-            packet = await reader.query_base(_ubx_packet(6, 0x8b, poll), (6, 0x8b))
-            values = _ubx_cfg_values(_base_ubx_payload(packet, (6, 0x8b)))
-            if values.get(0x10f60051) not in (b'\0', b'\x01'):
-                raise ValueError('Invalid jamming sensitivity response')
-            info['jamming_sensitivity_high'] = values[0x10f60051] == b'\x01'
-        except Exception as error:
-            info['sensitivity_error'] = (str(error) or type(error).__name__)[:160]
-        globals()['LAST_UBX_RECEIVER_INFO'] = info
-        globals()['LAST_UBX_RECEIVER_INFO_TS'] = time.time()
-        return
+        info['sensitivity_error'] = (str(error) or type(error).__name__)[:160]
+
+
+async def _refresh_ubx_itfm_config(reader, info):
     try:
         poll = bytes(4) + struct.pack('<I', 0x1041000d)  # VALGET: running RAM layer, exact enable key.
         packet = await reader.query_base(_ubx_packet(6, 0x8b, poll), (6, 0x8b))
@@ -546,6 +539,19 @@ async def _refresh_ubx_receiver_info(reader):
             info['itfm_source'] = 'ubx_cfg_itfm'
         except Exception as error:
             info['itfm_error'] = (str(error) or type(error).__name__)[:160]
+
+
+async def _refresh_ubx_receiver_info(reader):
+    info = {'source':'ubx_mon_ver', 'itfm_enabled':None}
+    try:
+        packet = await reader.query_base(_ubx_packet(0x0a, 4), (0x0a, 4))
+        info.update(_ubx_version_payload(_base_ubx_payload(packet, (0x0a, 4))))
+    except Exception as error:
+        info['error'] = (str(error) or type(error).__name__)[:160]
+    if info.get('itfm_supported') is False:
+        await _refresh_ubx_jamming_sensitivity(reader, info)
+    else:
+        await _refresh_ubx_itfm_config(reader, info)
     globals()['LAST_UBX_RECEIVER_INFO'] = info
     globals()['LAST_UBX_RECEIVER_INFO_TS'] = time.time()
 

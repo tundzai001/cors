@@ -636,6 +636,23 @@ async def ui_websocket_endpoint(websocket: WebSocket):
         ui_manager.disconnect(websocket)
 
 
+def _device_update_order(item):
+    return (
+        int(item.get("status_revision") or 0),
+        float(item.get("server_received_at") or item.get("timestamp") or 0),
+    )
+
+
+def _retain_latest_device_update(unique_updates, item):
+    serial = item.get("serial") if isinstance(item, dict) else None
+    if not serial:
+        return
+    previous = unique_updates.get(serial)
+    previous_order = _device_update_order(previous) if previous else (-1, -1.0)
+    if _device_update_order(item) >= previous_order:
+        unique_updates[serial] = item
+
+
 async def _take_device_update_snapshot():
     global device_update_buffer
     async with device_update_buffer_lock:
@@ -646,20 +663,7 @@ async def _take_device_update_snapshot():
         snapshot_size = len(device_update_buffer)
         unique_updates = {}
         while device_update_buffer:
-            item = device_update_buffer.popleft()
-            serial = item.get("serial") if isinstance(item, dict) else None
-            if serial:
-                previous = unique_updates.get(serial)
-                item_order = (
-                    int(item.get("status_revision") or 0),
-                    float(item.get("server_received_at") or item.get("timestamp") or 0),
-                )
-                previous_order = (
-                    int(previous.get("status_revision") or 0),
-                    float(previous.get("server_received_at") or previous.get("timestamp") or 0),
-                ) if previous else (-1, -1.0)
-                if item_order >= previous_order:
-                    unique_updates[serial] = item
+            _retain_latest_device_update(unique_updates, device_update_buffer.popleft())
     return snapshot_size, list(unique_updates.values())
 
 

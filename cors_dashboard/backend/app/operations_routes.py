@@ -93,27 +93,35 @@ def _device_status_alerts(device: models.Device, now_ts: int, raw_status: str) -
     return alerts
 
 
+def _stream_server_is_silent(idx: int, raw_status: str, service: dict, ntrip: dict) -> bool:
+    if not service.get(f"server{idx}_enabled"):
+        return False
+    if service.get(f"server{idx}_stream_on_demand") or service.get("stream_on_demand"):
+        return False
+    server_status = ntrip.get(f"server{idx}") if isinstance(ntrip, dict) else {}
+    bps = int(server_status.get("bps") or 0) if isinstance(server_status, dict) else 0
+    return raw_status in ("online", "streaming", "starting") and bps <= 0
+
+
+def _silent_stream_alert(device: models.Device, now_ts: int, idx: int, service: dict) -> dict:
+    mountpoint = service.get(f"mountpoint{idx}") or f"S{idx}"
+    return {
+        "id": f"stream-silent-{device.serial}-{idx}",
+        "severity": "warning",
+        "type": "stream_silent",
+        "title": "Stream has no data",
+        "message": f"{device.name or device.serial} has no outgoing data on {mountpoint}",
+        "device_serial": device.serial,
+        "mountpoint": mountpoint,
+        "created_at": now_ts,
+    }
+
+
 def _silent_stream_alerts(device: models.Device, now_ts: int, raw_status: str, service: dict, ntrip: dict) -> list[dict]:
     alerts = []
     for idx in (1, 2):
-        if not service.get(f"server{idx}_enabled"):
-            continue
-        if service.get(f"server{idx}_stream_on_demand") or service.get("stream_on_demand"):
-            continue
-        server_status = ntrip.get(f"server{idx}") if isinstance(ntrip, dict) else {}
-        bps = int(server_status.get("bps") or 0) if isinstance(server_status, dict) else 0
-        mountpoint = service.get(f"mountpoint{idx}") or f"S{idx}"
-        if raw_status in ("online", "streaming", "starting") and bps <= 0:
-            alerts.append({
-                "id": f"stream-silent-{device.serial}-{idx}",
-                "severity": "warning",
-                "type": "stream_silent",
-                "title": "Stream has no data",
-                "message": f"{device.name or device.serial} has no outgoing data on {mountpoint}",
-                "device_serial": device.serial,
-                "mountpoint": mountpoint,
-                "created_at": now_ts,
-            })
+        if _stream_server_is_silent(idx, raw_status, service, ntrip):
+            alerts.append(_silent_stream_alert(device, now_ts, idx, service))
     return alerts
 
 
