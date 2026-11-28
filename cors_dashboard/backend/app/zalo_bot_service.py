@@ -315,6 +315,71 @@ class ZaloBotService(
     def clear_debug_events(self) -> None:
         self._debug_events.clear()
 
+    async def _outbound_chat_policy(self, chat_id, cors_context):
+        if isinstance(cors_context, dict):
+            return cors_context["policy"], cors_context.get("kind")
+        return await zalo_repository.chat_delivery_policy(str(chat_id)), cors_context
+
+    @staticmethod
+    def _outbound_policy_suppresses(policy, cors_kind):
+        return (
+            not policy["active"]
+            or (policy["mode"] == "cors_only" and not cors_kind)
+            or (cors_kind == "alert" and not (
+                policy["mode"] == "cors_only" and policy["cors_notify_changes"]
+            ))
+        )
+
+    def _track_outbound_message(self, trace_id, chat_id, text):
+        outbound = {
+            "at": datetime.now().astimezone().isoformat(),
+            "chat_id": str(chat_id) if chat_id is not None else None,
+            "text": self._safe_debug_value(text),
+            "status": "sending",
+        }
+        event = self._find_debug_event(trace_id)
+        if event is not None:
+            event.setdefault("outbound", []).append(outbound)
+            event["outbound_count"] = len(event["outbound"])
+        return outbound
+
+    async def _send_traced_message(self, original_send_message, args, kwargs, chat_id, trace_id, outbound):
+        attempts = max(1, min(int(getattr(settings, "ZALO_SEND_RETRY_ATTEMPTS", 3) or 3), 5))
+        base_delay = max(0.1, min(float(getattr(settings, "ZALO_SEND_RETRY_BASE_DELAY_SECONDS", 0.4) or 0.4), 5.0))
+        if "chat_id" in kwargs:
+            kwargs["chat_id"] = raw_chat_id(chat_id)
+        elif args:
+            args = (raw_chat_id(chat_id), *args[1:])
+        try:
+            for attempt in range(1, attempts + 1):
+                outbound["attempts"] = attempt
+                try:
+                    result = await self._maybe_await(original_send_message(*args, **kwargs))
+                    break
+                except Exception as exc:
+                    if not self._is_zalo_timeout(exc) or attempt >= attempts:
+                        raise
+                    delay = base_delay * (2 ** (attempt - 1))
+                    logger.warning(
+                        "[ZALO TRACE %s] outbound timeout chat_id=%s attempt=%s/%s; retrying in %.1fs",
+                        trace_id or "background", chat_id, attempt, attempts, delay,
+                    )
+                    await asyncio.sleep(delay)
+            outbound["status"] = "sent"
+            outbound["result"] = self._safe_debug_value(
+                result.to_dict() if hasattr(result, "to_dict") else result
+            )
+            logger.info("[ZALO TRACE %s] outbound sent chat_id=%s", trace_id or "background", chat_id)
+            return result
+        except Exception as exc:
+            outbound["status"] = "error"
+            outbound["error"] = f"{type(exc).__name__}: {exc}"
+            logger.exception(
+                "[ZALO TRACE %s] outbound failed chat_id=%s: %s",
+                trace_id or "background", chat_id, exc, exc_info=True,
+            )
+            raise
+
     def _install_send_trace(self) -> None:
         bot = getattr(self.app, "bot", None) if self.app else None
         if not bot or getattr(bot, "_cors_send_trace_installed", False):
@@ -336,22 +401,11 @@ class ZaloBotService(
             cors_context = self._cors_outbound.get()
             # Change delivery already owns the preference row lock. Reuse that
             # policy rather than acquire a second auth session while holding it.
-            policy = cors_context["policy"] if isinstance(cors_context, dict) else await zalo_repository.chat_delivery_policy(str(chat_id))
-            cors_kind = cors_context.get("kind") if isinstance(cors_context, dict) else cors_context
-            if (not policy["active"] or (policy["mode"] == "cors_only" and not cors_kind)
-                    or (cors_kind == "alert" and not (policy["mode"] == "cors_only" and policy["cors_notify_changes"]))):
+            policy, cors_kind = await self._outbound_chat_policy(chat_id, cors_context)
+            if self._outbound_policy_suppresses(policy, cors_kind):
                 logger.info("Zalo outbound suppressed by chat policy for chat_id=%s", chat_id)
                 return None
-            outbound = {
-                "at": datetime.now().astimezone().isoformat(),
-                "chat_id": str(chat_id) if chat_id is not None else None,
-                "text": self._safe_debug_value(text),
-                "status": "sending",
-            }
-            event = self._find_debug_event(trace_id)
-            if event is not None:
-                event.setdefault("outbound", []).append(outbound)
-                event["outbound_count"] = len(event["outbound"])
+            outbound = self._track_outbound_message(trace_id, chat_id, text)
             if (
                 str(chat_id) in self._revoked_chat_ids
                 and not self._allow_revoked_outbound.get()
@@ -367,38 +421,9 @@ class ZaloBotService(
                 trace_id or "background", chat_id,
                 self._redact_command_secret(str(text or "")),
             )
-            attempts = max(1, min(int(getattr(settings, "ZALO_SEND_RETRY_ATTEMPTS", 3) or 3), 5))
-            base_delay = max(0.1, min(float(getattr(settings, "ZALO_SEND_RETRY_BASE_DELAY_SECONDS", 0.4) or 0.4), 5.0))
-            if "chat_id" in kwargs:
-                kwargs["chat_id"] = raw_chat_id(chat_id)
-            elif args:
-                args = (raw_chat_id(chat_id), *args[1:])
-            try:
-                for attempt in range(1, attempts + 1):
-                    outbound["attempts"] = attempt
-                    try:
-                        result = await self._maybe_await(original_send_message(*args, **kwargs))
-                        break
-                    except Exception as exc:
-                        if not self._is_zalo_timeout(exc) or attempt >= attempts:
-                            raise
-                        delay = base_delay * (2 ** (attempt - 1))
-                        logger.warning(
-                            "[ZALO TRACE %s] outbound timeout chat_id=%s attempt=%s/%s; retrying in %.1fs",
-                            trace_id or "background", chat_id, attempt, attempts, delay,
-                        )
-                        await asyncio.sleep(delay)
-                outbound["status"] = "sent"
-                outbound["result"] = self._safe_debug_value(
-                    result.to_dict() if hasattr(result, "to_dict") else result
-                )
-                logger.info("[ZALO TRACE %s] outbound sent chat_id=%s", trace_id or "background", chat_id)
-                return result
-            except Exception as exc:
-                outbound["status"] = "error"
-                outbound["error"] = f"{type(exc).__name__}: {exc}"
-                logger.exception("[ZALO TRACE %s] outbound failed chat_id=%s: %s", trace_id or "background", chat_id, exc, exc_info=True)
-                raise
+            return await self._send_traced_message(
+                original_send_message, args, kwargs, chat_id, trace_id, outbound
+            )
 
         try:
             setattr(bot, "send_message", traced_send_message)
