@@ -139,40 +139,43 @@ const getServerTelemetry = (device, serverId) => {
     };
 };
 
-const getOfflineInfo = (device, nowMs = Date.now()) => {
-    const status = String(device?.status || '').toLowerCase();
-    const nowSeconds = Number(nowMs) / 1000;
-    let sinceSeconds;
-
+const getOfflineStart = (device, status, nowSeconds) => {
     if (status === 'offline') {
         const rawOfflineSince = Number(device?.offline_since || 0);
-        if (!rawOfflineSince) return { sinceSeconds: null, sinceText: null, elapsedSeconds: null, durationText: null, unknown: true };
-        sinceSeconds = rawOfflineSince > 1e12 ? rawOfflineSince / 1000 : rawOfflineSince;
-    } else {
-        const rawTimestamp = Number(device?.timestamp || device?.system_info?.timestamp || 0);
-        const timestamp = rawTimestamp > 1e12 ? rawTimestamp / 1000 : rawTimestamp;
-        if (!timestamp || nowSeconds - timestamp <= 180) return null;
-        sinceSeconds = timestamp + 180;
+        if (!rawOfflineSince) return { unknown: true };
+        return { sinceSeconds: rawOfflineSince > 1e12 ? rawOfflineSince / 1000 : rawOfflineSince };
     }
+    const rawTimestamp = Number(device?.timestamp || device?.system_info?.timestamp || 0);
+    const timestamp = rawTimestamp > 1e12 ? rawTimestamp / 1000 : rawTimestamp;
+    return !timestamp || nowSeconds - timestamp <= 180 ? null : { sinceSeconds: timestamp + 180 };
+};
 
-    const elapsedSeconds = Math.max(0, Math.floor(nowSeconds - sinceSeconds));
-    const date = new Date(sinceSeconds * 1000);
-    const pad = value => String(value).padStart(2, '0');
-    const sinceText = `${pad(date.getDate())}/${pad(date.getMonth() + 1)}/${date.getFullYear()} ${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`;
-
+const pluralDuration = (value, unit) => `${value} ${unit}${value === 1 ? '' : 's'}`;
+const formatOfflineDuration = elapsedSeconds => {
     let remaining = elapsedSeconds;
     const days = Math.floor(remaining / 86400);
     remaining %= 86400;
     const hours = Math.floor(remaining / 3600);
     remaining %= 3600;
     const minutes = Math.floor(remaining / 60);
-    const durationText = days
-        ? `${days} ${days === 1 ? 'day' : 'days'}${hours ? ` ${hours} ${hours === 1 ? 'hour' : 'hours'}` : ''}`
-        : hours
-            ? `${hours} ${hours === 1 ? 'hour' : 'hours'}${minutes ? ` ${minutes} ${minutes === 1 ? 'minute' : 'minutes'}` : ''}`
-            : minutes
-                ? `${minutes} ${minutes === 1 ? 'minute' : 'minutes'}`
-                : 'Less than a minute';
+    if (days) return `${pluralDuration(days, 'day')}${hours ? ` ${pluralDuration(hours, 'hour')}` : ''}`;
+    if (hours) return `${pluralDuration(hours, 'hour')}${minutes ? ` ${pluralDuration(minutes, 'minute')}` : ''}`;
+    if (minutes) return pluralDuration(minutes, 'minute');
+    return 'Less than a minute';
+};
+
+const getOfflineInfo = (device, nowMs = Date.now()) => {
+    const status = String(device?.status || '').toLowerCase();
+    const nowSeconds = Number(nowMs) / 1000;
+    const offlineStart = getOfflineStart(device, status, nowSeconds);
+    if (!offlineStart) return null;
+    if (offlineStart.unknown) return { sinceSeconds: null, sinceText: null, elapsedSeconds: null, durationText: null, unknown: true };
+    const { sinceSeconds } = offlineStart;
+    const elapsedSeconds = Math.max(0, Math.floor(nowSeconds - sinceSeconds));
+    const date = new Date(sinceSeconds * 1000);
+    const pad = value => String(value).padStart(2, '0');
+    const sinceText = `${pad(date.getDate())}/${pad(date.getMonth() + 1)}/${date.getFullYear()} ${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`;
+    const durationText = formatOfflineDuration(elapsedSeconds);
 
     return { sinceSeconds, sinceText, elapsedSeconds, durationText, unknown: false };
 };
@@ -195,45 +198,52 @@ const isAccessTokenSynced = (device) => {
 
 const isDeviceStaleOffline = (device, nowMs = Date.now()) => Boolean(getOfflineInfo(device, nowMs));
 
-const getMapEffectiveStatus = (device) => {
-    if (isDeviceStaleOffline(device)) return 'offline';
-    const authStatus = device?.system_info?.auth_status || {};
-    const agentReportedStatus = String(authStatus.agent_reported_status || '').toLowerCase();
-    const rawStatus = String(device?.status || '').toLowerCase();
-    if (isReadonly4gBase(device)) {
-        if (rawStatus === 'offline' || ['awaiting_license', 'unprovisioned', 'locked'].includes(rawStatus)) return 'offline';
-        return ['online', 'streaming'].includes(rawStatus) ? 'online' : 'offline';
-    }
-    if (rawStatus === 'awaiting_license' && isAccessTokenSynced(device) &&
-        !['online', 'streaming', 'sleep', 'starting'].includes(agentReportedStatus)) {
-        return 'awaiting_agent';
-    }
-    const statusForOps = rawStatus === 'awaiting_license' && ['online', 'streaming', 'sleep', 'starting'].includes(agentReportedStatus)
-        ? agentReportedStatus
-        : rawStatus;
-    const stats = device?.ntrip_stats || {};
-    const rtcmIn = Number(stats.rtcm_input_bps || stats.rtcm_in_bps || 0);
-    const streamState = device?.ntrip_stream_state || {};
-    const isVirtual = String(device?.detected_chip_type || '').toUpperCase() === 'VIRTUAL';
-
-    if (statusForOps === 'starting') return 'starting';
-    if (['auto_setup_rover', 'auto_setup_wait_fix', 'auto_setup_averaging', 'auto_setup_base'].includes(statusForOps)) return statusForOps;
-
-    if (!['online', 'streaming', 'sleep', 'starting'].includes(statusForOps)) {
-        const anyServerSleeping = Boolean(streamState.server1?.sleep || streamState.server2?.sleep);
-        if (rawStatus === 'awaiting_license' && anyServerSleeping && rtcmIn > 0) return 'sleep';
-        return (isVirtual && rtcmIn > 0) ? 'online' : 'offline';
-    }
-
+const MAP_AGENT_ACTIVE_STATUSES = new Set(['online', 'streaming', 'sleep', 'starting']);
+const MAP_AUTO_SETUP_STATUSES = new Set(['auto_setup_rover', 'auto_setup_wait_fix', 'auto_setup_averaging', 'auto_setup_base']);
+const getReadonlyMapStatus = status => {
+    if (status === 'offline' || ['awaiting_license', 'unprovisioned', 'locked'].includes(status)) return 'offline';
+    return ['online', 'streaming'].includes(status) ? 'online' : 'offline';
+};
+const getNonActiveMapStatus = (rawStatus, streamState, rtcmIn, isVirtual) => {
+    const anyServerSleeping = Boolean(streamState.server1?.sleep || streamState.server2?.sleep);
+    if (rawStatus === 'awaiting_license' && anyServerSleeping && rtcmIn > 0) return 'sleep';
+    return isVirtual && rtcmIn > 0 ? 'online' : 'offline';
+};
+const getActiveMapStatus = (device, statusForOps) => {
     const primarySid = getPreferredOutputServerId(device);
-    // Output configuration does not determine whether the agent is reachable.
     if (!primarySid) return statusForOps;
-
     const primary = getServerTelemetry(device, primarySid);
     if (primary.bps > 0) return 'online';
     if (primary.sleep === true || (primary.onDemand === true && primary.active === false)) return 'sleep';
     if (primary.connected) return 'online';
     return statusForOps;
+};
+
+const getMapEffectiveStatus = (device) => {
+    if (isDeviceStaleOffline(device)) return 'offline';
+    const authStatus = device?.system_info?.auth_status || {};
+    const agentReportedStatus = String(authStatus.agent_reported_status || '').toLowerCase();
+    const rawStatus = String(device?.status || '').toLowerCase();
+    if (isReadonly4gBase(device)) return getReadonlyMapStatus(rawStatus);
+    if (rawStatus === 'awaiting_license' && isAccessTokenSynced(device) &&
+        !MAP_AGENT_ACTIVE_STATUSES.has(agentReportedStatus)) {
+        return 'awaiting_agent';
+    }
+    const statusForOps = rawStatus === 'awaiting_license' && ['online', 'streaming', 'sleep', 'starting'].includes(agentReportedStatus)
+        ? agentReportedStatus
+        : rawStatus;
+    if (statusForOps === 'starting') return 'starting';
+    if (MAP_AUTO_SETUP_STATUSES.has(statusForOps)) return statusForOps;
+
+    const stats = device?.ntrip_stats || {};
+    const rtcmIn = Number(stats.rtcm_input_bps || stats.rtcm_in_bps || 0);
+    const streamState = device?.ntrip_stream_state || {};
+    const isVirtual = String(device?.detected_chip_type || '').toUpperCase() === 'VIRTUAL';
+    if (!MAP_AGENT_ACTIVE_STATUSES.has(statusForOps)) {
+        return getNonActiveMapStatus(rawStatus, streamState, rtcmIn, isVirtual);
+    }
+    // Output configuration does not determine whether the agent is reachable.
+    return getActiveMapStatus(device, statusForOps);
 };
 const getLockedServers = device => {
     const policy = device?.server_config_lock || {};
