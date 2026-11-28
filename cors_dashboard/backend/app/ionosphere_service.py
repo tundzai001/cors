@@ -118,14 +118,8 @@ class IonosphereService:
             })
         return items
 
-    async def _fetch_catalog(self, client: httpx.AsyncClient) -> list[dict[str, Any]]:
-        now = time.monotonic()
-        if self._last_catalog_items and (now - self._last_catalog_fetch < CACHE_TTL_SECONDS):
-            return self._last_catalog_items
-
+    async def _fetch_json_catalog(self, client: httpx.AsyncClient, now: float):
         last_exc: Optional[Exception] = None
-
-        # 1. Try official JSON catalog with retry (handles NOAA in-place file rewrite during 10-minute cron)
         for attempt in range(2):
             try:
                 resp = await client.get(NOAA_CATALOG_URL, headers=DEFAULT_REQUEST_HEADERS, timeout=15.0)
@@ -139,7 +133,7 @@ class IonosphereService:
                     if valid_items:
                         self._last_catalog_items = valid_items
                         self._last_catalog_fetch = now
-                        return valid_items
+                        return valid_items, last_exc
                 logger.info(
                     "NOAA GloTEC catalog returned empty or invalid list on attempt %d: type=%s, len=%s",
                     attempt + 1, type(items).__name__, len(items) if hasattr(items, '__len__') else 'N/A'
@@ -150,8 +144,9 @@ class IonosphereService:
 
             if attempt == 0:
                 await asyncio.sleep(1.5)
+        return None, last_exc
 
-        # 2. Fallback: Parse directory listing directly if catalog JSON was empty or unreachable
+    async def _fetch_directory_catalog(self, client: httpx.AsyncClient, now: float):
         try:
             logger.info("Attempting NOAA GloTEC directory listing fallback...")
             dir_items = await self._fetch_catalog_from_dir(client)
@@ -162,8 +157,21 @@ class IonosphereService:
                 return dir_items
         except Exception as dir_exc:
             logger.debug("NOAA GloTEC directory listing fallback failed: %s", dir_exc)
+        return None
 
-        # 3. Retain previously known catalog items if any exist
+    async def _fetch_catalog(self, client: httpx.AsyncClient) -> list[dict[str, Any]]:
+        now = time.monotonic()
+        if self._last_catalog_items and (now - self._last_catalog_fetch < CACHE_TTL_SECONDS):
+            return self._last_catalog_items
+
+        catalog_items, last_exc = await self._fetch_json_catalog(client, now)
+        if catalog_items:
+            return catalog_items
+
+        dir_items = await self._fetch_directory_catalog(client, now)
+        if dir_items:
+            return dir_items
+
         if self._last_catalog_items:
             logger.warning(
                 "NOAA GloTEC catalog refresh failed (%s); retaining %d cached catalog items",

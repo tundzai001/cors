@@ -522,152 +522,120 @@ class AdvancedRateLimiter:
             if ip in d:
                 del d[ip]
     
+    def _cached_stats(self, cache_key: str, now: float, cache_ttl: float) -> dict | None:
+        if not hasattr(self, "_stats_cache") or cache_key not in self._stats_cache:
+            return None
+        cached = self._stats_cache[cache_key]
+        age = now - cached.get("ts", 0)
+        if age >= cache_ttl or cached.get("attack_mode") != self.attack_mode:
+            return None
+        result = dict(cached["value"])
+        result["_cache_age_seconds"] = round(age, 2)
+        return result
+
+    def _vpn_suspect_stats(self) -> list[dict]:
+        suspects = []
+        for fingerprint, data in self.fingerprint_history.items():
+            unique_ips = len(set(data.get("ips", [])))
+            if unique_ips <= 2:
+                continue
+            recent_count = int(data.get("recent_count", 0))
+            risk_score = unique_ips * 2 + min(recent_count, 50)
+            if unique_ips > 10 or risk_score > 30:
+                risk_level = "CRITICAL"
+            elif unique_ips > 4 or risk_score > 15:
+                risk_level = "HIGH"
+            else:
+                risk_level = "MEDIUM"
+            suspects.append({
+                "fingerprint": fingerprint[:8],
+                "ip_count": unique_ips,
+                "user_agent": data.get("ua", "N/A")[:100],
+                "first_seen": data.get("first_seen", 0),
+                "recent_count": recent_count,
+                "risk_score": risk_score,
+                "risk_level": risk_level,
+                "suggested_mitigation": "challenge" if risk_level in ("HIGH", "CRITICAL") else "monitor",
+            })
+        suspects.sort(key=lambda item: item["risk_score"], reverse=True)
+        return suspects
+
+    def _traffic_history_stats(self) -> list[int]:
+        traffic = list(self.traffic_history)
+        while len(traffic) < 60:
+            traffic.insert(0, 0)
+        return traffic[-60:]
+
+    async def _load_security_block_lists(self, db: AsyncSession, now: float):
+        permanent_result = await db.execute(
+            select(models.IpSecurityLog).filter(models.IpSecurityLog.block_type == 'permanent')
+        )
+        temporary_result = await db.execute(
+            select(models.IpSecurityLog).filter(
+                models.IpSecurityLog.block_type == 'temporary',
+                models.IpSecurityLog.blocked_until > now,
+            )
+        )
+        return permanent_result.scalars().all(), temporary_result.scalars().all()
+
+    def _build_security_stats(self, now: float, permanent_blocks: list, temporary_blocks: list) -> dict:
+        suspicious_ips = [
+            {"ip": ip, "score": score}
+            for ip, score in sorted(self.suspicious_patterns.items(), key=lambda item: item[1], reverse=True)
+            if score > 20
+        ][:10]
+        return {
+            "blocked_ips_count": len(temporary_blocks),
+            "permanent_blacklist_count": len(permanent_blocks),
+            "blacklisted_ips": [
+                {"ip": block.ip_address, "reason": getattr(block, "reason", "N/A"), "blocked_at": block.created_at}
+                for block in permanent_blocks
+            ],
+            "temporary_blocked_ips": [
+                {
+                    "ip": block.ip_address,
+                    "blocked_until": block.blocked_until,
+                    "remaining_seconds": max(0, int(block.blocked_until - now)),
+                    "reason": getattr(block, "reason", "N/A"),
+                }
+                for block in temporary_blocks
+            ],
+            "total_ips_tracked": len(self.ip_attempts),
+            "suspicious_ips": suspicious_ips,
+            "vpn_suspects": self._vpn_suspect_stats()[:20],
+            "attack_mode": self.attack_mode,
+            "traffic_history": self._traffic_history_stats(),
+            "global_request_rate": len(self.global_request_rate),
+            "_generated_at": now,
+            "_cache_age_seconds": 0,
+            "blocked_usernames_count": 0,
+        }
+
     async def get_stats(self, db: AsyncSession) -> dict:
-        """
-        Lấy thống kê bảo mật với caching và error handling
-        """
-        CACHE_TTL = 5.0
-        now = time.time()
-        
-        # Không dùng lock ở đây vì có thể gây deadlock
+        """Lấy thống kê bảo mật với cache và xử lý lỗi."""
         cache_key = "get_stats_v1"
-        
-        # Kiểm tra cache
-        if hasattr(self, "_stats_cache") and cache_key in self._stats_cache:
-            cached = self._stats_cache[cache_key]
-            age = now - cached.get("ts", 0)
-            
-            # Chỉ dùng cache nếu còn mới VÀ attack_mode không đổi
-            if (age < CACHE_TTL and 
-                cached.get("attack_mode") == self.attack_mode):
-                result = dict(cached["value"])
-                result["_cache_age_seconds"] = round(age, 2)
-                return result
-        
-        # === BUILD FRESH STATS ===
+        now = time.time()
+        cached = self._cached_stats(cache_key, now, 5.0)
+        if cached is not None:
+            return cached
         try:
-            # 1. Database queries
-            permanent_result = await db.execute(
-                select(models.IpSecurityLog).filter(
-                    models.IpSecurityLog.block_type == 'permanent'
-                )
-            )
-            permanent_blocks = permanent_result.scalars().all()
-
-            temporary_result = await db.execute(
-                select(models.IpSecurityLog).filter(
-                    models.IpSecurityLog.block_type == 'temporary',
-                    models.IpSecurityLog.blocked_until > now
-                )
-            )
-            temporary_blocks = temporary_result.scalars().all()
-
-            # 2. Suspicious IPs
-            suspicious_ips = [
-                {"ip": ip, "score": score}
-                for ip, score in sorted(
-                    self.suspicious_patterns.items(), 
-                    key=lambda x: x[1], 
-                    reverse=True
-                )
-                if score > 20
-            ][:10]
-
-            # 3. VPN Intelligence
-            vpn_suspects_detailed = []
-            for fp, data in self.fingerprint_history.items():
-                ips_set = set(data.get("ips", []))
-                unique_ips = len(ips_set)
-                
-                if unique_ips > 2:
-                    ua = data.get("ua", "N/A")[:100]  # Limit UA length
-                    first_seen = data.get("first_seen", 0)
-                    recent_count = int(data.get("recent_count", 0))
-                    
-                    risk_score = unique_ips * 2 + min(recent_count, 50)
-                    
-                    if unique_ips > 10 or risk_score > 30:
-                        risk_level = "CRITICAL"
-                    elif unique_ips > 4 or risk_score > 15:
-                        risk_level = "HIGH"
-                    else:
-                        risk_level = "MEDIUM"
-                    
-                    vpn_suspects_detailed.append({
-                        "fingerprint": fp[:8],
-                        "ip_count": unique_ips,
-                        "user_agent": ua,
-                        "first_seen": first_seen,
-                        "recent_count": recent_count,
-                        "risk_score": risk_score,
-                        "risk_level": risk_level,
-                        "suggested_mitigation": "challenge" if risk_level in ("HIGH", "CRITICAL") else "monitor"
-                    })
-
-            vpn_suspects_detailed.sort(key=lambda x: x["risk_score"], reverse=True)
-
-            # 4. Traffic History (ensure 60 points)
-            traffic_data = list(self.traffic_history)
-            while len(traffic_data) < 60:
-                traffic_data.insert(0, 0)
-            traffic_data = traffic_data[-60:]  # Keep only last 60
-
-            # 5. Build result
-            result = {
-                "blocked_ips_count": len(temporary_blocks),
-                "permanent_blacklist_count": len(permanent_blocks),
-                "blacklisted_ips": [
-                    {
-                        "ip": b.ip_address,
-                        "reason": getattr(b, "reason", "N/A"),
-                        "blocked_at": b.created_at
-                    }
-                    for b in permanent_blocks  # Limit to 50
-                ],
-                "temporary_blocked_ips": [
-                    {
-                        "ip": b.ip_address,
-                        "blocked_until": b.blocked_until,
-                        "remaining_seconds": max(0, int(b.blocked_until - now)),
-                        "reason": getattr(b, "reason", "N/A")
-                    }
-                    for b in temporary_blocks  # Limit to 50
-                ],
-                "total_ips_tracked": len(self.ip_attempts),
-                "suspicious_ips": suspicious_ips,
-                "vpn_suspects": vpn_suspects_detailed[:20],
-                "attack_mode": self.attack_mode,
-                "traffic_history": traffic_data,
-                "global_request_rate": len(self.global_request_rate),
-                "_generated_at": now,
-                "_cache_age_seconds": 0,
-                "blocked_usernames_count": 0
-            }
-
-            # Cache the result
+            permanent_blocks, temporary_blocks = await self._load_security_block_lists(db, now)
+            result = self._build_security_stats(now, permanent_blocks, temporary_blocks)
             if not hasattr(self, "_stats_cache"):
                 self._stats_cache = {}
-            
-            self._stats_cache[cache_key] = {
-                "value": result,
-                "ts": now,
-                "attack_mode": self.attack_mode
-            }
-
+            self._stats_cache[cache_key] = {"value": result, "ts": now, "attack_mode": self.attack_mode}
             return result
-
-        except Exception as e:
-            logger.exception(f"Error in get_stats: {e}", exc_info=True)
-            # Return minimal fallback data
+        except Exception as error:
+            logger.exception(f"Error in get_stats: {error}", exc_info=True)
             return {
                 "error": "Failed to generate stats",
-                "error_message": str(e),
+                "error_message": str(error),
                 "blocked_ips_count": 0,
                 "permanent_blacklist_count": 0,
                 "total_ips_tracked": 0,
                 "attack_mode": False,
                 "traffic_history": [0] * 60,
-                "_generated_at": now
+                "_generated_at": now,
             }
 
     def cleanup_stale_data(self):

@@ -270,6 +270,32 @@ async def open_ntrip_stream(
     return reader, writer, pending_data
 
 
+def _split_ntrip_response_header(buffer: bytearray) -> tuple[bytes, bytes] | None:
+    full_header_idx = buffer.find(b"\r\n\r\n")
+    if full_header_idx >= 0:
+        split_at = full_header_idx + 4
+        return bytes(buffer[:split_at]), bytes(buffer[split_at:])
+
+    # NTRIP v1 casters may send ICY status followed directly by RTCM bytes.
+    first_line_end = buffer.find(b"\r\n")
+    if first_line_end < 0:
+        return None
+    first_line = bytes(buffer[:first_line_end]).decode("iso-8859-1", errors="replace")
+    if first_line.startswith("ICY 200 OK"):
+        blank_end = buffer.find(b"\r\n\r\n", first_line_end)
+        split_at = blank_end + 4 if blank_end >= 0 else first_line_end + 2
+        return bytes(buffer[:split_at]), bytes(buffer[split_at:])
+    is_http_error = (
+        first_line.startswith("HTTP/")
+        and " 200 " not in first_line
+        and not first_line.endswith(" 200")
+    )
+    if is_http_error:
+        split_at = first_line_end + 2
+        return bytes(buffer[:split_at]), bytes(buffer[split_at:])
+    return None
+
+
 async def read_ntrip_response_header(reader: asyncio.StreamReader) -> tuple[bytes, bytes]:
     buffer = bytearray()
     deadline = time.monotonic() + 10.0
@@ -282,27 +308,9 @@ async def read_ntrip_response_header(reader: asyncio.StreamReader) -> tuple[byte
                 return bytes(buffer), b""
             raise RuntimeError("empty NTRIP response")
         buffer.extend(chunk)
-
-        full_header_idx = buffer.find(b"\r\n\r\n")
-        if full_header_idx >= 0:
-            split_at = full_header_idx + 4
-            return bytes(buffer[:split_at]), bytes(buffer[split_at:])
-
-        # Many NTRIP v1 casters send only "ICY 200 OK\r\n" and then RTCM bytes,
-        # without a blank header terminator. Accept the status line immediately.
-        first_line_end = buffer.find(b"\r\n")
-        if first_line_end >= 0:
-            first_line = bytes(buffer[:first_line_end]).decode("iso-8859-1", errors="replace")
-            if first_line.startswith("ICY 200 OK"):
-                blank_end = buffer.find(b"\r\n\r\n", first_line_end)
-                split_at = blank_end + 4 if blank_end >= 0 else first_line_end + 2
-                return bytes(buffer[:split_at]), bytes(buffer[split_at:])
-            if (
-                first_line.startswith("HTTP/")
-                and " 200 " not in first_line
-                and not first_line.endswith(" 200")
-            ):
-                return bytes(buffer[: first_line_end + 2]), bytes(buffer[first_line_end + 2 :])
+        parts = _split_ntrip_response_header(buffer)
+        if parts is not None:
+            return parts
 
     preview = bytes(buffer[:160]).decode("iso-8859-1", errors="replace")
     raise RuntimeError(f"NTRIP response header timeout: {preview!r}")
@@ -356,55 +364,73 @@ async def record_mountpoint(args, mountpoint: str, stop_at: float, stop_event: a
                 print(f"[{utc_stamp()}] {mountpoint}: connected", flush=True)
                 stats.connected_at = time.time()
                 writer.event("connected", reconnects=stats.reconnects)
-                if pending_data:
-                    writer.write(pending_data)
-                    stats.bytes_written += len(pending_data)
-                    stats.chunks += 1
-                    stats.consecutive_failures = 0
-                while not stop_event.is_set() and time.time() < stop_at:
-                    data = await read_stream_chunk(reader, args.chunk_size, args.read_timeout)
-                    if not data:
-                        raise RuntimeError("stream closed")
-                    writer.write(data)
-                    stats.bytes_written += len(data)
-                    stats.chunks += 1
-                    stats.consecutive_failures = 0
-
-                    now = time.time()
-                    if now - stats.last_report_ts >= args.report_seconds:
-                        delta_bytes = stats.bytes_written - stats.last_bytes
-                        bps = delta_bytes / max(1.0, now - stats.last_report_ts)
-                        print(
-                            f"[{utc_stamp(now)}] {mountpoint}: {stats.bytes_written} bytes, {bps:.0f} B/s",
-                            flush=True,
-                        )
-                        stats.last_bytes = stats.bytes_written
-                        stats.last_report_ts = now
-                        writer.flush()
+                _record_pending_data(writer, stats, pending_data)
+                await _record_stream_chunks(reader, args, mountpoint, stop_at, stop_event, stats, writer)
             except asyncio.CancelledError:
                 raise
             except Exception as exc:
-                stats.reconnects += 1
-                reason = describe_exception(exc)
-                stats.consecutive_failures += 1
-                wait_seconds = reconnect_delay(args, stats, reason)
-                writer.event("stream_disconnected", reconnects=stats.reconnects, reason=reason)
-                writer.flush()
-                print(
-                    f"[{utc_stamp()}] {mountpoint}: reconnect {stats.reconnects} in {wait_seconds:.0f}s after disconnect: {reason}",
-                    flush=True,
-                )
-                await asyncio.sleep(wait_seconds)
+                await _wait_before_recorder_reconnect(args, mountpoint, stats, writer, exc)
             finally:
-                if stream_writer is not None:
-                    stream_writer.close()
-                    try:
-                        await stream_writer.wait_closed()
-                    except Exception:
-                        pass
+                await _close_recorder_stream(stream_writer)
 
     writer.close()
     print(f"[{utc_stamp()}] {mountpoint}: stopped, total={stats.bytes_written} bytes", flush=True)
+
+
+def _record_pending_data(writer: StationRawWriter, stats: RecorderStats, pending_data: bytes) -> None:
+    if not pending_data:
+        return
+    writer.write(pending_data)
+    stats.bytes_written += len(pending_data)
+    stats.chunks += 1
+    stats.consecutive_failures = 0
+
+
+async def _record_stream_chunks(reader, args, mountpoint, stop_at, stop_event, stats, writer):
+    while not stop_event.is_set() and time.time() < stop_at:
+        data = await read_stream_chunk(reader, args.chunk_size, args.read_timeout)
+        if not data:
+            raise RuntimeError("stream closed")
+        writer.write(data)
+        stats.bytes_written += len(data)
+        stats.chunks += 1
+        stats.consecutive_failures = 0
+
+        now = time.time()
+        if now - stats.last_report_ts >= args.report_seconds:
+            delta_bytes = stats.bytes_written - stats.last_bytes
+            bps = delta_bytes / max(1.0, now - stats.last_report_ts)
+            print(
+                f"[{utc_stamp(now)}] {mountpoint}: {stats.bytes_written} bytes, {bps:.0f} B/s",
+                flush=True,
+            )
+            stats.last_bytes = stats.bytes_written
+            stats.last_report_ts = now
+            writer.flush()
+
+
+async def _wait_before_recorder_reconnect(args, mountpoint, stats, writer, error):
+    stats.reconnects += 1
+    reason = describe_exception(error)
+    stats.consecutive_failures += 1
+    wait_seconds = reconnect_delay(args, stats, reason)
+    writer.event("stream_disconnected", reconnects=stats.reconnects, reason=reason)
+    writer.flush()
+    print(
+        f"[{utc_stamp()}] {mountpoint}: reconnect {stats.reconnects} in {wait_seconds:.0f}s after disconnect: {reason}",
+        flush=True,
+    )
+    await asyncio.sleep(wait_seconds)
+
+
+async def _close_recorder_stream(stream_writer):
+    if stream_writer is None:
+        return
+    stream_writer.close()
+    try:
+        await stream_writer.wait_closed()
+    except Exception:
+        pass
 
 
 def parse_args() -> argparse.Namespace:

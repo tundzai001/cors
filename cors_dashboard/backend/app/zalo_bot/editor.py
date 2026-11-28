@@ -61,18 +61,22 @@ class EditorMixin:
         ))
 
     @staticmethod
+    def _human_boolean_value(field: str, value: bool) -> str:
+        if field in {"stream_on_demand", "server1_stream_on_demand", "server2_stream_on_demand"}:
+            return "NGỦ KHI KHÔNG CÓ ROVER" if value else "LUÔN TRUYỀN DỮ LIỆU"
+        if field == "show_position":
+            return "CHO PHÉP HIỂN THỊ VỊ TRÍ" if value else "ẨN VỊ TRÍ"
+        if field == "is_shared_with_managers":
+            return "CÓ CHIA SẺ" if value else "KHÔNG CHIA SẺ"
+        return "BẬT" if value else "TẮT"
+
+    @staticmethod
     def _human_value(field: str, value: Any) -> str:
         from ..zalo_bot_service import ZaloBotService
         if any(part in field.lower() for part in ("password", "secret", "token")):
             return "Đã thiết lập" if value else "Chưa thiết lập"
         if isinstance(value, bool):
-            if field in {"stream_on_demand", "server1_stream_on_demand", "server2_stream_on_demand"}:
-                return "NGỦ KHI KHÔNG CÓ ROVER" if value else "LUÔN TRUYỀN DỮ LIỆU"
-            if field == "show_position":
-                return "CHO PHÉP HIỂN THỊ VỊ TRÍ" if value else "ẨN VỊ TRÍ"
-            if field == "is_shared_with_managers":
-                return "CÓ CHIA SẺ" if value else "KHÔNG CHIA SẺ"
-            return "BẬT" if value else "TẮT"
+            return EditorMixin._human_boolean_value(field, value)
         if value in (None, ""):
             return "Chưa đặt"
         if field == "mountpoints":

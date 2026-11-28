@@ -1029,6 +1029,29 @@ async def _deactivate_empty_rtcm_mountpoints(candidates):
             await _deactivate_idle_rtcm_mountpoint(serial, mountpoint)
 
 
+def _remove_missing_rtcm_keepalive_sessions(active_rows):
+    active_ids = {row[0] for row in active_rows}
+    for session_id in rtcm_keepalive_miss_counts.copy():
+        if session_id not in active_ids:
+            rtcm_keepalive_miss_counts.pop(session_id, None)
+
+
+async def _collect_rtcm_keepalive_outcomes(active_rows, now):
+    updated_ids = []
+    expired_ids = []
+    candidates_for_deactivation = set()
+    for row in active_rows:
+        updated, expired, candidate = await _keepalive_session_outcome(row, now)
+        session_id = row[0]
+        if updated:
+            updated_ids.append(session_id)
+        if expired:
+            expired_ids.append(session_id)
+        if candidate:
+            candidates_for_deactivation.add(candidate)
+    return updated_ids, expired_ids, candidates_for_deactivation
+
+
 async def rtcm_ntrip_clienttable_keepalive_task():
     global rtcm_keepalive_miss_counts
 
@@ -1040,30 +1063,14 @@ async def rtcm_ntrip_clienttable_keepalive_task():
 
         try:
             active_rows = await _fetch_active_rtcm_sessions(now)
-
-            active_ids = {row[0] for row in active_rows}
-            for session_id in rtcm_keepalive_miss_counts.copy():
-                if session_id not in active_ids:
-                    rtcm_keepalive_miss_counts.pop(session_id, None)
+            _remove_missing_rtcm_keepalive_sessions(active_rows)
             if not active_rows:
                 continue
 
-            # 2. Match each session against Global Caster Cache
             keepalive_to = now + 90
-            updated_ids = []
-            expired_ids = []
-            candidates_for_deactivation = set()
-
-            for row in active_rows:
-                updated, expired, candidate = await _keepalive_session_outcome(row, now)
-                session_id = row[0]
-                if updated:
-                    updated_ids.append(session_id)
-                if expired:
-                    expired_ids.append(session_id)
-                if candidate:
-                    candidates_for_deactivation.add(candidate)
-
+            updated_ids, expired_ids, candidates_for_deactivation = await _collect_rtcm_keepalive_outcomes(
+                active_rows, now
+            )
             await _persist_rtcm_keepalive_results(updated_ids, expired_ids, keepalive_to, now)
             await _deactivate_empty_rtcm_mountpoints(candidates_for_deactivation)
 
