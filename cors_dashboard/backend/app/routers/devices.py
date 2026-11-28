@@ -695,100 +695,68 @@ async def get_rovers_for_base(
     # Nếu không phải Admin hoặc không phải chủ sở hữu, từ chối
     raise HTTPException(status_code=403, detail="Bạn không có quyền xem danh sách Rover của trạm này.")
 
-@router.post("/api/bases/{serial}/rovers", response_model=schemas.RoverAccountResponse, responses={400: {"description": "Bad Request"}, 403: {"description": "Forbidden"}, 404: {"description": "Not Found"}, 500: {"description": "Internal Server Error"}, 502: {"description": "Bad Gateway"}})
-async def create_rover_for_base(
-    serial: str,
-    rover_data: schemas.RoverAccountCreate,
-    db: AsyncSession = Depends(get_auth_db),
-    devices_db: AsyncSession = Depends(get_db),
-    current_user: models.User = Depends(auth.get_current_user)
-):
-    # 1. Kiểm tra quyền
+async def _authorize_rover_creation(serial, db, devices_db, current_user):
     is_admin = current_user.role == auth.Role.ADMIN
-    is_authorized_rover_editor = (
-        current_user.role in (auth.Role.COORDINATOR, auth.Role.VIEWER) and 
-        auth.can_edit_rovers(current_user)
-    )
-
-    if not is_admin and not is_authorized_rover_editor:
+    can_edit = current_user.role in (auth.Role.COORDINATOR, auth.Role.VIEWER) and auth.can_edit_rovers(current_user)
+    if not is_admin and not can_edit:
         raise HTTPException(status_code=403, detail="Bạn không có quyền tạo tài khoản Rover.")
+    if not is_admin and current_user.role == auth.Role.VIEWER:
+        visible = await crud.get_viewer_visible_base_serials(db, devices_db, current_user)
+        if str(serial).strip().upper() not in visible:
+            raise HTTPException(status_code=403, detail="Bạn không được phép tạo Rover cho trạm Base này.")
+    elif not is_admin:
+        device = await crud.get_device_by_serial(devices_db, serial)
+        if not device or (
+            device.user_id != current_user.id
+            and str(serial).strip().upper() not in crud.get_coordinator_view_base_serials(current_user)
+        ):
+            raise HTTPException(status_code=403, detail="Bạn không được phép tạo Rover cho trạm Base này.")
+    return is_admin
 
-    if not is_admin:
-        if current_user.role == auth.Role.VIEWER:
-            if str(serial).strip().upper() not in await crud.get_viewer_visible_base_serials(db, devices_db, current_user):
-                raise HTTPException(status_code=403, detail="Bạn không được phép tạo Rover cho trạm Base này.")
-        else:
-            device = await crud.get_device_by_serial(devices_db, serial)
-            if not device or (device.user_id != current_user.id and str(serial).strip().upper() not in crud.get_coordinator_view_base_serials(current_user)):
-                raise HTTPException(status_code=403, detail="Bạn không được phép tạo Rover cho trạm Base này.")
 
-    # 2. Kiểm tra trùng lặp trong DB Local
-    existing_rover = await crud.get_rover_by_username(db, rover_data.username)
-    if existing_rover:
-        raise HTTPException(status_code=400, detail="Tên đăng nhập Rover đã tồn tại (DB).")
-
-    # 1. Lấy thông tin thiết bị để kiểm tra Mountpoint hợp lệ
-    device_info = await crud.get_device_by_serial(devices_db, serial)
-    if not device_info:
-        raise HTTPException(status_code=404, detail="Trạm Base không tồn tại.")
-    
-    service_conf = crud.normalize_service_config(device_info.service_config)
-    
-    # 2. Xác định Mountpoint (Logic mới)
-    target_mountpoint = rover_data.mountpoint_allow
-    
-    valid_mps = []
+def _rover_target_mountpoint(serial, rover_data, current_user, is_admin, service_conf):
+    target = rover_data.mountpoint_allow
+    valid = []
     if service_conf.get('server1_enabled'):
-        valid_mps.append(service_conf.get('mountpoint1'))
+        valid.append(service_conf.get('mountpoint1'))
     if service_conf.get('server2_enabled'):
-        valid_mps.append(service_conf.get('mountpoint2'))
-        
-    # Lọc giá trị None/Rỗng
-    valid_mps = [mp for mp in valid_mps if mp]
-
-    # Gộp thêm extra mountpoints của user (nếu có)
+        valid.append(service_conf.get('mountpoint2'))
+    valid = [mountpoint for mountpoint in valid if mountpoint]
     if current_user.extra_mountpoints:
-        extra_list = [mp.strip() for mp in re.split(r'[;,\s]+', current_user.extra_mountpoints) if mp.strip()]
-        valid_mps.extend(extra_list)
+        extra_mountpoints = [
+            mountpoint.strip() for mountpoint in re.split(r'[;,\s]+', current_user.extra_mountpoints)
+            if mountpoint.strip()
+        ]
+        valid.extend(extra_mountpoints)
+    if not valid:
+        return f"MP_{serial}"
+    if target not in valid and not is_admin:
+        return valid[0]
+    return target
 
-    if not valid_mps:
-        target_mountpoint = f"MP_{serial}"
-    elif target_mountpoint not in valid_mps:
-        # Nếu là Admin hoặc MP nằm trong danh sách hợp lệ mở rộng thì cho qua
-        if not is_admin and target_mountpoint not in valid_mps:
-            target_mountpoint = valid_mps[0]
 
-    duration_seconds = 315360000 # 10 năm mặc định
-    
-    if rover_data.expiry_days > 0:
-        duration_seconds = rover_data.expiry_days * 86400  # 1 ngày = 86400 giây
-
-    # 3. GỌI TCP ĐẾN NTRIP CASTER (Tạo trên toàn bộ Caster được cấu hình)
+async def _provision_rover_on_casters(rover_data, current_user, target_mountpoint, duration_seconds):
     hosts, config = _read_caster_config_from_env()
     port = int(config.get("port") or settings.CASTER_PORT or 2101)
-    
-    target_hosts = [str(h).strip() for h in hosts if h.strip()]
+    target_hosts = [str(host).strip() for host in hosts if host.strip()]
     if not target_hosts:
         default_host = str(config.get("host") or settings.CASTER_HOST or "").strip()
         if default_host:
             target_hosts = [default_host]
-
     if not target_hosts:
         raise HTTPException(status_code=500, detail="Không cấu hình được NTRIP Caster Server.")
 
-    creator_identifier = current_user.username 
     created_any = False
-    
     for host in target_hosts:
         try:
             from app.caster_client import CasterClient
             caster = CasterClient(host, port)
             await caster.create_user(
-                creator=creator_identifier,
+                creator=current_user.username,
                 username=rover_data.username,
                 password=rover_data.password,
-                mountpoints=target_mountpoint, 
-                expiry_seconds=duration_seconds, 
+                mountpoints=target_mountpoint,
+                expiry_seconds=duration_seconds,
                 max_users=1,
                 show_position=rover_data.show_position,
                 rtcm_cycle_enabled=rover_data.rtcm_cycle_enabled,
@@ -799,13 +767,37 @@ async def create_rover_for_base(
             logger.info("Created rover on caster")
         except Exception as host_err:
             logger.exception(f"Failed to create rover '{rover_data.username}' on Caster {host}: {host_err}")
-
     if not created_any:
         raise HTTPException(status_code=502, detail="Không thể tạo tài khoản trên bất kỳ NTRIP Caster Server nào.")
 
-    # 4. Lưu vào DB
+
+@router.post("/api/bases/{serial}/rovers", response_model=schemas.RoverAccountResponse, responses={400: {"description": "Bad Request"}, 403: {"description": "Forbidden"}, 404: {"description": "Not Found"}, 500: {"description": "Internal Server Error"}, 502: {"description": "Bad Gateway"}})
+async def create_rover_for_base(
+    serial: str,
+    rover_data: schemas.RoverAccountCreate,
+    db: AsyncSession = Depends(get_auth_db),
+    devices_db: AsyncSession = Depends(get_db),
+    current_user: models.User = Depends(auth.get_current_user)
+):
+    is_admin = await _authorize_rover_creation(serial, db, devices_db, current_user)
+
+    # 2. Kiểm tra trùng lặp trong DB Local
+    existing_rover = await crud.get_rover_by_username(db, rover_data.username)
+    if existing_rover:
+        raise HTTPException(status_code=400, detail="Tên đăng nhập Rover đã tồn tại (DB).")
+
+    # 1. Lấy thông tin thiết bị để kiểm tra Mountpoint hợp lệ
+    device_info = await crud.get_device_by_serial(devices_db, serial)
+    if not device_info:
+        raise HTTPException(status_code=404, detail="Trạm Base không tồn tại.")
+    service_conf = crud.normalize_service_config(device_info.service_config)
+    target_mountpoint = _rover_target_mountpoint(serial, rover_data, current_user, is_admin, service_conf)
+    duration_seconds = 315360000 # 10 năm mặc định
+    if rover_data.expiry_days > 0:
+        duration_seconds = rover_data.expiry_days * 86400  # 1 ngày = 86400 giây
+    await _provision_rover_on_casters(rover_data, current_user, target_mountpoint, duration_seconds)
     new_rover = await crud.create_rover_account(
-        db, 
+        db,
         username=rover_data.username,
         password=rover_data.password,
         base_serial=serial,
@@ -818,7 +810,6 @@ async def create_rover_for_base(
         auto_save_sessions=getattr(rover_data, 'auto_save_sessions', True),
         auto_save_fixed_points=getattr(rover_data, 'auto_save_fixed_points', False),
     )
-    
     return new_rover
 
 async def _validate_rover_update_scope(rover, update_req, devices_db, db, current_user):

@@ -1375,6 +1375,13 @@ def iter_nmea_sentences(payload):
         if line.startswith("$") and len(line) >= 6:
             yield line
 
+
+def _collect_gsa_satellites(parts, active_sats):
+    for value in parts[3:15]:
+        if value:
+            active_sats.append(int(value))
+
+
 def parse_nmea_gsa(payload):
     active_sats = []
     latest_ts = time.time()
@@ -1385,9 +1392,7 @@ def parse_nmea_gsa(payload):
         if len(parts) < 18 or not parts[0].endswith("GSA"):
             continue
         try:
-            for value in parts[3:15]:
-                if value:
-                    active_sats.append(int(value))
+            _collect_gsa_satellites(parts, active_sats)
             last_line = line
         except Exception:
             continue

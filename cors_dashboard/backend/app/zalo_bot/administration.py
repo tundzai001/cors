@@ -190,6 +190,66 @@ class AdministrationMixin:
         choices = ", ".join(f"trạm {device.get('name') or device.get('serial')}" for device, _ in scored_devices[:5])
         return None, f"Có nhiều trạm khớp '{identifier}': {choices}."
 
+    def _station_action_preview(self, action, payload, device_name, device_serial, preview):
+        if action == "station_delete":
+            return f"XÓA VĨNH VIỄN trạm {device_name} ({device_serial}) khỏi hệ thống"
+        if action == "station_lock":
+            return f"KHÓA trạm {device_name} ({device_serial})"
+        if action == "station_unlock":
+            return f"MỞ KHÓA trạm {device_name} ({device_serial})"
+        if action == "station_reset":
+            return f"KHỞI ĐỘNG LẠI NGUỒN trạm {device_name} ({device_serial})"
+        if action == "coord_set":
+            return (
+                f"Trạm: {device_name} ({device_serial})\n"
+                f"Vĩ độ (Lat): {payload.get('lat')}\nKinh độ (Lon): {payload.get('lon')}\n"
+                f"Độ cao ellipsoid (Alt): {payload.get('alt')} m\nĐộ chính xác: {payload.get('accuracy')} m"
+            )
+        if action == "config_set":
+            changes = dict(payload.get("changes") or {})
+            config_labels = {field: label for field, label in SERVICE_CONFIG_CHOICES.values()}
+            change_lines = [
+                f"• {config_labels.get(field, field)}: {self._human_value(field, value)}"
+                for field, value in changes.items()
+            ]
+            return f"Sửa cấu hình trạm {device_name} ({device_serial})\n" + "\n".join(change_lines)
+        return preview
+
+    async def _resolve_station_admin_action(self, update, action, payload, preview):
+        station_actions = {"station_delete", "station_lock", "station_unlock", "station_reset", "coord_set", "config_set"}
+        station_query = payload.get("station")
+        if action not in station_actions or not station_query or not self._get_devices_cb:
+            return preview, False
+        try:
+            devices_list = await self._get_devices_cb()
+            device, error_msg = self._find_device_locally(station_query, devices_list)
+            if error_msg:
+                await update.message.reply_text(f"❌ {error_msg}")
+                return preview, True
+            if not device:
+                await update.message.reply_text(f"❌ Không tìm thấy trạm '{station_query}'.")
+                return preview, True
+
+            device_name = device.get("name") or device.get("serial")
+            device_serial = device.get("serial")
+            if action == "station_delete":
+                exact_matches = {
+                    str(device.get("name") or "").strip().lower(),
+                    str(device.get("serial") or "").strip().lower(),
+                }
+                if str(station_query).strip().lower() not in exact_matches:
+                    await update.message.reply_text(
+                        f"❌ Ý của bạn là trạm '{device_name}'?\n"
+                        f"Để tránh xóa nhầm, vui lòng gõ chính xác: xóa trạm {device_name} (hoặc {device_serial})"
+                    )
+                    return preview, True
+
+            payload["station"] = device_serial
+            return self._station_action_preview(action, payload, device_name, device_serial, preview), False
+        except Exception as exc:
+            logger.exception("Error resolving device in _queue_admin_action: %s", exc, exc_info=True)
+            return preview, False
+
     async def _queue_admin_action(
         self,
         update: Update,
@@ -208,65 +268,9 @@ class AdministrationMixin:
             )
             return
 
-        # --- Validate and Resolve Device for Station Actions ---
-        if action in {"station_delete", "station_lock", "station_unlock", "station_reset", "coord_set", "config_set"}:
-            station_query = payload.get("station")
-            if station_query and self._get_devices_cb:
-                try:
-                    devices_list = await self._get_devices_cb()
-                    device, error_msg = self._find_device_locally(station_query, devices_list)
-                    if error_msg:
-                        await update.message.reply_text(f"❌ {error_msg}")
-                        return
-                    if not device:
-                        await update.message.reply_text(f"❌ Không tìm thấy trạm '{station_query}'.")
-                        return
-
-                    device_name = device.get("name") or device.get("serial")
-                    device_serial = device.get("serial")
-
-                    # Special safety check for station_delete: must enter EXACT name or serial
-                    if action == "station_delete":
-                        exact_matches = {
-                            str(device.get("name") or "").strip().lower(),
-                            str(device.get("serial") or "").strip().lower(),
-                        }
-                        if str(station_query).strip().lower() not in exact_matches:
-                            await update.message.reply_text(
-                                f"❌ Ý của bạn là trạm '{device_name}'?\n"
-                                f"Để tránh xóa nhầm, vui lòng gõ chính xác: xóa trạm {device_name} (hoặc {device_serial})"
-                            )
-                            return
-
-                    # Normalize payload to use the exact serial
-                    payload["station"] = device_serial
-
-                    # Update preview to show exact device name & serial
-                    if action == "station_delete":
-                        preview = f"XÓA VĨNH VIỄN trạm {device_name} ({device_serial}) khỏi hệ thống"
-                    elif action == "station_lock":
-                        preview = f"KHÓA trạm {device_name} ({device_serial})"
-                    elif action == "station_unlock":
-                        preview = f"MỞ KHÓA trạm {device_name} ({device_serial})"
-                    elif action == "station_reset":
-                        preview = f"KHỞI ĐỘNG LẠI NGUỒN trạm {device_name} ({device_serial})"
-                    elif action == "coord_set":
-                        preview = (
-                            f"Trạm: {device_name} ({device_serial})\n"
-                            f"Vĩ độ (Lat): {payload.get('lat')}\nKinh độ (Lon): {payload.get('lon')}\n"
-                            f"Độ cao ellipsoid (Alt): {payload.get('alt')} m\nĐộ chính xác: {payload.get('accuracy')} m"
-                        )
-                    elif action == "config_set":
-                        changes = dict(payload.get("changes") or {})
-                        config_labels = {field: label for field, label in SERVICE_CONFIG_CHOICES.values()}
-                        change_lines = [
-                            f"• {config_labels.get(field, field)}: {self._human_value(field, value)}"
-                            for field, value in changes.items()
-                        ]
-                        preview = f"Sửa cấu hình trạm {device_name} ({device_serial})\n" + "\n".join(change_lines)
-
-                except Exception as exc:
-                    logger.exception("Error resolving device in _queue_admin_action: %s", exc, exc_info=True)
+        preview, abort = await self._resolve_station_admin_action(update, action, payload, preview)
+        if abort:
+            return
 
         principal = operator[2]
         payload.update(self._principal_payload(principal))
