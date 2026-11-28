@@ -7382,108 +7382,85 @@ async def auto_base_state_machine(agent: AgentManager, gnss_reader: GNSSReader, 
         await send_status(agent, mqtt_client)
 
 
-async def _run_auto_base_setup(agent: AgentManager, gnss_reader: GNSSReader, mqtt_client: mqtt.Client):
-    global current_state, LAST_GGA_COORD
-    
-    cfg = agent.config.get("auto_base_setup", {})
-    enable_transform = cfg.get("enable_itrf_vn2000_transform", True) is not False
-    if not cfg:
-        # Default disabled if not in config
-        return
-    if not cfg.get("enabled", False):
-        return
-        
-    logging.info("=== STARTING AUTO BASE SETUP ===")
-    _set_auto_base_progress("starting")
+async def _fail_auto_base_stage(agent, gnss_reader, mqtt_client, temp_client, step, message, reason):
+    global current_state
+    logging.error(message)
+    _set_auto_base_progress("failed", step=step, total_steps=4, reason=reason)
+    temp_client.stop()
+    _cleanup_inject_queue(gnss_reader)
+    current_state = "ONLINE"
     await send_status(agent, mqtt_client)
-    
-    port = agent.detected_chip.get("port")
-    
-    # Priority: Manual override from FE payload -> Agent detection
-    chip_type = cfg.get("sensor_type") or agent.detected_chip.get("type", "UNKNOWN")
-    if cfg.get("sensor_type"):
-        logging.info(f"AutoBase: Using manually overridden chip type from Frontend: {chip_type}")
-    
-    if not port or gnss_reader is None:
-        raise RuntimeError("AutoBase requires a detected GNSS port and reader")
-        
-    # State 1: Configure ROVER
+
+
+async def _prepare_auto_base_session(agent, gnss_reader, mqtt_client, cfg, port, chip_type):
+    global active_auto_base_client, current_state
     current_state = "AUTO_SETUP_ROVER"
     _set_auto_base_progress("set_rover", step=1, total_steps=4)
     logging.info("AutoBase: Setting chip to ROVER mode...")
     await send_status(agent, mqtt_client)
-    
-    if gnss_reader:
-        gnss_reader.pause()
-        await asyncio.sleep(1.0)
-        
+    gnss_reader.pause()
+    await asyncio.sleep(1.0)
     try:
         await _apply_rover_mode_to_chip(chip_type, port, gnss_reader)
         logging.info(f"AutoBase: {chip_type} successfully configured to ROVER mode")
-    except Exception as e:
-        logging.exception(f"AutoBase: Failed to set ROVER mode: {e}")
+    except Exception as error:
+        logging.exception(f"AutoBase: Failed to set ROVER mode: {error}")
         raise
 
-    # Wait up to 5 seconds for initial NMEA GGA from rover chip before connecting to NTRIP
     logging.info("AutoBase: Waiting for rover chip to output NMEA GGA...")
     for _ in range(10):
         if globals().get('LAST_RAW_GGA'):
             logging.info(f"AutoBase: Initial NMEA GGA from chip: {globals().get('LAST_RAW_GGA')}")
             break
         await asyncio.sleep(0.5)
-            
-    # Start temporary NTRIP client to get RTCM
+
     ntrip_host = str(cfg.get("ip") or "").strip()
     ntrip_port = str(cfg.get("port") or "")
     ntrip_user = str(cfg.get("user") or "").strip()
     ntrip_pass = str(cfg.get("password") or "")
     ntrip_mount = str(cfg.get("mountpoint") or "").strip()
-    
     temp_cfg = {
         'rtcmserver1': ntrip_host,
         'rtcmport1': ntrip_port,
         'rtcmusername1': ntrip_user,
         'rtcmpassword1': ntrip_pass,
         'rtcmmountpoint1': ntrip_mount,
-        'reconnectioninterval': 5
+        'reconnectioninterval': 5,
     }
-    
     session_datum = RTCMDatum()
     session_messages = {}
+
     def receive_correction(packet):
         _receive_auto_base_correction(packet, gnss_reader, session_datum, session_messages)
+
     temp_client = NTRIPClientWorker(temp_cfg, agent.log, correction_sink=receive_correction)
     temp_client.datum_message_counts = session_messages
-    global active_auto_base_client
     active_auto_base_client = temp_client
-    
-    # Corrections go directly to the receiver, never through outbound stream gates
-    # or the shared subscriber list (which also receives the chip's own RTCM).
     temp_client.start()
+    return {
+        "client": temp_client,
+        "datum": session_datum,
+        "messages": session_messages,
+        "host": ntrip_host,
+        "port": ntrip_port,
+        "mountpoint": ntrip_mount,
+    }
 
-    # State 2: Wait for FIX
+
+async def _wait_for_auto_base_fix(agent, gnss_reader, mqtt_client, session, timeout, fixed_streak_required):
+    global current_state
+    temp_client = session["client"]
     current_state = "AUTO_SETUP_WAIT_FIX"
-    timeout = int(cfg.get("timeout", 3600))
-    fixed_streak_required = int(cfg.get("fixed_streak_seconds", 5))
     start_time = time.time()
     _set_auto_base_progress(
-        "wait_fix",
-        step=2,
-        total_steps=4,
-        timeout=timeout,
-        elapsed=0,
-        fix_status=globals().get('LAST_GGA_FIX_STATUS'),
-        fixed_streak=0,
-        fixed_streak_required=fixed_streak_required,
-        rtcm_bytes=0,
-        rtcm_pkts=0,
+        "wait_fix", step=2, total_steps=4, timeout=timeout, elapsed=0,
+        fix_status=globals().get('LAST_GGA_FIX_STATUS'), fixed_streak=0,
+        fixed_streak_required=fixed_streak_required, rtcm_bytes=0, rtcm_pkts=0,
     )
     await send_status(agent, mqtt_client)
-    
     logging.info(
         f"AutoBase: Waiting for stable RTK Fix... (Timeout: {timeout}s, required_streak={fixed_streak_required}s)"
     )
-    
     fixed_streak = 0
     while True:
         if _get_fresh_outbound_gga(3.0) and _is_rtk_usable_status(globals().get('LAST_GGA_FIX_STATUS')):
@@ -7491,24 +7468,17 @@ async def _run_auto_base_setup(agent: AgentManager, gnss_reader: GNSSReader, mqt
         else:
             fixed_streak = 0
         if fixed_streak >= fixed_streak_required:
-            break
+            return True
         if time.time() - start_time > timeout:
-            logging.error("AutoBase: RTK Fix timeout!")
-            _set_auto_base_progress("failed", step=2, total_steps=4, reason="RTK fix timeout")
-            temp_client.stop()
-            _cleanup_inject_queue(gnss_reader)
-            current_state = "ONLINE"
-            await send_status(agent, mqtt_client)
-            return
+            await _fail_auto_base_stage(
+                agent, gnss_reader, mqtt_client, temp_client, 2,
+                "AutoBase: RTK Fix timeout!", "RTK fix timeout",
+            )
+            return False
         elapsed = int(time.time() - start_time)
         _set_auto_base_progress(
-            "wait_fix",
-            step=2,
-            total_steps=4,
-            timeout=timeout,
-            elapsed=elapsed,
-            fix_status=globals().get('LAST_GGA_FIX_STATUS'),
-            fixed_streak=fixed_streak,
+            "wait_fix", step=2, total_steps=4, timeout=timeout, elapsed=elapsed,
+            fix_status=globals().get('LAST_GGA_FIX_STATUS'), fixed_streak=fixed_streak,
             fixed_streak_required=fixed_streak_required,
             rtcm_bytes=getattr(temp_client, 'total_rtcm_bytes', 0),
             rtcm_pkts=getattr(temp_client, 'total_rtcm_pkts', 0),
@@ -7517,8 +7487,10 @@ async def _run_auto_base_setup(agent: AgentManager, gnss_reader: GNSSReader, mqt
         if elapsed % 2 == 0:
             await send_status(agent, mqtt_client)
         await asyncio.sleep(1)
-        
-    # State 3: Average Position
+
+
+async def _collect_auto_base_samples(agent, gnss_reader, mqtt_client, session, cfg, fixed_streak_required):
+    global current_state
     current_state = "AUTO_SETUP_AVERAGING"
     configured_samples = int(cfg.get("samples", 60))
     samples_needed = 60
@@ -7532,16 +7504,10 @@ async def _run_auto_base_setup(agent: AgentManager, gnss_reader: GNSSReader, mqt
         f"Collecting up to {samples_needed} samples in {averaging_seconds}s..."
     )
     _set_auto_base_progress(
-        "averaging",
-        step=3,
-        total_steps=4,
-        samples_collected=0,
-        samples_target=samples_needed,
-        averaging_seconds=averaging_seconds,
-        elapsed=0
+        "averaging", step=3, total_steps=4, samples_collected=0,
+        samples_target=samples_needed, averaging_seconds=averaging_seconds, elapsed=0,
     )
     await send_status(agent, mqtt_client)
-    
     coords = []
     last_sample_ts = 0.0
     averaging_start = time.time()
@@ -7551,132 +7517,125 @@ async def _run_auto_base_setup(agent: AgentManager, gnss_reader: GNSSReader, mqt
         await asyncio.sleep(1)
         if not _get_fresh_outbound_gga(3.0) or not _is_rtk_usable_status(globals().get('LAST_GGA_FIX_STATUS')):
             _set_auto_base_progress(
-                "averaging",
-                step=3,
-                total_steps=4,
-                samples_collected=len(coords),
-                samples_target=samples_needed,
-                fix_status=globals().get('LAST_GGA_FIX_STATUS'),
-                averaging_seconds=averaging_seconds,
-                elapsed=elapsed
+                "averaging", step=3, total_steps=4, samples_collected=len(coords),
+                samples_target=samples_needed, fix_status=globals().get('LAST_GGA_FIX_STATUS'),
+                averaging_seconds=averaging_seconds, elapsed=elapsed,
             )
             continue
         coord = globals().get('LAST_GGA_COORD')
         sample_ts = float(globals().get('LAST_RAW_GGA_TS') or 0.0)
         if (
-            sample_ts > last_sample_ts
-            and coord
-            and len(coord) >= 3
-            and coord[0] is not None
-            and coord[1] is not None
-            and coord[2] is not None
+            sample_ts > last_sample_ts and coord and len(coord) >= 3
+            and coord[0] is not None and coord[1] is not None and coord[2] is not None
             and -90.0 <= float(coord[0]) <= 90.0
             and -180.0 <= float(coord[1]) <= 180.0
         ):
             last_sample_ts = sample_ts
             coords.append(coord)
             _set_auto_base_progress(
-                "averaging",
-                step=3,
-                total_steps=4,
-                samples_collected=len(coords),
-                samples_target=samples_needed,
-                averaging_seconds=averaging_seconds,
+                "averaging", step=3, total_steps=4, samples_collected=len(coords),
+                samples_target=samples_needed, averaging_seconds=averaging_seconds,
                 elapsed=elapsed,
-                latest_coord={"lat": float(coord[0]), "lon": float(coord[1]), "alt": float(coord[2])}
+                latest_coord={"lat": float(coord[0]), "lon": float(coord[1]), "alt": float(coord[2])},
             )
             await send_status(agent, mqtt_client)
-            
     if len(coords) < max(5, min(samples_needed, 15)):
-        logging.error("AutoBase: Failed to collect samples.")
-        _set_auto_base_progress(
-            "failed",
-            step=3,
-            total_steps=4,
-            reason=f"Insufficient valid RTK samples ({len(coords)}/{samples_needed})"
+        await _fail_auto_base_stage(
+            agent, gnss_reader, mqtt_client, session["client"], 3,
+            "AutoBase: Failed to collect samples.",
+            f"Insufficient valid RTK samples ({len(coords)}/{samples_needed})",
         )
-        temp_client.stop()
-        _cleanup_inject_queue(gnss_reader)
-        current_state = "ONLINE"
-        await send_status(agent, mqtt_client)
-        return
-        
-    avg_lat = _plain_mean([float(c[0]) for c in coords])
-    avg_lon = _plain_mean([float(c[1]) for c in coords])
-    avg_alt = _plain_mean([float(c[2]) for c in coords])
-    
+        return None
+    avg_lat = _plain_mean([float(coord[0]) for coord in coords])
+    avg_lon = _plain_mean([float(coord[1]) for coord in coords])
+    avg_alt = _plain_mean([float(coord[2]) for coord in coords])
     logging.info(f"AutoBase: Averaged Pos -> Lat: {avg_lat!r}, Lon: {avg_lon!r}, Alt: {avg_alt!r}")
+    return {
+        "coords": coords,
+        "raw_coord": {"lat": repr(avg_lat), "lon": repr(avg_lon), "alt": repr(avg_alt)},
+        "lat": avg_lat,
+        "lon": avg_lon,
+        "alt": avg_alt,
+    }
 
-    raw_coord = {"lat": repr(avg_lat), "lon": repr(avg_lon), "alt": repr(avg_alt)}
-    temp_client.stop()
-    temp_client.join(timeout=5)
+
+def _stop_auto_base_client(session, gnss_reader):
+    client = session["client"]
+    client.stop()
+    client.join(timeout=5)
     _cleanup_inject_queue(gnss_reader)
     logging.info("AutoBase: NTRIP client stopped, inject queue cleaned up")
-    transform_applied = False
-    transform_reason = "disabled" if not enable_transform else "not_applied"
-    vn2000_neh = None
-    with DATUM_LOCK:
-        datum_snapshot = copy.deepcopy(session_datum)
-        received_messages = dict(session_messages)
-    projection_source = "not_used"
+
+
+async def _resolve_auto_base_projection_location(agent, mqtt_client, raw_coord, lat, lon, alt):
+    _set_auto_base_progress('resolving_location', raw_coord=raw_coord, step=4, total_steps=4)
+    await send_status(agent, mqtt_client)
+    try:
+        return await asyncio.to_thread(_resolve_auto_base_location, lat, lon, alt)
+    except Exception as error:
+        return {'state': 'lookup_failed', 'reason': str(error)}
+
+
+async def _configure_auto_base_projection(agent, mqtt_client, cfg, enabled, datum, raw_coord, lat, lon, alt):
+    projection_source = 'not_used'
+    location = {}
     province_code = None
     province_name = None
-    province_hint = None
-    location = {}
-    if enable_transform:
-        if not datum_snapshot.rtcm1021_update:
-            raise ValueError('Chưa nhận RTCM 1021 của phiên CORS này; không dùng 7 tham số mặc định.')
-        if datum_snapshot.rtcm1025_update:
-            projection_source = 'rtcm1025'
-        elif cfg.get('l0_deg') is not None and cfg.get('k0') is not None:
-            datum_snapshot.l0 = math.radians(float(cfg['l0_deg']))
-            datum_snapshot.k0 = float(cfg['k0'])
-            projection_source = 'manual'
-        else:
-            _set_auto_base_progress('resolving_location', raw_coord=raw_coord, step=4, total_steps=4)
-            await send_status(agent, mqtt_client)
-            try:
-                location = await asyncio.to_thread(_resolve_auto_base_location, avg_lat, avg_lon, avg_alt)
-            except Exception as exc:
-                location = {'state': 'lookup_failed', 'reason': str(exc)}
-            province_code = location.get('province_code')
-            province_name = location.get('province_name')
-            if location.get('l0_deg') is None or location.get('k0') is None:
-                raise ValueError('Chưa xác định được kinh tuyến trục. Cần RTCM 1025 hoặc nhập L0/k0 theo tỉnh.')
-            datum_snapshot.l0 = math.radians(float(location['l0_deg']))
-            datum_snapshot.k0 = float(location['k0'])
-            projection_source = 'server_catalog'
-        for key in ('resN', 'resE', 'resHS'):
-            value = float(cfg.get(key, 0.0))
-            if not math.isfinite(value):
-                raise ValueError(f'Invalid CORS shift: {key}')
-            setattr(datum_snapshot, key, value)
+    if not enabled:
+        return projection_source, location, province_code, province_name
+    if not datum.rtcm1021_update:
+        raise ValueError('Chưa nhận RTCM 1021 của phiên CORS này; không dùng 7 tham số mặc định.')
+    if datum.rtcm1025_update:
+        projection_source = 'rtcm1025'
+    elif cfg.get('l0_deg') is not None and cfg.get('k0') is not None:
+        datum.l0 = math.radians(float(cfg['l0_deg']))
+        datum.k0 = float(cfg['k0'])
+        projection_source = 'manual'
+    else:
+        location = await _resolve_auto_base_projection_location(agent, mqtt_client, raw_coord, lat, lon, alt)
+        province_code = location.get('province_code')
+        province_name = location.get('province_name')
+        if location.get('l0_deg') is None or location.get('k0') is None:
+            raise ValueError('Chưa xác định được kinh tuyến trục. Cần RTCM 1025 hoặc nhập L0/k0 theo tỉnh.')
+        datum.l0 = math.radians(float(location['l0_deg']))
+        datum.k0 = float(location['k0'])
+        projection_source = 'server_catalog'
+    for key in ('resN', 'resE', 'resHS'):
+        value = float(cfg.get(key, 0.0))
+        if not math.isfinite(value):
+            raise ValueError(f'Invalid CORS shift: {key}')
+        setattr(datum, key, value)
+    return projection_source, location, province_code, province_name
 
-    if bool(enable_transform):
+
+def _transform_auto_base_coordinates(enabled, datum, projection_source, lat, lon, alt):
+    transform_applied = False
+    transform_reason = 'disabled' if not enabled else 'not_applied'
+    vn2000_neh = None
+    if enabled:
         try:
-            if not _is_valid_vn2000_projection_params(datum_snapshot):
+            if not _is_valid_vn2000_projection_params(datum):
                 transform_reason = "invalid_projection"
                 logging.warning(
                     "AutoBase: Skip ITRF->VN2000 transform due to invalid L0/k0 "
-                    f"(L0={math.degrees(datum_snapshot.l0)!r}, k0={datum_snapshot.k0!r})"
+                    f"(L0={math.degrees(datum.l0)!r}, k0={datum.k0!r})"
                 )
             else:
-                n_vn, e_vn, h_vn2000, local_lat, local_lon, local_alt = _transform_itrf_to_vn2000_neh_and_llh(avg_lat, avg_lon, avg_alt, datum_snapshot)
+                north, east, height, local_lat, local_lon, local_alt = _transform_itrf_to_vn2000_neh_and_llh(
+                    lat, lon, alt, datum
+                )
                 if (
                     math.isfinite(local_lat) and math.isfinite(local_lon) and math.isfinite(local_alt)
                     and -90.0 <= local_lat <= 90.0
                     and -180.0 <= local_lon <= 180.0
                     and -1000.0 <= local_alt <= 100000.0
                 ):
-                    vn2000_neh = {"north": n_vn, "east": e_vn, "h": h_vn2000}
-                    avg_lat = local_lat
-                    avg_lon = local_lon
-                    avg_alt = local_alt
+                    vn2000_neh = {"north": north, "east": east, "h": height}
+                    lat, lon, alt = local_lat, local_lon, local_alt
                     logging.info(
                         "AutoBase: ITRF->VN2000 transform applied "
-                        f"(L0={math.degrees(datum_snapshot.l0)!r}, k0={datum_snapshot.k0!r}, source={projection_source}) "
-                        f"-> Lat: {avg_lat!r}, Lon: {avg_lon!r}, Alt: {avg_alt!r}, "
-                        f"N: {n_vn!r}, E: {e_vn!r}, H: {h_vn2000!r}"
+                        f"(L0={math.degrees(datum.l0)!r}, k0={datum.k0!r}, source={projection_source}) "
+                        f"-> Lat: {lat!r}, Lon: {lon!r}, Alt: {alt!r}, N: {north!r}, E: {east!r}, H: {height!r}"
                     )
                     transform_applied = True
                     transform_reason = "applied"
@@ -7686,64 +7645,118 @@ async def _run_auto_base_setup(agent: AgentManager, gnss_reader: GNSSReader, mqt
                         "AutoBase: Skip transformed coordinate out of range, fallback to LLH "
                         f"(lat={local_lat}, lon={local_lon}, alt={local_alt})"
                     )
-        except Exception as e:
+        except Exception as error:
             transform_reason = "transform_error"
-            logging.warning(f"AutoBase: ITRF->VN2000 transform failed, fallback to averaged LLH: {e}")
-    
-    
-    if enable_transform and not transform_applied:
+            logging.warning(f"AutoBase: ITRF->VN2000 transform failed, fallback to averaged LLH: {error}")
+    if enabled and not transform_applied:
         raise ValueError(f'Không chuyển đổi được tọa độ: {transform_reason}; chưa tạo kết quả để áp dụng.')
+    return lat, lon, alt, transform_applied, transform_reason, vn2000_neh
 
-    calculated_coord = {"lat": repr(avg_lat), "lon": repr(avg_lon), "alt": repr(avg_alt)}
+
+def _build_auto_base_result(session, sample_result, projection, transformed, chip_type, enabled):
+    raw_coord = sample_result["raw_coord"]
+    lat, lon, alt, transform_applied, transform_reason, vn2000_neh = transformed
+    projection_source, location, province_code, province_name = projection
+    calculated_coord = {"lat": repr(lat), "lon": repr(lon), "alt": repr(alt)}
     final_coord = dict(calculated_coord)
     if chip_type in ('Ublox', 'Unicorecomm'):
-        # Quantize only the receiver command, never the transformation inputs/report.
         fields = (('lat', 9), ('lon', 9), ('alt', 4)) if chip_type == 'Ublox' else (('lat', 10), ('lon', 10))
         for key, digits in fields:
-            final_coord[key] = format(Decimal(calculated_coord[key]).quantize(
-                Decimal(1).scaleb(-digits), rounding=ROUND_DOWN), f'.{digits}f')
-
+            final_coord[key] = format(
+                Decimal(calculated_coord[key]).quantize(
+                    Decimal(1).scaleb(-digits), rounding=ROUND_DOWN
+                ),
+                f'.{digits}f',
+            )
+    datum = sample_result['datum_snapshot']
     conversion_report = {
         "version": 1,
-        "source": {"host": ntrip_host, "port": int(ntrip_port), "mountpoint": ntrip_mount},
+        "source": {"host": session["host"], "port": int(session["port"]), "mountpoint": session["mountpoint"]},
         "input_coord": raw_coord,
         "calculated_coord": calculated_coord,
         "output_coord": final_coord,
         "input_reference": "receiver_reported",
         "output_reference": "local_llh" if transform_applied else "receiver_reported",
         "altitude_reference": "ELLIPSOID",
-        "transform_requested": bool(enable_transform),
+        "transform_requested": bool(enabled),
         "transform_applied": transform_applied,
         "reason": transform_reason,
         "receiver_write_completed": False,
-        "received_messages": received_messages,
-        "parameter_source": "rtcm1021" if datum_snapshot.rtcm1021_update else "not_used",
-        "residual_source": "rtcm1023" if datum_snapshot.rtcm1023_update else "none",
+        "received_messages": session["messages"],
+        "parameter_source": "rtcm1021" if datum.rtcm1021_update else "not_used",
+        "residual_source": "rtcm1023" if datum.rtcm1023_update else "none",
         "rtcm1025_used": projection_source == "rtcm1025",
         "processor": "python_agent",
         "zone_width_source": "inferred_from_k0",
-        "rtcm1025": dict(datum_snapshot.projection_1025),
+        "rtcm1025": dict(datum.projection_1025),
         "location": location,
         "projection_source": projection_source,
-        "zone_width_deg": (3 if abs(datum_snapshot.k0 - 0.9999) < 1e-9 else
-                           6 if abs(datum_snapshot.k0 - 0.9996) < 1e-9 else None) if transform_applied else None,
-        "province_code": province_code, "province_name": province_name, "province_hint": province_hint,
-        "central_meridian_deg": math.degrees(datum_snapshot.l0), "k0": datum_snapshot.k0,
+        "zone_width_deg": (3 if abs(datum.k0 - 0.9999) < 1e-9 else
+                           6 if abs(datum.k0 - 0.9996) < 1e-9 else None) if transform_applied else None,
+        "province_code": province_code,
+        "province_name": province_name,
+        "province_hint": None,
+        "central_meridian_deg": math.degrees(datum.l0),
+        "k0": datum.k0,
         "projected_coord": vn2000_neh,
-        "parameters": {key: getattr(datum_snapshot, key) for key in
+        "parameters": {key: getattr(datum, key) for key in
                        ("dX", "dY", "dZ", "rX", "rY", "rZ", "kT", "resB", "resL", "resH", "resN", "resE", "resHS")},
-        "sample_count": len(coords),
+        "sample_count": len(sample_result["coords"]),
     }
-
     return {
-        'averaged_coord': conversion_report['output_coord'],
+        'averaged_coord': final_coord,
         'raw_coord': raw_coord,
         'calculated_coord': calculated_coord,
-        'sample_count': len(coords), 'fixed_samples_only': True,
-        'transform_applied': transform_applied, 'conversion_report': conversion_report,
+        'sample_count': len(sample_result["coords"]),
+        'fixed_samples_only': True,
+        'transform_applied': transform_applied,
+        'conversion_report': conversion_report,
         'receiver_write_completed': False,
         'updated_at': int(time.time()),
     }
+
+
+async def _run_auto_base_setup(agent: AgentManager, gnss_reader: GNSSReader, mqtt_client: mqtt.Client):
+    global current_state, LAST_GGA_COORD
+    cfg = agent.config.get("auto_base_setup", {})
+    enable_transform = cfg.get("enable_itrf_vn2000_transform", True) is not False
+    if not cfg or not cfg.get("enabled", False):
+        return
+    logging.info("=== STARTING AUTO BASE SETUP ===")
+    _set_auto_base_progress("starting")
+    await send_status(agent, mqtt_client)
+    port = agent.detected_chip.get("port")
+    chip_type = cfg.get("sensor_type") or agent.detected_chip.get("type", "UNKNOWN")
+    if cfg.get("sensor_type"):
+        logging.info(f"AutoBase: Using manually overridden chip type from Frontend: {chip_type}")
+    if not port or gnss_reader is None:
+        raise RuntimeError("AutoBase requires a detected GNSS port and reader")
+
+    session = await _prepare_auto_base_session(agent, gnss_reader, mqtt_client, cfg, port, chip_type)
+    timeout = int(cfg.get("timeout", 3600))
+    fixed_streak_required = int(cfg.get("fixed_streak_seconds", 5))
+    if not await _wait_for_auto_base_fix(
+        agent, gnss_reader, mqtt_client, session, timeout, fixed_streak_required
+    ):
+        return
+    sample_result = await _collect_auto_base_samples(
+        agent, gnss_reader, mqtt_client, session, cfg, fixed_streak_required
+    )
+    if sample_result is None:
+        return
+    _stop_auto_base_client(session, gnss_reader)
+    with DATUM_LOCK:
+        sample_result['datum_snapshot'] = copy.deepcopy(session['datum'])
+        session['messages'] = dict(session['messages'])
+    projection = await _configure_auto_base_projection(
+        agent, mqtt_client, cfg, enable_transform, sample_result['datum_snapshot'],
+        sample_result['raw_coord'], sample_result['lat'], sample_result['lon'], sample_result['alt'],
+    )
+    transformed = _transform_auto_base_coordinates(
+        enable_transform, sample_result['datum_snapshot'], projection[0],
+        sample_result['lat'], sample_result['lon'], sample_result['alt'],
+    )
+    return _build_auto_base_result(session, sample_result, projection, transformed, chip_type, enable_transform)
 
 
 # ==============================================================================
