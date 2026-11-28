@@ -72,6 +72,32 @@ async def caster_monitor_task():
         await asyncio.sleep(monitor_interval)
 
 
+def _exclude_decoder_clients(users, clients):
+    if clients is None:
+        return users, clients
+    decoder_counts = {}
+    rover_clients = []
+    for client in clients:
+        is_decoder = any(
+            str(client.get(key) or '').strip().upper().startswith('AITOGY_DECODER_')
+            for key in ('receiver_id', 'client_id')
+        )
+        if is_decoder:
+            username = str(client.get('username') or '').strip().casefold()
+            decoder_counts[username] = decoder_counts.get(username, 0) + 1
+        else:
+            rover_clients.append(client)
+    adjusted_users = [
+        {**account, 'nclient': max(
+            0,
+            int(account.get('nclient') or 0)
+            - decoder_counts.get(str(account.get('username') or '').strip().casefold(), 0),
+        )}
+        for account in (users or [])
+    ]
+    return adjusted_users, rover_clients
+
+
 async def _sync_single_caster(host: str, port: int, user: str = None, password: str = None):
     """Worker to fetch data from one caster and update the global cache."""
     key = f"{host}:{port}"
@@ -90,20 +116,7 @@ async def _sync_single_caster(host: str, port: int, user: str = None, password: 
         )
 
         # A decoder can share credentials with a real rover; filter by connection identity.
-        if clients is not None:
-            decoder_counts = {}
-            rover_clients = []
-            for client in clients:
-                if any(str(client.get(key) or '').strip().upper().startswith('AITOGY_DECODER_')
-                       for key in ('receiver_id', 'client_id')):
-                    username = str(client.get('username') or '').strip().casefold()
-                    decoder_counts[username] = decoder_counts.get(username, 0) + 1
-                else:
-                    rover_clients.append(client)
-            clients = rover_clients
-            users = [{**account, 'nclient': max(0, int(account.get('nclient') or 0) -
-                     decoder_counts.get(str(account.get('username') or '').strip().casefold(), 0))}
-                     for account in (users or [])]
+        users, clients = _exclude_decoder_clients(users, clients)
 
         scan_timestamp = int(time.time())
         async with global_caster_cache_lock:

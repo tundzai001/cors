@@ -6,13 +6,7 @@ import time
 from typing import Any, Mapping
 
 
-def build_control_plane_ack(
-    payload: Mapping[str, Any] | None,
-    *,
-    channel: str,
-    serial: str,
-    server_timestamp: float | None = None,
-) -> dict[str, Any] | None:
+def _status_ack_identity(payload: Mapping[str, Any] | None, channel: str) -> tuple[str, str, int] | None:
     if not isinstance(payload, Mapping):
         return None
 
@@ -27,6 +21,42 @@ def build_control_plane_ack(
         return None
     if normalized_channel not in {"websocket", "mqtt"}:
         return None
+    return normalized_channel, boot_id, sequence
+
+
+def _auto_base_location_ack(progress: Any) -> dict[str, Any] | None:
+    if not isinstance(progress, Mapping) or progress.get("phase") != "resolving_location":
+        return None
+    request = progress.get("location_request")
+    if not isinstance(request, Mapping):
+        return None
+    request_id = request.get("request_id")
+    if not isinstance(request_id, str) or not 0 < len(request_id) <= 128:
+        return None
+
+    from .auto_base_location import resolve_location
+
+    try:
+        if any(isinstance(request.get(key), bool) for key in ("lat", "lon", "alt")):
+            raise ValueError("Boolean LLH")
+        point = [float(request[key]) for key in ("lat", "lon", "alt")]
+        location = resolve_location(*point)
+    except (KeyError, TypeError, ValueError, OverflowError):
+        location = {"state": "invalid_request"}
+    return {"request_id": request_id, "location": location}
+
+
+def build_control_plane_ack(
+    payload: Mapping[str, Any] | None,
+    *,
+    channel: str,
+    serial: str,
+    server_timestamp: float | None = None,
+) -> dict[str, Any] | None:
+    identity = _status_ack_identity(payload, channel)
+    if identity is None:
+        return None
+    normalized_channel, boot_id, sequence = identity
 
     ack = {
         "type": "control_plane_ack",
@@ -40,19 +70,7 @@ def build_control_plane_ack(
         ),
     }
 
-    progress = payload.get("auto_base_progress")
-    if isinstance(progress, Mapping) and progress.get("phase") == "resolving_location":
-        request = progress.get("location_request")
-        if isinstance(request, Mapping):
-            request_id = request.get("request_id")
-            if isinstance(request_id, str) and 0 < len(request_id) <= 128:
-                from .auto_base_location import resolve_location
-                try:
-                    if any(isinstance(request.get(key), bool) for key in ("lat", "lon", "alt")):
-                        raise ValueError("Boolean LLH")
-                    point = [float(request[key]) for key in ("lat", "lon", "alt")]
-                    location = resolve_location(*point)
-                except (KeyError, TypeError, ValueError, OverflowError):
-                    location = {"state": "invalid_request"}
-                ack["auto_base_location"] = {"request_id": request_id, "location": location}
+    location = _auto_base_location_ack(payload.get("auto_base_progress"))
+    if location is not None:
+        ack["auto_base_location"] = location
     return ack

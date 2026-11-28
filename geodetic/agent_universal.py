@@ -1896,7 +1896,49 @@ def _status_safe_config(value):
     if isinstance(value, list):
         return [_status_safe_config(item) for item in value]
     return value
-    
+
+
+def _gga_ellipsoid_position(parts, lat, lon):
+    # Prefer true ellipsoidal height from UBX-NAV-HPPOSLLH when available.
+    hpp = globals().get('LAST_HPPOSLLH_COORD')
+    hpp_ts = float(globals().get('LAST_HPPOSLLH_TS') or 0.0)
+    if hpp and isinstance(hpp, tuple) and len(hpp) >= 3 and (time.time() - hpp_ts) <= 2.5:
+        lat_hpp, lon_hpp, h_hpp = hpp[:3]
+        is_close = (
+            lat_hpp is not None and lon_hpp is not None and h_hpp is not None
+            and abs(float(lat_hpp) - float(lat)) <= 0.0002
+            and abs(float(lon_hpp) - float(lon)) <= 0.0002
+        )
+        if is_close:
+            lat, lon = float(lat_hpp), float(lon_hpp)
+        return lat, lon, float(h_hpp)
+
+    # GGA fields provide orthometric height H and geoid separation N; h = H + N.
+    alt_msl = float(parts[9])
+    geoid_sep = float(parts[11]) if len(parts) > 11 and parts[11] not in (None, "") else 0.0
+    return lat, lon, alt_msl + geoid_sep
+
+
+def _parse_gga_position(parts):
+    lat, lon, alt_ellipsoid = None, None, None
+    if not (parts[2] and parts[4] and parts[9]):
+        return lat, lon, alt_ellipsoid
+    try:
+        # Convert NMEA DDMM.MMMMM to Decimal Degrees DD.DDDDDD.
+        raw_lat = float(parts[2])
+        lat = int(raw_lat / 100) + (raw_lat % 100) / 60.0
+        if parts[3] == 'S':
+            lat = -lat
+        raw_lon = float(parts[4])
+        lon = int(raw_lon / 100) + (raw_lon % 100) / 60.0
+        if parts[5] == 'W':
+            lon = -lon
+        lat, lon, alt_ellipsoid = _gga_ellipsoid_position(parts, lat, lon)
+    except ValueError:
+        pass
+    return lat, lon, alt_ellipsoid
+
+
 def parse_gga_data(gga_sentence: str) -> tuple:
     """
     Parse NMEA GGA sentence để lấy Fix Quality và Tọa độ (Lat, Lon, Alt)
@@ -1918,45 +1960,7 @@ def parse_gga_data(gga_sentence: str) -> tuple:
         status_map = {1: "GPS_FIX", 2: "DGPS", 4: "RTK_FIXED", 5: "RTK_FLOAT"}
         status = status_map.get(fix_quality, "NO_FIX")
 
-        lat, lon, alt_ellipsoid = None, None, None
-        try:
-            if parts[2] and parts[4] and parts[9]:
-                # Convert NMEA DDMM.MMMMM to Decimal Degrees DD.DDDDDD
-                raw_lat = float(parts[2])
-                lat = int(raw_lat / 100) + (raw_lat % 100) / 60.0
-                if parts[3] == 'S': lat = -lat
-
-                raw_lon = float(parts[4])
-                lon = int(raw_lon / 100) + (raw_lon % 100) / 60.0
-                if parts[5] == 'W': lon = -lon
-
-                # Prefer true ellipsoidal height from UBX-NAV-HPPOSLLH when available.
-                hpp = globals().get('LAST_HPPOSLLH_COORD')
-                hpp_ts = float(globals().get('LAST_HPPOSLLH_TS') or 0.0)
-                if hpp and isinstance(hpp, tuple) and len(hpp) >= 3 and (time.time() - hpp_ts) <= 2.5:
-                    lat_hpp, lon_hpp, h_hpp = hpp[:3]
-                    # Use HPPOSLLH full LLH if close enough to current GGA position.
-                    if (
-                        lat_hpp is not None and lon_hpp is not None and h_hpp is not None
-                        and abs(float(lat_hpp) - float(lat)) <= 0.0002
-                        and abs(float(lon_hpp) - float(lon)) <= 0.0002
-                    ):
-                        lat = float(lat_hpp)
-                        lon = float(lon_hpp)
-                        alt_ellipsoid = float(h_hpp)
-                    else:
-                        alt_ellipsoid = float(h_hpp)
-                else:
-                    # Fallback from GGA fields:
-                    # - parts[9]: orthometric height H (MSL)
-                    # - parts[11]: geoid separation N
-                    # Ellipsoidal height h = H + N
-                    alt_msl = float(parts[9])
-                    geoid_sep = float(parts[11]) if len(parts) > 11 and parts[11] not in (None, "") else 0.0
-                    alt_ellipsoid = alt_msl + geoid_sep
-        except ValueError:
-            pass
-
+        lat, lon, alt_ellipsoid = _parse_gga_position(parts)
         return (status, lat, lon, alt_ellipsoid)
     except Exception:
         return ("NO_FIX", None, None, None)
@@ -3450,6 +3454,38 @@ class NMEAPublisher(threading.Thread):
             if self.queue in nmea_subscribers:
                 nmea_subscribers.remove(self.queue)
 
+    def _publish_nmea_to_mqtt(self, topic, data_chunk, should_forward):
+        if not (self.mqtt_client and self.mqtt_client.is_connected() and should_forward):
+            return False
+        try:
+            result = self.mqtt_client.publish(topic, data_chunk, qos=0)
+            if result.rc == mqtt.MQTT_ERR_SUCCESS:
+                _telemetry_inc("queue", "nmea_mqtt_published")
+                return True
+            _telemetry_inc("queue", "nmea_mqtt_publish_failures")
+            logging.warning(f"Failed to publish NMEA to MQTT: rc={result.rc}")
+        except Exception as error:
+            _telemetry_inc("queue", "nmea_mqtt_publish_failures")
+            logging.warning(f"Failed to publish NMEA to MQTT: {error}")
+        return False
+
+    def _forward_nmea_to_websocket(self, data_chunk, mqtt_delivered, should_forward):
+        if (mqtt_delivered or not active_websocket_connection or not self.loop
+                or self.loop.is_closed() or not should_forward):
+            return
+        try:
+            ws_message = {
+                "type": "nmea_update",
+                "payload": data_chunk.decode('ascii', errors='ignore')
+            }
+            asyncio.run_coroutine_threadsafe(
+                active_websocket_connection.send(json.dumps(ws_message)),
+                self.loop
+            )
+            _telemetry_inc("queue", "nmea_ws_forwarded")
+        except Exception as error:
+            logging.debug(f"Failed to send NMEA over websocket: {error}")
+
     def run(self):
         logging.info("NMEA Publisher thread started.")
         topic = f"pi/devices/{self.serial_number}/raw_data"
@@ -3464,43 +3500,12 @@ class NMEAPublisher(threading.Thread):
                 should_forward = _should_forward_nmea_to_backend(data_chunk)
                 if not should_forward:
                     _telemetry_inc("queue", "nmea_filtered")
-                mqtt_delivered = False
-                if self.mqtt_client and self.mqtt_client.is_connected() and should_forward:
-                    try:
-                        result = self.mqtt_client.publish(topic, data_chunk, qos=0)
-                        if result.rc == mqtt.MQTT_ERR_SUCCESS:
-                            mqtt_delivered = True
-                            _telemetry_inc("queue", "nmea_mqtt_published")
-                        else:
-                            _telemetry_inc("queue", "nmea_mqtt_publish_failures")
-                            logging.warning(f"Failed to publish NMEA to MQTT: rc={result.rc}")
-                    except Exception as e:
-                        _telemetry_inc("queue", "nmea_mqtt_publish_failures")
-                        logging.warning(f"Failed to publish NMEA to MQTT: {e}")
-
                 # Raw telemetry uses one transport at a time. MQTT is the
                 # primary path; WebSocket is a fallback when MQTT cannot
                 # accept the packet, avoiding duplicate hot-path work in the
                 # backend while preserving delivery during broker outages.
-                if (
-                    not mqtt_delivered
-                    and active_websocket_connection
-                    and self.loop
-                    and not self.loop.is_closed()
-                    and should_forward
-                ):
-                    try:
-                        ws_message = {
-                            "type": "nmea_update",
-                            "payload": data_chunk.decode('ascii', errors='ignore')
-                        }
-                        asyncio.run_coroutine_threadsafe(
-                            active_websocket_connection.send(json.dumps(ws_message)),
-                            self.loop
-                        )
-                        _telemetry_inc("queue", "nmea_ws_forwarded")
-                    except Exception as e:
-                        logging.debug(f"Failed to send NMEA over websocket: {e}")
+                mqtt_delivered = self._publish_nmea_to_mqtt(topic, data_chunk, should_forward)
+                self._forward_nmea_to_websocket(data_chunk, mqtt_delivered, should_forward)
 
             except Empty:
                 continue
@@ -5071,6 +5076,20 @@ async def _verify_unicore_configuration(agent, reader, payload, command_id):
     details = {'kind':'Unicorecomm', 'fixed':{'expected': {'mode': 'Fixed', 'self_position': dict(zip(('lat', 'lon', 'alt'), wanted_position))}},
                    'logs':[], 'expected_logs':expected_logs, 'compare_ports':[payload.get('port')]}
     result = {'command_id':command_id, 'groups':groups, 'details':details}
+
+    await _verify_unicore_fixed_position(reader, payload, wanted_position, groups, details, result)
+    await _verify_unicore_output_logs(reader, payload, expected_logs, groups, details, result)
+    result['state'] = ('unread' if any(group['unread'] for group in groups.values())
+                       else 'mismatch' if any(group['mismatched'] for group in groups.values()) else 'match')
+    agent.gnss_verification = result
+    agent.gnss_verification_at = time.monotonic()
+    logging.log(logging.INFO if result['state'] == 'match' else logging.WARNING,
+                "[GNSS][VERIFY] Unicorecomm command_id=%s state=%s groups=%s mode_error=%s output_error=%s",
+                command_id, result['state'], groups, result.get('mode_error', ''), result.get('output_error', ''))
+    return result
+
+
+async def _verify_unicore_fixed_position(reader, payload, wanted_position, groups, details, result):
     try:
         _, mode = _base_unicore_fields(await reader.query_base(b'\r\nMODE\r\n', b'#MODE'))
         mode = mode.upper()
@@ -5097,6 +5116,9 @@ async def _verify_unicore_configuration(agent, reader, payload, command_id):
     except Exception as error:
         groups['fixed']['unread'] = 1
         result['mode_error'] = str(error)[:200]
+
+
+async def _verify_unicore_output_logs(reader, payload, expected_logs, groups, details, result):
     log_packet = b''
     try:
         log_packet = await reader.query_base(b'\r\nUNILOGLIST\r\n', UNICORE_LOG_LIST_KEY)
@@ -5120,14 +5142,6 @@ async def _verify_unicore_configuration(agent, reader, payload, command_id):
         result['note'] = 'Chưa đọc đủ danh sách bản tin và cổng đầu ra từ UM.'
         logging.warning("[GNSS][VERIFY][UNILOGLIST] %s: %s; response=%r",
                         type(error).__name__, result['output_error'], log_packet[:512])
-    result['state'] = ('unread' if any(group['unread'] for group in groups.values())
-                       else 'mismatch' if any(group['mismatched'] for group in groups.values()) else 'match')
-    agent.gnss_verification = result
-    agent.gnss_verification_at = time.monotonic()
-    logging.log(logging.INFO if result['state'] == 'match' else logging.WARNING,
-                "[GNSS][VERIFY] Unicorecomm command_id=%s state=%s groups=%s mode_error=%s output_error=%s",
-                command_id, result['state'], groups, result.get('mode_error', ''), result.get('output_error', ''))
-    return result
 
 
 def _ublox_readback_jobs(payload, records, result):

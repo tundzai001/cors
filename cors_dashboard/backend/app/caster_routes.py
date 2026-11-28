@@ -451,6 +451,49 @@ async def delete_admin_caster_source(
     return {"status": "ok", "host": target_host, "mountpoint": req.mountpoint, "identifier": req.identifier}
 
 
+async def _create_caster_blocklist_entries(auth_db, username: str, mountpoints, blocked_by: str, reason: str) -> int:
+    blocks_created = 0
+    blocked_at = int(time.time())
+    for mountpoint_value in mountpoints or [None]:
+        mountpoint = mountpoint_value.strip() if mountpoint_value else None
+        query = select(models.RoverBlocklist).where(models.RoverBlocklist.username == username)
+        if mountpoint:
+            query = query.where(models.RoverBlocklist.mountpoint == mountpoint)
+        else:
+            query = query.where(models.RoverBlocklist.mountpoint.is_(None))
+        existing = await auth_db.execute(query)
+        if existing.scalars().first():
+            continue
+        auth_db.add(models.RoverBlocklist(
+            username=username,
+            mountpoint=mountpoint,
+            blocked_at=blocked_at,
+            blocked_by=blocked_by,
+            reason=reason,
+        ))
+        blocks_created += 1
+    if blocks_created:
+        await auth_db.commit()
+    return blocks_created
+
+
+async def _block_caster_user_on_hosts(username: str, blocked_by: str, reason: str) -> int:
+    hosts, _ = _read_caster_config_from_env()
+    target_hosts = hosts if hosts else [str(settings.CASTER_HOST or "localhost")]
+    port = int(settings.CASTER_PORT or 2101)
+    affected = 0
+    for host in target_hosts:
+        try:
+            from app.caster_client import CasterClient
+            caster = CasterClient(host, port)
+            if await caster.block_user(identifier=blocked_by, username=username, reason=reason):
+                affected += 1
+            logger.info(f"[CASTER MGMT] Blocked user '{username}' on caster {host}")
+        except Exception as error:
+            logger.warning(f"[CASTER MGMT] Failed to block user on caster {host}: {error}")
+    return affected
+
+
 @router.post("/api/caster/block-user", responses={403: {"description": "Forbidden"}, 404: {"description": "Not Found"}})
 async def block_caster_user(
     req: schemas.BlockRoverRequest,
@@ -465,8 +508,6 @@ async def block_caster_user(
     3. Cập nhật RoverAccount.is_active = False (nếu user có trong DB)
     """
     username = req.username.strip()
-
-    # Permission check if rover exists in DB
     rover = await crud.get_rover_by_username(auth_db, username)
     if not rover and current_user.role != auth.Role.ADMIN:
         raise HTTPException(status_code=404, detail="Không tìm thấy Rover")
@@ -475,57 +516,13 @@ async def block_caster_user(
         if not has_perm:
             raise HTTPException(status_code=403, detail="Bạn không có quyền quản lý Rover này.")
 
-    username = req.username.strip()
-    target_mps = req.mountpoints if req.mountpoints else [None]
-    now = int(time.time())
-
-    blocks_created = 0
-    for mp in target_mps:
-        mountpoint = mp.strip() if mp else None
-
-        # Check duplicate
-        existing_block_q = select(models.RoverBlocklist).where(models.RoverBlocklist.username == username)
-        if mountpoint:
-            existing_block_q = existing_block_q.where(models.RoverBlocklist.mountpoint == mountpoint)
-        else:
-            existing_block_q = existing_block_q.where(models.RoverBlocklist.mountpoint.is_(None))
-
-        existing_block_rs = await auth_db.execute(existing_block_q)
-        if existing_block_rs.scalars().first():
-            continue
-
-        new_block = models.RoverBlocklist(
-            username=username,
-            mountpoint=mountpoint,
-            blocked_at=now,
-            blocked_by=current_user.username,
-            reason=req.reason or "Blocked by admin",
-        )
-        auth_db.add(new_block)
-        blocks_created += 1
-
-    if blocks_created > 0:
-        await auth_db.commit()
-
-    # 3. Gọi các caster TCP để xóa user (kick ngay lập tức trên tất cả server)
-    hosts, _ = _read_caster_config_from_env()
-    target_hosts = hosts if hosts else [str(settings.CASTER_HOST or "localhost")]
-    port = int(settings.CASTER_PORT or 2101)
-
-    deleted_count_caster = 0
-    for host in target_hosts:
-        try:
-            from app.caster_client import CasterClient
-            caster = CasterClient(host, port)
-            ok = await caster.block_user(
-                identifier=current_user.username,
-                username=username,
-                reason=req.reason or "Blocked by admin",
-            )
-            if ok: deleted_count_caster += 1
-            logger.info(f"[CASTER MGMT] Blocked user '{username}' on caster {host}")
-        except Exception as e:
-            logger.warning(f"[CASTER MGMT] Failed to block user on caster {host}: {e}")
+    reason = req.reason or "Blocked by admin"
+    blocks_created = await _create_caster_blocklist_entries(
+        auth_db, username, req.mountpoints, current_user.username, reason
+    )
+    deleted_count_caster = await _block_caster_user_on_hosts(
+        username, current_user.username, reason
+    )
 
     return {
         "status": "blocked",

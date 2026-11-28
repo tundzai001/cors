@@ -595,33 +595,28 @@ class CasterClient:
             if SOURCETABLE_OK_RESPONSE not in response:
                 logger.warning(f"Invalid sourcetable response from {self.host}:{self.port}")
                 return None
-
-            sources = []
-            for line in response.splitlines():
-                line = line.strip()
-                if "STR;" not in line:
-                    continue
-                
-                # Skip end marker
-                if "ENDSOURCETABLE" in line:
-                    break
-                
-                # Clean up trash bytes before STR; if any
-                if not line.startswith("STR;"):
-                    idx = line.find("STR;")
-                    if idx >= 0:
-                        line = line[idx:]
-                    else:
-                        continue
-                try:
-                    record = self._parse_source_record(line)
-                    if record:
-                        sources.append(record)
-                except Exception as e:
-                    logger.warning(f"Failed to parse source line: {line[:80]}, error: {e}")
-                    continue
-
-            return sources
+            return self._parse_sourcetable(response)
         except Exception as e:
             logger.exception(f"Error fetching sources from {self.host}:{self.port}: {e}")
             return None
+
+    def _parse_sourcetable(self, response: str) -> List[dict]:
+        sources = []
+        for line in response.splitlines():
+            line = line.strip()
+            if "STR;" not in line:
+                continue
+            if "ENDSOURCETABLE" in line:
+                break
+            if not line.startswith("STR;"):
+                idx = line.find("STR;")
+                if idx < 0:
+                    continue
+                line = line[idx:]
+            try:
+                record = self._parse_source_record(line)
+                if record:
+                    sources.append(record)
+            except Exception as error:
+                logger.warning(f"Failed to parse source line: {line[:80]}, error: {error}")
+        return sources

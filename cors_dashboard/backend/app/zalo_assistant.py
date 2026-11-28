@@ -488,22 +488,36 @@ class ZaloAssistantRepository:
                 item.update({
                     "dashboard_username": str(user.username) if user else None,
                     "dashboard_role": str(user.role) if user else None,
-                    "permissions": [] if mode == "cors_only" else sorted(auth.get_user_permissions(user)) if user else (
-                        sorted(auth.ROLE_PERMISSIONS[auth.Role.ADMIN])
-                        if binding.binding_type == "group_admin"
-                        else [] if binding.binding_type == "cors_public" else [auth.Permission.VIEW_DEVICES]
-                    ),
-                    "notifications": {
-                        "cors_notify_changes": bool((pref.scopes or {}).get("cors_notify_changes", False)),
-                        "enabled": bool(pref.enabled),
-                        "min_severity": str(pref.min_severity),
-                        "quiet_start": pref.quiet_start,
-                        "quiet_end": pref.quiet_end,
-                        "critical_override": bool(pref.critical_override),
-                    } if pref else None,
+                    "permissions": self._binding_permissions(binding, user, mode),
+                    "notifications": self._notification_preferences_dict(pref),
                 })
                 items.append(item)
             return items
+
+    @staticmethod
+    def _binding_permissions(binding, user, mode: str) -> list[str]:
+        if mode == "cors_only":
+            return []
+        if user:
+            return sorted(auth.get_user_permissions(user))
+        if binding.binding_type == "group_admin":
+            return sorted(auth.ROLE_PERMISSIONS[auth.Role.ADMIN])
+        if binding.binding_type == "cors_public":
+            return []
+        return [auth.Permission.VIEW_DEVICES]
+
+    @staticmethod
+    def _notification_preferences_dict(pref) -> dict[str, Any] | None:
+        if not pref:
+            return None
+        return {
+            "cors_notify_changes": bool((pref.scopes or {}).get("cors_notify_changes", False)),
+            "enabled": bool(pref.enabled),
+            "min_severity": str(pref.min_severity),
+            "quiet_start": pref.quiet_start,
+            "quiet_end": pref.quiet_end,
+            "critical_override": bool(pref.critical_override),
+        }
 
     async def revoke_binding(
         self, binding_id: int, user_id: int, is_admin: bool
