@@ -791,6 +791,88 @@
                 .map(satellite => window.GnssSatelliteOverlay?.getRtcmSatelliteCode(satellite) || satellite.id);
         }
 
+        getStationStatus(stationItem) {
+            const isOnline = stationItem.status === 'online' || stationItem.status === 'streaming';
+            const isSleep = stationItem.status === 'sleep';
+            return {
+                isOnline,
+                isSleep,
+                isAvailable: isOnline || isSleep,
+                label: isOnline ? 'Trực tuyến' : isSleep ? 'Chế độ chờ (Sleep)' : 'Mất kết nối',
+                color: isOnline ? '#10b981' : isSleep ? '#f59e0b' : '#ef4444'
+            };
+        }
+
+        buildStationSatelliteChips(trackedSats) {
+            return trackedSats.slice(0, 24).map(({ satItem, liveRtcmSat }) => {
+                const source = `RTCM ${liveRtcmSat.messageType || ''} · C/N₀ ${liveRtcmSat.cnr || liveRtcmSat.snr || '--'} dB-Hz`;
+                return `<span class="tracked-sat-chip ${satItem.constellationKey}" data-sat-key="${satItem.key}" title="${satItem.name} · ${source}">
+                    ${satItem.code} <small>RTCM</small>
+                </span>`;
+            }).join('');
+        }
+
+        buildStationSignalSummary(tracking, status, unmatchedCodes, satChipsHtml) {
+            const totalTracked = tracking.trackedSats.length;
+            const unmatchedCount = Math.max(0, tracking.liveRtcmSatellites.length - totalTracked);
+            const unmatchedDetails = unmatchedCodes.length
+                ? `: ${unmatchedCodes.join(', ')}${unmatchedCount > 8 ? ', …' : ''}`
+                : '';
+            const liveSummary = tracking.hasLiveRtcm
+                ? `(${unmatchedCount} chưa ghép quỹ đạo${unmatchedDetails})`
+                : '(đang chờ RTCM)';
+            const trackedSummary = status.isAvailable
+                ? `${totalTracked} khớp quỹ đạo / ${tracking.liveRtcmSatellites.length} RTCM`
+                : '0 Vệ tinh';
+            const constellationCounts = Object.fromEntries(Object.entries(tracking.constCounts).map(([name, count]) => [
+                name,
+                status.isAvailable ? count : 0
+            ]));
+            const chipSection = status.isAvailable && totalTracked > 0
+                ? `<div class="tracked-sats-wrapper"><div class="tracked-sats-header"><span>Vệ tinh RTCM đang nhận (bấm để bám quỹ đạo):</span><span>${totalTracked} Sats</span></div><div class="tracked-sats-chips">${satChipsHtml}</div></div>`
+                : '';
+            const waitingMessage = status.isAvailable && !totalTracked
+                ? `<div class="small text-muted mt-2">${tracking.hasLiveRtcm ? 'Có RTCM mới nhưng chưa khớp PRN với quỹ đạo đã nạp.' : 'Đang chờ agent gửi RTCM mới.'}</div>`
+                : '';
+            return {
+                trackedSummary,
+                liveSummary,
+                constellationCounts,
+                chipSection,
+                waitingMessage,
+                color: status.isAvailable ? '#10b981' : '#ef4444'
+            };
+        }
+
+        renderStationCardHtml(device, coords, status, signal, offlineNoticeHtml) {
+            const counts = signal.constellationCounts;
+            return `
+                <div class="card-top-row">
+                    <div class="card-title" style="color:#00f2ff"><span>📡</span><span><b>${device.name || device.serial || 'Base Station'}</b></span></div>
+                    <button type="button" class="card-close-btn" id="globe-card-close" aria-label="Đóng">✕</button>
+                </div>
+                ${offlineNoticeHtml}
+                <div class="stat-grid">
+                    <div class="stat-box"><span class="stat-label">Mã / Serial</span><span class="stat-value">${device.serial || '--'}</span></div>
+                    <div class="stat-box"><span class="stat-label">Trạng thái</span><span class="stat-value" style="color:${status.color}">${status.label}</span></div>
+                    <div class="stat-box"><span class="stat-label">Tọa độ Lat/Lon</span><span class="stat-value">${coords.lat.toFixed(4)}°, ${coords.lon.toFixed(4)}°</span></div>
+                    <div class="stat-box"><span class="stat-label">Vệ tinh agent giải mã RTCM</span><span class="stat-value" style="color:${signal.color}">${signal.trackedSummary} <span style="font-size:0.65rem;color:#94a3b8">${signal.liveSummary}</span></span></div>
+                </div>
+                <div style="font-size:0.7rem; color:#94a3b8; font-weight:600; margin-bottom:4px; text-transform:uppercase;">Phân bố chòm sao thu nhận:</div>
+                <div class="sat-constellation-row">
+                    <span class="sat-pill gps">GPS: <b>${counts.gps}</b></span><span class="sat-pill gal">GAL: <b>${counts.galileo}</b></span><span class="sat-pill bds">BDS: <b>${counts.beidou}</b></span><span class="sat-pill glo">GLO: <b>${counts.glonass}</b></span><span class="sat-pill qzss">QZSS: <b>${counts.qzss}</b></span>
+                </div>
+                ${signal.chipSection}
+                ${signal.waitingMessage}
+                <div class="card-footer-actions">
+                    <button type="button" class="card-action-btn" id="globe-focus-station-btn"><span>🎯</span> <span>Tập trung trạm</span></button>
+                    <button type="button" class="card-action-btn" id="globe-reset-view-btn"><span>📍</span> <span>Tâm Việt Nam</span></button>
+                </div>
+                <div style="font-size:0.62rem; color:#64748b; text-align:center; margin-top:8px; border-top:1px dashed rgba(255,255,255,0.1); padding-top:4px;">
+                    Nguồn: <a href="https://celestrak.org/NORAD/elements/" target="_blank" rel="noopener noreferrer" style="color:#38bdf8;text-decoration:none;"><b>CelesTrak (NORAD GP)</b> <i class="bi bi-box-arrow-up-right" style="font-size:0.58rem;"></i></a> • <b>SGP4 1Hz</b> • <b>RTCM 1074-1127</b>
+                </div>`;
+        }
+
         openStationCard(stationItem, coords) {
             if (!this.detailCardEl) return;
             this.restoreSelectedStationCard = false;
@@ -798,10 +880,7 @@
             this.stationCard = { item: stationItem, coords };
             this.globe.isTrackingSatellite = false;
             const dev = stationItem.device || {};
-            const isOnline = stationItem.status === 'online' || stationItem.status === 'streaming';
-            const isSleep = stationItem.status === 'sleep';
-            const statusLabel = isOnline ? 'Trực tuyến' : isSleep ? 'Chế độ chờ (Sleep)' : 'Mất kết nối';
-            const statusColor = isOnline ? '#10b981' : isSleep ? '#f59e0b' : '#ef4444';
+            const status = this.getStationStatus(stationItem);
 
             // Clear satellite orbit & previous tracking rays
             disposeGroup(this.singleOrbitGroup);
@@ -813,94 +892,18 @@
             const now = new Date();
             const gmst = satLib.gstime(now);
             const tracking = this.getStationTrackingData(dev, coords, now, gmst);
-            const { stationPosition, trackedSats, constCounts, liveRtcmSatellites, hasLiveRtcm, matchedRtcmKeys } = tracking;
+            const { stationPosition, trackedSats, liveRtcmSatellites, matchedRtcmKeys } = tracking;
 
+            this.drawStationTrackingRays(trackedSats, stationPosition, THREE, status.isAvailable);
 
-            this.drawStationTrackingRays(trackedSats, stationPosition, THREE, isOnline || isSleep);
-
-            const totalTracked = trackedSats.length;
             const unmatchedRtcmCodes = this.findUnmatchedRtcmCodes(liveRtcmSatellites, matchedRtcmKeys);
-
-            // Generate satellite chips HTML (clickable to view satellite orbit!)
-            const satChipsHtml = trackedSats.slice(0, 24).map(({ satItem, elDeg, liveRtcmSat }) => {
-                const cKey = satItem.constellationKey;
-                const source = `RTCM ${liveRtcmSat.messageType || ''} · C/N₀ ${liveRtcmSat.cnr || liveRtcmSat.snr || '--'} dB-Hz`;
-                return `<span class="tracked-sat-chip ${cKey}" data-sat-key="${satItem.key}" title="${satItem.name} · ${source}">
-                    ${satItem.code} <small>RTCM</small>
-                </span>`;
-            }).join('');
-
-            const offlineNoticeHtml = (!isOnline && !isSleep) ? `
+            const satChipsHtml = this.buildStationSatelliteChips(trackedSats);
+            const signal = this.buildStationSignalSummary(tracking, status, unmatchedRtcmCodes, satChipsHtml);
+            const offlineNoticeHtml = status.isAvailable ? '' : `
                 <div style="font-size:0.75rem; background:rgba(239,68,68,0.15); border:1px solid #ef4444; color:#fca5a5; border-radius:6px; padding:6px 8px; margin: 8px 0; text-align:center;">
                     ⚠️ Trạm mất kết nối (Offline) — Ngưng phát tia thu nhận tín hiệu
-                </div>
-            ` : '';
-
-            this.detailCardEl.innerHTML = `
-                <div class="card-top-row">
-                    <div class="card-title" style="color:#00f2ff">
-                        <span>📡</span>
-                        <span><b>${dev.name || dev.serial || 'Base Station'}</b></span>
-                    </div>
-                    <button type="button" class="card-close-btn" id="globe-card-close" aria-label="Đóng">✕</button>
-                </div>
-                ${offlineNoticeHtml}
-                <div class="stat-grid">
-                    <div class="stat-box">
-                        <span class="stat-label">Mã / Serial</span>
-                        <span class="stat-value">${dev.serial || '--'}</span>
-                    </div>
-                    <div class="stat-box">
-                        <span class="stat-label">Trạng thái</span>
-                        <span class="stat-value" style="color:${statusColor}">${statusLabel}</span>
-                    </div>
-                    <div class="stat-box">
-                        <span class="stat-label">Tọa độ Lat/Lon</span>
-                        <span class="stat-value">${coords.lat.toFixed(4)}°, ${coords.lon.toFixed(4)}°</span>
-                    </div>
-                    <div class="stat-box">
-                        <span class="stat-label">Vệ tinh agent giải mã RTCM</span>
-                    <span class="stat-value" style="color:${isOnline || isSleep ? '#10b981' : '#ef4444'}">${(isOnline || isSleep) ? `${totalTracked} khớp quỹ đạo / ${liveRtcmSatellites.length} RTCM` : '0 Vệ tinh'} <span style="font-size:0.65rem;color:#94a3b8">${hasLiveRtcm ? `(${Math.max(0, liveRtcmSatellites.length - totalTracked)} chưa ghép quỹ đạo${unmatchedRtcmCodes.length ? `: ${unmatchedRtcmCodes.join(', ')}${liveRtcmSatellites.length - totalTracked > 8 ? ', …' : ''}` : ''})` : '(đang chờ RTCM)'}</span></span>
-                    </div>
-                </div>
-                <div style="font-size:0.7rem; color:#94a3b8; font-weight:600; margin-bottom:4px; text-transform:uppercase;">
-                    Phân bố chòm sao thu nhận:
-                </div>
-                <div class="sat-constellation-row">
-                    <span class="sat-pill gps">GPS: <b>${(isOnline || isSleep) ? constCounts.gps : 0}</b></span>
-                    <span class="sat-pill gal">GAL: <b>${(isOnline || isSleep) ? constCounts.galileo : 0}</b></span>
-                    <span class="sat-pill bds">BDS: <b>${(isOnline || isSleep) ? constCounts.beidou : 0}</b></span>
-                    <span class="sat-pill glo">GLO: <b>${(isOnline || isSleep) ? constCounts.glonass : 0}</b></span>
-                    <span class="sat-pill qzss">QZSS: <b>${(isOnline || isSleep) ? constCounts.qzss : 0}</b></span>
-                </div>
-                ${(isOnline || isSleep) && trackedSats.length > 0 ? `
-                    <div class="tracked-sats-wrapper">
-                        <div class="tracked-sats-header">
-                            <span>Vệ tinh RTCM đang nhận (bấm để bám quỹ đạo):</span>
-                            <span>${trackedSats.length} Sats</span>
-                        </div>
-                        <div class="tracked-sats-chips">
-                            ${satChipsHtml}
-                        </div>
-                    </div>
-                ` : ''}
-                ${(isOnline || isSleep) && !trackedSats.length ? `
-                    <div class="small text-muted mt-2">
-                        ${hasLiveRtcm ? 'Có RTCM mới nhưng chưa khớp PRN với quỹ đạo đã nạp.' : 'Đang chờ agent gửi RTCM mới.'}
-                    </div>
-                ` : ''}
-                <div class="card-footer-actions">
-                    <button type="button" class="card-action-btn" id="globe-focus-station-btn">
-                        <span>🎯</span> <span>Tập trung trạm</span>
-                    </button>
-                    <button type="button" class="card-action-btn" id="globe-reset-view-btn">
-                        <span>📍</span> <span>Tâm Việt Nam</span>
-                    </button>
-                </div>
-                <div style="font-size:0.62rem; color:#64748b; text-align:center; margin-top:8px; border-top:1px dashed rgba(255,255,255,0.1); padding-top:4px;">
-                    Nguồn: <a href="https://celestrak.org/NORAD/elements/" target="_blank" rel="noopener noreferrer" style="color:#38bdf8;text-decoration:none;"><b>CelesTrak (NORAD GP)</b> <i class="bi bi-box-arrow-up-right" style="font-size:0.58rem;"></i></a> • <b>SGP4 1Hz</b> • <b>RTCM 1074-1127</b>
-                </div>
-            `;
+                </div>`;
+            this.detailCardEl.innerHTML = this.renderStationCardHtml(dev, coords, status, signal, offlineNoticeHtml);
 
             this.stationCardRtcmSignature = liveRtcmSatellites.map(sat => sat.id || `${sat.system}:${sat.prn}`).sort((a, b) => String(a).localeCompare(String(b))).join('|');
             this.detailCardEl.style.display = 'block';

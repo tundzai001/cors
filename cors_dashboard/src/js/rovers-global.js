@@ -77,65 +77,69 @@ document.addEventListener('DOMContentLoaded', async () => {
         || (hasRoverPageAccess() && currentUser?.can_create_rovers === true)
     );
 
-    // === 2. AUTH & PERMISSIONS CHECK ===
-    try {
-        const userRes = await apiFetchRaw('/api/auth/me', { headers: API_HEADERS });
-        if (!userRes.ok) {
-            if (userRes.status === 401 || userRes.status === 403) {
-                throw new Error("Unauthorized");
+    async function initializeRoverPageUser() {
+        // === 2. AUTH & PERMISSIONS CHECK ===
+        try {
+            const userRes = await apiFetchRaw('/api/auth/me', { headers: API_HEADERS });
+            if (!userRes.ok) {
+                if (userRes.status === 401 || userRes.status === 403) {
+                    throw new Error("Unauthorized");
+                }
+                throw new Error(`Server error: ${userRes.status}`);
             }
-            throw new Error(`Server error: ${userRes.status}`);
-        }
-        currentUser = await userRes.json();
+            currentUser = await userRes.json();
 
-        // Cập nhật UI Navbar
-        if(document.getElementById('user-info-name')) document.getElementById('user-info-name').textContent = currentUser.username;
-        if(document.getElementById('user-info-role')) document.getElementById('user-info-role').textContent = currentUser.role.toUpperCase();
-        if(document.getElementById('user-avatar-text')) document.getElementById('user-avatar-text').textContent = currentUser.username.charAt(0).toUpperCase();
+            // Cập nhật UI Navbar
+            if(document.getElementById('user-info-name')) document.getElementById('user-info-name').textContent = currentUser.username;
+            if(document.getElementById('user-info-role')) document.getElementById('user-info-role').textContent = currentUser.role.toUpperCase();
+            if(document.getElementById('user-avatar-text')) document.getElementById('user-avatar-text').textContent = currentUser.username.charAt(0).toUpperCase();
 
-        if (currentUser.permissions?.includes('manage:caster')) {
-            const casterRoverTab = document.getElementById('caster-rover-tab-li');
-            if (casterRoverTab) casterRoverTab.classList.remove('d-none');
-        }
+            if (currentUser.permissions?.includes('manage:caster')) {
+                const casterRoverTab = document.getElementById('caster-rover-tab-li');
+                if (casterRoverTab) casterRoverTab.classList.remove('d-none');
+            }
 
-        // Mountpoints tab is strictly admin-only.
-        if (String(currentUser.role || '').toLowerCase() === 'admin') {
-            const mountpointsTab = document.getElementById('tab-mountpoints-li');
-            if (mountpointsTab) mountpointsTab.classList.remove('d-none');
+            // Mountpoints tab is strictly admin-only.
+            if (String(currentUser.role || '').toLowerCase() === 'admin') {
+                const mountpointsTab = document.getElementById('tab-mountpoints-li');
+                if (mountpointsTab) mountpointsTab.classList.remove('d-none');
             
-            document.querySelectorAll('.admin-only-field').forEach(el => el.classList.remove('d-none'));
-        }
-
-        // Chỉ tài khoản có quyền tạo/sửa mới thấy các công cụ ghi dữ liệu.
-        if (!hasRoverEditAccess()) {
-            document.querySelectorAll('[data-bs-target="#createRoverModal"]').forEach(el => el.classList.add('d-none'));
-            const bulkToolbar = document.getElementById('rover-bulk-toolbar');
-            if (bulkToolbar) bulkToolbar.classList.add('d-none');
-            const bulkToolbarMobile = document.getElementById('rover-bulk-toolbar-mobile');
-            if (bulkToolbarMobile) bulkToolbarMobile.classList.add('d-none');
-        }
-
-        initData().catch(error => console.error('initData failed:', error));
-
-    } catch (e) {
-        console.error("Initialization error:", e);
-        if (e.message === "Unauthorized") {
-            if (typeof NavigationManager !== 'undefined') {
-                NavigationManager.forceLogout();
-            } else {
-                localStorage.removeItem('access_token');
-                sessionStorage.removeItem('access_token');
-                window.location.href = '/';
+                document.querySelectorAll('.admin-only-field').forEach(el => el.classList.remove('d-none'));
             }
-        } else {
-            // Hiển thị thông báo lỗi thay vì văng ra login nếu chỉ là lỗi mạng/server
-            if (typeof showToast === 'function') {
-                showToast("Lỗi kết nối hệ thống. Vui lòng tải lại trang.", "danger");
+
+            // Chỉ tài khoản có quyền tạo/sửa mới thấy các công cụ ghi dữ liệu.
+            if (!hasRoverEditAccess()) {
+                document.querySelectorAll('[data-bs-target="#createRoverModal"]').forEach(el => el.classList.add('d-none'));
+                const bulkToolbar = document.getElementById('rover-bulk-toolbar');
+                if (bulkToolbar) bulkToolbar.classList.add('d-none');
+                const bulkToolbarMobile = document.getElementById('rover-bulk-toolbar-mobile');
+                if (bulkToolbarMobile) bulkToolbarMobile.classList.add('d-none');
+            }
+
+            initData().catch(error => console.error('initData failed:', error));
+
+        } catch (e) {
+            console.error("Initialization error:", e);
+            if (e.message === "Unauthorized") {
+                if (typeof NavigationManager !== 'undefined') {
+                    NavigationManager.forceLogout();
+                } else {
+                    localStorage.removeItem('access_token');
+                    sessionStorage.removeItem('access_token');
+                    window.location.href = '/';
+                }
             } else {
-                window.CorsUI?.showToast?.('danger', 'Cannot initialize rover data. Reload the page.');
+                // Hiển thị thông báo lỗi thay vì văng ra login nếu chỉ là lỗi mạng/server
+                if (typeof showToast === 'function') {
+                    showToast("Lỗi kết nối hệ thống. Vui lòng tải lại trang.", "danger");
+                } else {
+                    window.CorsUI?.showToast?.('danger', 'Cannot initialize rover data. Reload the page.');
+                }
             }
         }
     }
+
+    await initializeRoverPageUser();
 
     function syncExpiryFields(prefix) {
         const custom = document.getElementById(`${prefix}-expiry`).value === 'custom';
@@ -160,14 +164,18 @@ document.addEventListener('DOMContentLoaded', async () => {
         return days;
     }
 
-    for (const prefix of ['new', 'edit']) {
-        document.getElementById(`${prefix}-expiry`).addEventListener('change', () => syncExpiryFields(prefix));
-        document.getElementById(`${prefix}-expiry-count`).addEventListener('input', event => event.target.setCustomValidity(''));
-        document.getElementById(`${prefix}-expiry-unit`).addEventListener('change', () => {
-            document.getElementById(`${prefix}-expiry-count`).setCustomValidity('');
-        });
-        syncExpiryFields(prefix);
+    function bindExpiryInputs() {
+        for (const prefix of ['new', 'edit']) {
+            document.getElementById(`${prefix}-expiry`).addEventListener('change', () => syncExpiryFields(prefix));
+            document.getElementById(`${prefix}-expiry-count`).addEventListener('input', event => event.target.setCustomValidity(''));
+            document.getElementById(`${prefix}-expiry-unit`).addEventListener('change', () => {
+                document.getElementById(`${prefix}-expiry-count`).setCustomValidity('');
+            });
+            syncExpiryFields(prefix);
+        }
     }
+
+    bindExpiryInputs();
 
     // === 3. DATA LOADING ===
     async function initData() {
@@ -650,71 +658,75 @@ document.addEventListener('DOMContentLoaded', async () => {
         blockModal.show();
     }
 
-    // Xử lý Select All
-    const selectAllMps = document.getElementById('selectAllMps');
-    if (selectAllMps) {
-        selectAllMps.addEventListener('change', (e) => {
-            const checked = e.target.checked;
-            document.querySelectorAll('.mp-checkbox').forEach(cb => {
-                cb.checked = checked;
+    function bindCasterBlockControls() {
+        // Xử lý Select All
+        const selectAllMps = document.getElementById('selectAllMps');
+        if (selectAllMps) {
+            selectAllMps.addEventListener('change', (e) => {
+                const checked = e.target.checked;
+                document.querySelectorAll('.mp-checkbox').forEach(cb => {
+                    cb.checked = checked;
+                });
+                const container = document.getElementById('mountpointSelector');
+                if (container) {
+                    container.style.opacity = checked ? "0.5" : "1";
+                    container.style.pointerEvents = checked ? "none" : "auto";
+                }
             });
-            const container = document.getElementById('mountpointSelector');
-            if (container) {
-                container.style.opacity = checked ? "0.5" : "1";
-                container.style.pointerEvents = checked ? "none" : "auto";
-            }
-        });
-    }
+        }
 
-    // Xác nhận chặn
-    const confirmBlockBtn = document.getElementById('confirmBlockBtn');
-    if (confirmBlockBtn) {
-        confirmBlockBtn.addEventListener('click', async () => {
-        const username = document.getElementById('blockModalUsername').value;
-        const reason = document.getElementById('blockReason').value;
-        const selectAllInput = document.getElementById('selectAllMps');
-        const selectAll = selectAllInput ? selectAllInput.checked : false;
+        // Xác nhận chặn
+        const confirmBlockBtn = document.getElementById('confirmBlockBtn');
+        if (confirmBlockBtn) {
+            confirmBlockBtn.addEventListener('click', async () => {
+            const username = document.getElementById('blockModalUsername').value;
+            const reason = document.getElementById('blockReason').value;
+            const selectAllInput = document.getElementById('selectAllMps');
+            const selectAll = selectAllInput ? selectAllInput.checked : false;
         
-        let targetMps = [];
-        if (!selectAll) {
-            document.querySelectorAll('.mp-checkbox:checked').forEach(cb => {
-                targetMps.push(cb.value);
-            });
-            if (targetMps.length === 0) {
-                showToast("Vui lòng chọn ít nhất 1 trạm hoặc tích 'Chặn toàn bộ'", "warning");
-                return;
+            let targetMps = [];
+            if (!selectAll) {
+                document.querySelectorAll('.mp-checkbox:checked').forEach(cb => {
+                    targetMps.push(cb.value);
+                });
+                if (targetMps.length === 0) {
+                    showToast("Vui lòng chọn ít nhất 1 trạm hoặc tích 'Chặn toàn bộ'", "warning");
+                    return;
+                }
             }
-        }
 
-        const btn = document.getElementById('confirmBlockBtn');
-        btn.disabled = true;
-        btn.innerHTML = '<span class="spinner-border spinner-border-sm"></span> Đang chặn...';
+            const btn = document.getElementById('confirmBlockBtn');
+            btn.disabled = true;
+            btn.innerHTML = '<span class="spinner-border spinner-border-sm"></span> Đang chặn...';
 
-        try {
-            const res = await apiFetchRaw('/api/caster/block-user', {
-                method: 'POST',
-                headers: API_HEADERS,
-                body: JSON.stringify({
-                    username: username,
-                    mountpoints: selectAll ? null : targetMps,
-                    reason: reason || 'Blocked by admin'
-                })
+            try {
+                const res = await apiFetchRaw('/api/caster/block-user', {
+                    method: 'POST',
+                    headers: API_HEADERS,
+                    body: JSON.stringify({
+                        username: username,
+                        mountpoints: selectAll ? null : targetMps,
+                        reason: reason || 'Blocked by admin'
+                    })
+                });
+
+                const data = await res.json();
+                if (!res.ok) throw new Error(data.detail || 'Chặn thất bại');
+
+                showToast(`🔒 ${data.message}`, 'success');
+                blockModal.hide();
+                await fetchCasterUsers(); // Reload table
+            } catch (err) {
+                showToast(err.message, 'danger');
+            } finally {
+                btn.disabled = false;
+                btn.innerHTML = '<i class="bi bi-shield-lock-fill me-1"></i>Xác nhận chặn';
+            }
             });
-
-            const data = await res.json();
-            if (!res.ok) throw new Error(data.detail || 'Chặn thất bại');
-
-            showToast(`🔒 ${data.message}`, 'success');
-            blockModal.hide();
-            await fetchCasterUsers(); // Reload table
-        } catch (err) {
-            showToast(err.message, 'danger');
-        } finally {
-            btn.disabled = false;
-            btn.innerHTML = '<i class="bi bi-shield-lock-fill me-1"></i>Xác nhận chặn';
         }
-        });
     }
+
+    bindCasterBlockControls();
 
     async function handleUnblockUser(e) {
         const username = e.currentTarget.dataset.username;
@@ -2659,95 +2671,100 @@ function createRoverRowElement(r) {
         new bootstrap.Modal(document.getElementById('editRoverModal')).show();
     }
 
-    // Xử lý Submit form Edit
-    const editForm = document.getElementById('edit-rover-form');
-    if (editForm) {
-        editForm.addEventListener('submit', async (e) => {
-            e.preventDefault();
+    function bindEditRoverForm() {
+        // Xử lý Submit form Edit
+        const editForm = document.getElementById('edit-rover-form');
+        if (editForm) {
+            editForm.addEventListener('submit', async (e) => {
+                e.preventDefault();
             
-            const roverId = document.getElementById('edit-rover-id').value;
-            const newPass = document.getElementById('edit-password').value;
-            const newExpiry = readExpiryDays('edit');
-            if (newExpiry === undefined) return;
+                const roverId = document.getElementById('edit-rover-id').value;
+                const newPass = document.getElementById('edit-password').value;
+                const newExpiry = readExpiryDays('edit');
+                if (newExpiry === undefined) return;
 
-            // --- LẤY DỮ LIỆU TỪ CHECKLIST & TEXT BOX ---
-            const checkedStations = document.querySelectorAll('.edit-station-check:checked');
-            let selectedSerials = Array.from(checkedStations).map(cb => cb.value);
+                // --- LẤY DỮ LIỆU TỪ CHECKLIST & TEXT BOX ---
+                const checkedStations = document.querySelectorAll('.edit-station-check:checked');
+                let selectedSerials = Array.from(checkedStations).map(cb => cb.value);
             
-            // finalMountpoints is now taken from the text box (which is updated by checklist and manual input)
-            const finalMountpoints = document.getElementById('edit-mountpoints').value.trim();
+                // finalMountpoints is now taken from the text box (which is updated by checklist and manual input)
+                const finalMountpoints = document.getElementById('edit-mountpoints').value.trim();
 
-            if (!finalMountpoints) {
-                showToast('Vui lòng chọn ít nhất một trạm phát hoặc nhập mountpoint!', 'danger');
-                return;
-            }
-
-            const payload = {
-                mountpoints: finalMountpoints,
-                selected_serials: selectedSerials, // 🔥 FIX: Gửi kèm danh sách serial trạm
-                show_position: document.getElementById('edit-show-position').checked,
-                target_casters: Array.from(document.querySelectorAll('.edit-caster-target-check:checked')).map(cb => cb.value),
-                rtcm_cycle_enabled: document.getElementById('edit-rtcm-cycle-enabled')?.checked || false,
-                rtcm_disconnect_interval_seconds: Number.parseInt(document.getElementById('edit-rtcm-disconnect-interval')?.value || 300),
-                rtcm_disconnect_duration_seconds: Number.parseInt(document.getElementById('edit-rtcm-disconnect-duration')?.value || 10),
-                is_shared_with_managers: document.getElementById('edit-is-shared')?.checked || false
-            };
-            if (String(currentUser?.role || '').toLowerCase() === 'admin') {
-                payload.auto_save_sessions = document.getElementById('edit-auto-save-sessions')?.checked !== false;
-                payload.auto_save_fixed_points = document.getElementById('edit-auto-save-fixed-points')?.checked !== false;
-            }
-            if (newPass) payload.password = newPass;
-            if (newExpiry !== null) payload.expiry_days = newExpiry;
-            const maxConn = document.getElementById('edit-max-connections')?.value;
-            if (maxConn) payload.max_connections = Number.parseInt(maxConn);
-
-            try {
-                const submitBtn = e.target.querySelector('button[type="submit"]');
-                submitBtn.disabled = true;
-                submitBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span>Đang lưu...';
-
-                // GỌI API THÔNG MINH (PUT)
-                const url = roverId == "0" 
-                    ? `/api/rovers/sync/by-username/${document.getElementById('edit-username').value}`
-                    : `/api/rovers/${roverId}`;
-                
-                const res = await apiFetchRaw(url, {
-                    method: 'PUT',
-                    headers: {
-                        'Content-Type': 'application/json',
-                        'Authorization': `Bearer ${localStorage.getItem('access_token') || sessionStorage.getItem('access_token')}`
-                    },
-                    body: JSON.stringify(payload)
-                });
-
-                if (!res.ok) {
-                    const err = await res.json();
-                    throw new Error(err.detail || 'Cập nhật thất bại');
+                if (!finalMountpoints) {
+                    showToast('Vui lòng chọn ít nhất một trạm phát hoặc nhập mountpoint!', 'danger');
+                    return;
                 }
 
-                const updatedRover = await res.json();
+                const payload = {
+                    mountpoints: finalMountpoints,
+                    selected_serials: selectedSerials, // 🔥 FIX: Gửi kèm danh sách serial trạm
+                    show_position: document.getElementById('edit-show-position').checked,
+                    target_casters: Array.from(document.querySelectorAll('.edit-caster-target-check:checked')).map(cb => cb.value),
+                    rtcm_cycle_enabled: document.getElementById('edit-rtcm-cycle-enabled')?.checked || false,
+                    rtcm_disconnect_interval_seconds: Number.parseInt(document.getElementById('edit-rtcm-disconnect-interval')?.value || 300),
+                    rtcm_disconnect_duration_seconds: Number.parseInt(document.getElementById('edit-rtcm-disconnect-duration')?.value || 10),
+                    is_shared_with_managers: document.getElementById('edit-is-shared')?.checked || false
+                };
+                if (String(currentUser?.role || '').toLowerCase() === 'admin') {
+                    payload.auto_save_sessions = document.getElementById('edit-auto-save-sessions')?.checked !== false;
+                    payload.auto_save_fixed_points = document.getElementById('edit-auto-save-fixed-points')?.checked !== false;
+                }
+                if (newPass) payload.password = newPass;
+                if (newExpiry !== null) payload.expiry_days = newExpiry;
+                const maxConn = document.getElementById('edit-max-connections')?.value;
+                if (maxConn) payload.max_connections = Number.parseInt(maxConn);
 
-                showToast('Đã cập nhật Rover thành công!', 'success');
+                try {
+                    const submitBtn = e.target.querySelector('button[type="submit"]');
+                    submitBtn.disabled = true;
+                    submitBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span>Đang lưu...';
+
+                    // GỌI API THÔNG MINH (PUT)
+                    const url = roverId == "0"
+                        ? `/api/rovers/sync/by-username/${document.getElementById('edit-username').value}`
+                        : `/api/rovers/${roverId}`;
                 
-                // Ẩn modal và cập nhật data tại chỗ (không reload toàn trang)
-                const modalEl = document.getElementById('editRoverModal');
-                const modalInstance = bootstrap.Modal.getInstance(modalEl);
-                modalInstance.hide();
+                    const res = await apiFetchRaw(url, {
+                        method: 'PUT',
+                        headers: {
+                            'Content-Type': 'application/json',
+                            'Authorization': `Bearer ${localStorage.getItem('access_token') || sessionStorage.getItem('access_token')}`
+                        },
+                        body: JSON.stringify(payload)
+                    });
 
-                patchEditedRoverRow(updatedRover);
-                fetchCasterUsers().catch(error => console.error('fetchCasterUsers failed:', error));
+                    if (!res.ok) {
+                        const err = await res.json();
+                        throw new Error(err.detail || 'Cập nhật thất bại');
+                    }
 
-            } catch (err) {
-                showToast(err.message, 'danger');
-            } finally {
-                const submitBtn = e.target.querySelector('button[type="submit"]');
-                submitBtn.disabled = false;
-                submitBtn.innerHTML = '<i class="bi bi-save me-2"></i>Lưu Thay Đổi';
-            }
-        });
+                    const updatedRover = await res.json();
+
+                    showToast('Đã cập nhật Rover thành công!', 'success');
+                
+                    // Ẩn modal và cập nhật data tại chỗ (không reload toàn trang)
+                    const modalEl = document.getElementById('editRoverModal');
+                    const modalInstance = bootstrap.Modal.getInstance(modalEl);
+                    modalInstance.hide();
+
+                    patchEditedRoverRow(updatedRover);
+                    fetchCasterUsers().catch(error => console.error('fetchCasterUsers failed:', error));
+
+                } catch (err) {
+                    showToast(err.message, 'danger');
+                } finally {
+                    const submitBtn = e.target.querySelector('button[type="submit"]');
+                    submitBtn.disabled = false;
+                    submitBtn.innerHTML = '<i class="bi bi-save me-2"></i>Lưu Thay Đổi';
+                }
+            });
+        }
+
+        // === HANDLE DELETE ROVER (MODAL MỚI) ===
     }
 
-    // === HANDLE DELETE ROVER (MODAL MỚI) ===
+    bindEditRoverForm();
+
     async function handleDeleteRover(e) {
         const btn = e.currentTarget;
         const id = Number.parseInt(btn.dataset.id);
@@ -2820,75 +2837,79 @@ function createRoverRowElement(r) {
         }
     }
 
-    // Nút thực thi xóa trong Modal
-    const executeDeleteBtn = document.getElementById('executeDeleteBtn');
-    if (executeDeleteBtn) {
-        executeDeleteBtn.onclick = async function() {
-            const roverIdInput = document.getElementById('delete-rover-id');
-            const deleteDbCheck = document.getElementById('delete-from-db');
-            if (!roverIdInput || !deleteDbCheck) return;
+    function bindDeleteRoverModal() {
+        // Nút thực thi xóa trong Modal
+        const executeDeleteBtn = document.getElementById('executeDeleteBtn');
+        if (executeDeleteBtn) {
+            executeDeleteBtn.onclick = async function() {
+                const roverIdInput = document.getElementById('delete-rover-id');
+                const deleteDbCheck = document.getElementById('delete-from-db');
+                if (!roverIdInput || !deleteDbCheck) return;
 
-            const roverId = roverIdInput.value;
-            const deleteFromDb = deleteDbCheck.checked;
-        const checkedHosts = Array.from(document.querySelectorAll('.delete-host-check:checked')).map(cb => cb.value);
-        const allHosts = Array.from(document.querySelectorAll('.delete-host-check')).map(cb => cb.value);
+                const roverId = roverIdInput.value;
+                const deleteFromDb = deleteDbCheck.checked;
+            const checkedHosts = Array.from(document.querySelectorAll('.delete-host-check:checked')).map(cb => cb.value);
+            const allHosts = Array.from(document.querySelectorAll('.delete-host-check')).map(cb => cb.value);
         
-        const btn = this;
-        const originalHtml = btn.innerHTML;
+            const btn = this;
+            const originalHtml = btn.innerHTML;
 
-        try {
-            btn.disabled = true;
-            btn.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span>Đang xử lý...';
+            try {
+                btn.disabled = true;
+                btn.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span>Đang xử lý...';
 
-            if (deleteFromDb) {
-                // TRƯỜNG HỢP 1: Xóa trắng hoàn toàn
-                const res = await apiFetchRaw(`/api/rovers/${roverId}`, { 
-                    method: 'DELETE', 
-                    headers: API_HEADERS 
-                });
-                if (!res.ok) throw new Error(await res.text() || 'Xóa hoàn toàn thất bại');
-                showToast(`Đã xóa vĩnh viễn tài khoản khỏi hệ thống`, 'success');
-            } else {
-                // TRƯỜNG HỢP 2: Chỉ gỡ trên một số server (Partial Cleanup)
-                // Những server ĐƯỢC TÍCH trong modal delete là những server MUỐN GỠ BỎ.
-                // Danh sách target_casters CÒN LẠI = Tổng - Đã tích gỡ.
-                const remainingHosts = allHosts.filter(h => !checkedHosts.includes(h));
+                if (deleteFromDb) {
+                    // TRƯỜNG HỢP 1: Xóa trắng hoàn toàn
+                    const res = await apiFetchRaw(`/api/rovers/${roverId}`, {
+                        method: 'DELETE',
+                        headers: API_HEADERS
+                    });
+                    if (!res.ok) throw new Error(await res.text() || 'Xóa hoàn toàn thất bại');
+                    showToast(`Đã xóa vĩnh viễn tài khoản khỏi hệ thống`, 'success');
+                } else {
+                    // TRƯỜNG HỢP 2: Chỉ gỡ trên một số server (Partial Cleanup)
+                    // Những server ĐƯỢC TÍCH trong modal delete là những server MUỐN GỠ BỎ.
+                    // Danh sách target_casters CÒN LẠI = Tổng - Đã tích gỡ.
+                    const remainingHosts = allHosts.filter(h => !checkedHosts.includes(h));
                 
-                if (checkedHosts.length === 0) {
-                    showToast('Vui lòng tích chọn ít nhất 1 server để gỡ bỏ (hoặc chọn Xóa khỏi DB)', 'warning');
-                    btn.disabled = false;
-                    btn.innerHTML = originalHtml;
-                    return;
+                    if (checkedHosts.length === 0) {
+                        showToast('Vui lòng tích chọn ít nhất 1 server để gỡ bỏ (hoặc chọn Xóa khỏi DB)', 'warning');
+                        btn.disabled = false;
+                        btn.innerHTML = originalHtml;
+                        return;
+                    }
+
+                    const res = await apiFetchRaw(`/api/rovers/${roverId}`, {
+                        method: 'PUT',
+                        headers: API_HEADERS,
+                        body: JSON.stringify({
+                            target_casters: remainingHosts
+                        })
+                    });
+
+                    if (!res.ok) throw new Error(await res.text() || 'Cập nhật gỡ bỏ thất bại');
+                    showToast(`Đã gỡ bỏ tài khoản khỏi ${checkedHosts.length} server`, 'success');
                 }
 
-                const res = await apiFetchRaw(`/api/rovers/${roverId}`, {
-                    method: 'PUT',
-                    headers: API_HEADERS,
-                    body: JSON.stringify({
-                        target_casters: remainingHosts
-                    })
-                });
-
-                if (!res.ok) throw new Error(await res.text() || 'Cập nhật gỡ bỏ thất bại');
-                showToast(`Đã gỡ bỏ tài khoản khỏi ${checkedHosts.length} server`, 'success');
+                // Đóng modal và refresh
+                const modalEl = document.getElementById('deleteRoverModal');
+                if (modalEl) {
+                    const modal = bootstrap.Modal.getInstance(modalEl);
+                    if (modal) modal.hide();
+                }
+                await refreshDataInPlace();
+            } catch (err) {
+                console.error(err);
+                showToast(`Lỗi: ${err.message}`, 'danger');
+            } finally {
+                btn.disabled = false;
+                btn.innerHTML = originalHtml;
             }
+        };
+    }
+    }
 
-            // Đóng modal và refresh
-            const modalEl = document.getElementById('deleteRoverModal');
-            if (modalEl) {
-                const modal = bootstrap.Modal.getInstance(modalEl);
-                if (modal) modal.hide();
-            }
-            await refreshDataInPlace();
-        } catch (err) {
-            console.error(err);
-            showToast(`Lỗi: ${err.message}`, 'danger');
-        } finally {
-            btn.disabled = false;
-            btn.innerHTML = originalHtml;
-        }
-    };
-}
+    bindDeleteRoverModal();
 
     // === HANDLE DELETE CASTER USER (Unknown) ===
     async function handleDeleteCasterUser(e) {
@@ -2932,120 +2953,128 @@ function createRoverRowElement(r) {
         }
     }
 
-    // === HANDLE CREATE ROVER ===
-    const createForm = document.getElementById('create-rover-form');
-    if (createForm) {
-        createForm.addEventListener('submit', async (e) => {
-            e.preventDefault();
+    function bindCreateRoverForm() {
+        // === HANDLE CREATE ROVER ===
+        const createForm = document.getElementById('create-rover-form');
+        if (createForm) {
+            createForm.addEventListener('submit', async (e) => {
+                e.preventDefault();
             
-            const checkedBoxes = document.querySelectorAll('.station-check:checked');
-            const selectedSerials = Array.from(checkedBoxes).map(cb => cb.value);
+                const checkedBoxes = document.querySelectorAll('.station-check:checked');
+                const selectedSerials = Array.from(checkedBoxes).map(cb => cb.value);
 
-            const mpOverride = document.getElementById('new-mountpoints')?.value || '';
-            const isAdmin = String(currentUser?.role || '').toLowerCase() === 'admin';
+                const mpOverride = document.getElementById('new-mountpoints')?.value || '';
+                const isAdmin = String(currentUser?.role || '').toLowerCase() === 'admin';
 
-            if (selectedSerials.length === 0 && !isAdmin && !mpOverride.trim()) {
-                showToast('Vui lòng chọn ít nhất một trạm hoặc nhập Mountpoint.', 'warning');
-                return;
-            }
-
-            if (!mpOverride.trim()) {
-                showToast('Mountpoint không được để trống.', 'warning');
-                return;
-            }
-
-            const expiryDays = readExpiryDays('new');
-            if (expiryDays === undefined) return;
-
-            const targetCasters = Array.from(document.querySelectorAll('.caster-target-check:checked')).map(cb => cb.value);
-
-            const payload = {
-                username: document.getElementById('new-username').value,
-                password: document.getElementById('new-password').value,
-                expiry_days: expiryDays,
-                selected_serials: selectedSerials,
-                mountpoint_override: mpOverride,
-                target_casters: targetCasters,
-                max_connections: Number.parseInt(document.getElementById('new-max-connections')?.value || 1),
-                show_position: document.getElementById('new-show-position').checked,
-                rtcm_cycle_enabled: document.getElementById('new-rtcm-cycle-enabled').checked,
-                rtcm_disconnect_interval_seconds: Number.parseInt(document.getElementById('new-rtcm-disconnect-interval').value || 300),
-                rtcm_disconnect_duration_seconds: Number.parseInt(document.getElementById('new-rtcm-disconnect-duration').value || 10),
-                is_shared_with_managers: document.getElementById('new-is-shared')?.checked || false
-            };
-
-            if (isAdmin) {
-                payload.auto_save_sessions = document.getElementById('new-auto-save-sessions')?.checked !== false;
-                payload.auto_save_fixed_points = document.getElementById('new-auto-save-fixed-points')?.checked === true;
-            }
-
-            try {
-                const submitBtn = e.target.querySelector('button[type="submit"]');
-                submitBtn.disabled = true;
-                submitBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span>Đang tạo...';
-
-                const res = await apiFetchRaw(`/api/rovers/create-multi`, {
-                    method: 'POST',
-                    headers: API_HEADERS,
-                    body: JSON.stringify(payload)
-                });
-                
-                if (!res.ok) {
-                    const err = await res.json();
-                    throw new Error(err.detail || 'Lỗi tạo Rover');
+                if (selectedSerials.length === 0 && !isAdmin && !mpOverride.trim()) {
+                    showToast('Vui lòng chọn ít nhất một trạm hoặc nhập Mountpoint.', 'warning');
+                    return;
                 }
 
-                showToast(`Tạo Rover "${payload.username}" thành công!`, 'success');
-                bootstrap.Modal.getInstance(document.getElementById('createRoverModal')).hide();
-                createForm.reset();
-                syncExpiryFields('new');
-                const newAutoSaveSessions = document.getElementById('new-auto-save-sessions');
-                if (newAutoSaveSessions) newAutoSaveSessions.checked = true;
-                const newAutoSaveFixedPoints = document.getElementById('new-auto-save-fixed-points');
-                if (newAutoSaveFixedPoints) newAutoSaveFixedPoints.checked = false;
-                document.querySelectorAll('.station-check').forEach(cb => cb.checked = false);
-                await refreshDataInPlace();
+                if (!mpOverride.trim()) {
+                    showToast('Mountpoint không được để trống.', 'warning');
+                    return;
+                }
 
-            } catch (err) {
-                showToast(err.message, 'danger');
-            } finally {
-                const submitBtn = e.target.querySelector('button[type="submit"]');
-                submitBtn.disabled = false;
-                submitBtn.innerHTML = '<i class="bi bi-plus-circle me-2"></i>Tạo Tài Khoản';
-            }
-        });
+                const expiryDays = readExpiryDays('new');
+                if (expiryDays === undefined) return;
+
+                const targetCasters = Array.from(document.querySelectorAll('.caster-target-check:checked')).map(cb => cb.value);
+
+                const payload = {
+                    username: document.getElementById('new-username').value,
+                    password: document.getElementById('new-password').value,
+                    expiry_days: expiryDays,
+                    selected_serials: selectedSerials,
+                    mountpoint_override: mpOverride,
+                    target_casters: targetCasters,
+                    max_connections: Number.parseInt(document.getElementById('new-max-connections')?.value || 1),
+                    show_position: document.getElementById('new-show-position').checked,
+                    rtcm_cycle_enabled: document.getElementById('new-rtcm-cycle-enabled').checked,
+                    rtcm_disconnect_interval_seconds: Number.parseInt(document.getElementById('new-rtcm-disconnect-interval').value || 300),
+                    rtcm_disconnect_duration_seconds: Number.parseInt(document.getElementById('new-rtcm-disconnect-duration').value || 10),
+                    is_shared_with_managers: document.getElementById('new-is-shared')?.checked || false
+                };
+
+                if (isAdmin) {
+                    payload.auto_save_sessions = document.getElementById('new-auto-save-sessions')?.checked !== false;
+                    payload.auto_save_fixed_points = document.getElementById('new-auto-save-fixed-points')?.checked === true;
+                }
+
+                try {
+                    const submitBtn = e.target.querySelector('button[type="submit"]');
+                    submitBtn.disabled = true;
+                    submitBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span>Đang tạo...';
+
+                    const res = await apiFetchRaw(`/api/rovers/create-multi`, {
+                        method: 'POST',
+                        headers: API_HEADERS,
+                        body: JSON.stringify(payload)
+                    });
+
+                    if (!res.ok) {
+                        const err = await res.json();
+                        throw new Error(err.detail || 'Lỗi tạo Rover');
+                    }
+
+                    showToast(`Tạo Rover "${payload.username}" thành công!`, 'success');
+                    bootstrap.Modal.getInstance(document.getElementById('createRoverModal')).hide();
+                    createForm.reset();
+                    syncExpiryFields('new');
+                    const newAutoSaveSessions = document.getElementById('new-auto-save-sessions');
+                    if (newAutoSaveSessions) newAutoSaveSessions.checked = true;
+                    const newAutoSaveFixedPoints = document.getElementById('new-auto-save-fixed-points');
+                    if (newAutoSaveFixedPoints) newAutoSaveFixedPoints.checked = false;
+                    document.querySelectorAll('.station-check').forEach(cb => cb.checked = false);
+                    await refreshDataInPlace();
+
+                } catch (err) {
+                    showToast(err.message, 'danger');
+                } finally {
+                    const submitBtn = e.target.querySelector('button[type="submit"]');
+                    submitBtn.disabled = false;
+                    submitBtn.innerHTML = '<i class="bi bi-plus-circle me-2"></i>Tạo Tài Khoản';
+                }
+            });
+        }
     }
+
+    bindCreateRoverForm();
 
     // === UTILS ===
 
-    // Toggle RTCM cycle interval visibility
-    const rtcmCycleToggle = document.getElementById('new-rtcm-cycle-enabled');
-    if (rtcmCycleToggle) {
-        rtcmCycleToggle.addEventListener('change', (e) => {
-            const intervalGroup = document.getElementById('rtcm-cycle-interval-group');
-            if (intervalGroup) {
-                if (e.target.checked) {
-                    intervalGroup.classList.remove('d-none');
-                } else {
-                    intervalGroup.classList.add('d-none');
+    function bindRtcmCycleToggles() {
+        // Toggle RTCM cycle interval visibility
+        const rtcmCycleToggle = document.getElementById('new-rtcm-cycle-enabled');
+        if (rtcmCycleToggle) {
+            rtcmCycleToggle.addEventListener('change', (e) => {
+                const intervalGroup = document.getElementById('rtcm-cycle-interval-group');
+                if (intervalGroup) {
+                    if (e.target.checked) {
+                        intervalGroup.classList.remove('d-none');
+                    } else {
+                        intervalGroup.classList.add('d-none');
+                    }
                 }
-            }
-        });
+            });
+        }
+
+        const editRtcmCycleToggle = document.getElementById('edit-rtcm-cycle-enabled');
+        if (editRtcmCycleToggle) {
+            editRtcmCycleToggle.addEventListener('change', (e) => {
+                const intervalGroup = document.getElementById('edit-rtcm-cycle-interval-group');
+                if (intervalGroup) {
+                    if (e.target.checked) {
+                        intervalGroup.classList.remove('d-none');
+                    } else {
+                        intervalGroup.classList.add('d-none');
+                    }
+                }
+            });
+        }
     }
 
-    const editRtcmCycleToggle = document.getElementById('edit-rtcm-cycle-enabled');
-    if (editRtcmCycleToggle) {
-        editRtcmCycleToggle.addEventListener('change', (e) => {
-            const intervalGroup = document.getElementById('edit-rtcm-cycle-interval-group');
-            if (intervalGroup) {
-                if (e.target.checked) {
-                    intervalGroup.classList.remove('d-none');
-                } else {
-                    intervalGroup.classList.add('d-none');
-                }
-            }
-        });
-    }
+    bindRtcmCycleToggles();
 
     // Toggle dependency between auto_save_sessions and auto_save_fixed_points
     function bindAutoSaveDependency(sessionToggleId, fixedPointsToggleId) {
@@ -3067,132 +3096,145 @@ function createRoverRowElement(r) {
     bindAutoSaveDependency('new-auto-save-sessions', 'new-auto-save-fixed-points');
     bindAutoSaveDependency('edit-auto-save-sessions', 'edit-auto-save-fixed-points');
 
-    // Rover Dashboard events
-    const searchBox = document.getElementById('search-box');
-    if (searchBox) searchBox.addEventListener('input', renderTable);
+    function bindRoverTableControls() {
+        // Rover Dashboard events
+        const searchBox = document.getElementById('search-box');
+        if (searchBox) searchBox.addEventListener('input', renderTable);
     
-    const filterStation = document.getElementById('filter-station');
-    if (filterStation) filterStation.addEventListener('change', renderTable);
+        const filterStation = document.getElementById('filter-station');
+        if (filterStation) filterStation.addEventListener('change', renderTable);
     
-    const filterStatus = document.getElementById('filter-status');
-    if (filterStatus) filterStatus.addEventListener('change', renderTable);
+        const filterStatus = document.getElementById('filter-status');
+        if (filterStatus) filterStatus.addEventListener('change', renderTable);
 
-    document.getElementById('rover-select-all')?.addEventListener('change', (event) => {
-        document.querySelectorAll('.rover-row-check').forEach(cb => {
-            cb.checked = event.target.checked;
-            const key = cb.dataset.usernameKey;
-            if (key && cb.checked) selectedRoverKeys.add(key);
-            if (key && !cb.checked) selectedRoverKeys.delete(key);
+        document.getElementById('rover-select-all')?.addEventListener('change', (event) => {
+            document.querySelectorAll('.rover-row-check').forEach(cb => {
+                cb.checked = event.target.checked;
+                const key = cb.dataset.usernameKey;
+                if (key && cb.checked) selectedRoverKeys.add(key);
+                if (key && !cb.checked) selectedRoverKeys.delete(key);
+            });
+            updateRoverBulkToolbar();
         });
-        updateRoverBulkToolbar();
-    });
 
-    document.getElementById('bulk-renew-btn')?.addEventListener('click', () => {
-        bulkRenewSelectedRovers().catch(err => showToast(err.message, 'danger'));
-    });
-    document.getElementById('bulk-sync-btn')?.addEventListener('click', () => {
-        syncSelectedRovers().catch(err => showToast(err.message, 'danger'));
-    });
-    document.getElementById('bulk-export-btn')?.addEventListener('click', exportSelectedRovers);
-    document.getElementById('filter-expiring-btn')?.addEventListener('click', () => {
-        showExpiringSoonOnly = !showExpiringSoonOnly;
-        document.getElementById('filter-expiring-btn')?.classList.toggle('active', showExpiringSoonOnly);
-        renderTable();
-    });
-
-    const applyLiveMountpointsBtn = document.getElementById('apply-live-mountpoints-btn');
-    if (applyLiveMountpointsBtn) {
-        applyLiveMountpointsBtn.addEventListener('click', applySelectedLiveMountpoints);
-    }
-
-    const editApplyLiveMountpointsBtn = document.getElementById('edit-apply-live-mountpoints-btn');
-    if (editApplyLiveMountpointsBtn) {
-        editApplyLiveMountpointsBtn.addEventListener('click', applySelectedLiveMountpoints);
-    }
-
-    const reloadLiveMountpointsBtn = document.getElementById('reload-live-mountpoints-btn');
-    if (reloadLiveMountpointsBtn) {
-        reloadLiveMountpointsBtn.addEventListener('click', async () => {
-            await fetchCasterSources({ force: true });
-            if (String(currentUser?.role || '').toLowerCase() === 'admin') {
-                renderAdminLiveMountpoints('');
-            } else {
-                renderCoordinatorExtraMountpoints('');
-            }
-            showToast('Đã tải lại mountpoints live', 'info');
+        document.getElementById('bulk-renew-btn')?.addEventListener('click', () => {
+            bulkRenewSelectedRovers().catch(err => showToast(err.message, 'danger'));
+        });
+        document.getElementById('bulk-sync-btn')?.addEventListener('click', () => {
+            syncSelectedRovers().catch(err => showToast(err.message, 'danger'));
+        });
+        document.getElementById('bulk-export-btn')?.addEventListener('click', exportSelectedRovers);
+        document.getElementById('filter-expiring-btn')?.addEventListener('click', () => {
+            showExpiringSoonOnly = !showExpiringSoonOnly;
+            document.getElementById('filter-expiring-btn')?.classList.toggle('active', showExpiringSoonOnly);
+            renderTable();
         });
     }
 
-    const editReloadLiveMountpointsBtn = document.getElementById('edit-reload-live-mountpoints-btn');
-    if (editReloadLiveMountpointsBtn) {
-        editReloadLiveMountpointsBtn.addEventListener('click', async () => {
-            await fetchCasterSources({ force: true });
-            if (String(currentUser?.role || '').toLowerCase() === 'admin') {
-                renderAdminLiveMountpoints('edit-');
-            } else {
-                renderCoordinatorExtraMountpoints('edit-');
-            }
-            showToast('Đã tải lại mountpoints live', 'info');
-        });
-    }
+    bindRoverTableControls();
 
-    // Input changes listener for real-time live filter updating
-    const newMpsInput = document.getElementById('new-mountpoints');
-    if (newMpsInput) {
-        newMpsInput.addEventListener('input', () => applyLiveMpFilter(''));
-        newMpsInput.addEventListener('blur', () => validateCreateRoverInputs());
-    }
-    document.getElementById('new-username')?.addEventListener('blur', () => validateCreateRoverInputs());
-    const editMpsInput = document.getElementById('edit-mountpoints');
-    if (editMpsInput) {
-        editMpsInput.addEventListener('input', () => applyLiveMpFilter('edit-'));
-    }
+    function bindRoverLiveMountpointControls() {
+        const applyLiveMountpointsBtn = document.getElementById('apply-live-mountpoints-btn');
+        if (applyLiveMountpointsBtn) {
+            applyLiveMountpointsBtn.addEventListener('click', applySelectedLiveMountpoints);
+        }
 
-    // Dynamic fresh fetch for create modal
-    const createModalEl = document.getElementById('createRoverModal');
-    if (createModalEl) {
-        createModalEl.addEventListener('show.bs.modal', () => {
-            if (String(currentUser?.role || '').toLowerCase() === 'admin') {
-                renderAdminLiveMountpoints('');
-                fetchCasterSources({ force: true }).then(() => {
+        const editApplyLiveMountpointsBtn = document.getElementById('edit-apply-live-mountpoints-btn');
+        if (editApplyLiveMountpointsBtn) {
+            editApplyLiveMountpointsBtn.addEventListener('click', applySelectedLiveMountpoints);
+        }
+
+        const reloadLiveMountpointsBtn = document.getElementById('reload-live-mountpoints-btn');
+        if (reloadLiveMountpointsBtn) {
+            reloadLiveMountpointsBtn.addEventListener('click', async () => {
+                await fetchCasterSources({ force: true });
+                if (String(currentUser?.role || '').toLowerCase() === 'admin') {
                     renderAdminLiveMountpoints('');
-                }).catch(e => console.error("Error refreshing live mountpoints", e));
-            } else if (currentUser?.extra_mountpoints) {
-                renderCoordinatorExtraMountpoints('');
-            }
-        });
-    }
+                } else {
+                    renderCoordinatorExtraMountpoints('');
+                }
+                showToast('Đã tải lại mountpoints live', 'info');
+            });
+        }
+
+        const editReloadLiveMountpointsBtn = document.getElementById('edit-reload-live-mountpoints-btn');
+        if (editReloadLiveMountpointsBtn) {
+            editReloadLiveMountpointsBtn.addEventListener('click', async () => {
+                await fetchCasterSources({ force: true });
+                if (String(currentUser?.role || '').toLowerCase() === 'admin') {
+                    renderAdminLiveMountpoints('edit-');
+                } else {
+                    renderCoordinatorExtraMountpoints('edit-');
+                }
+                showToast('Đã tải lại mountpoints live', 'info');
+            });
+        }
+
+        // Input changes listener for real-time live filter updating
+        const newMpsInput = document.getElementById('new-mountpoints');
+        if (newMpsInput) {
+            newMpsInput.addEventListener('input', () => applyLiveMpFilter(''));
+            newMpsInput.addEventListener('blur', () => validateCreateRoverInputs());
+        }
+        document.getElementById('new-username')?.addEventListener('blur', () => validateCreateRoverInputs());
+        const editMpsInput = document.getElementById('edit-mountpoints');
+        if (editMpsInput) {
+            editMpsInput.addEventListener('input', () => applyLiveMpFilter('edit-'));
+        }
+
+        // Dynamic fresh fetch for create modal
+        const createModalEl = document.getElementById('createRoverModal');
+        if (createModalEl) {
+            createModalEl.addEventListener('show.bs.modal', () => {
+                if (String(currentUser?.role || '').toLowerCase() === 'admin') {
+                    renderAdminLiveMountpoints('');
+                    fetchCasterSources({ force: true }).then(() => {
+                        renderAdminLiveMountpoints('');
+                    }).catch(e => console.error("Error refreshing live mountpoints", e));
+                } else if (currentUser?.extra_mountpoints) {
+                    renderCoordinatorExtraMountpoints('');
+                }
+            });
+        }
     
-    // ✅ ADMIN ONLY: Tab Mountpoints
-    const mountpointsTab = document.getElementById('tab-mountpoints-li');
-    setupRoverActivity();
-    if (mountpointsTab) {
-        mountpointsTab.addEventListener('shown.bs.tab', async () => {
-            await loadAndRenderMountpoints();
+        function bindRoverAdminTabControls() {
+        // ✅ ADMIN ONLY: Tab Mountpoints
+        }
+
+        bindRoverLiveMountpointControls();
+
+        const mountpointsTab = document.getElementById('tab-mountpoints-li');
+        setupRoverActivity();
+        if (mountpointsTab) {
+            mountpointsTab.addEventListener('shown.bs.tab', async () => {
+                await loadAndRenderMountpoints();
+            });
+        }
+
+        // ✅ ADMIN ONLY: Tab Blocklist
+        const blocklistTab = document.getElementById('tab-blocklist-tab');
+        if (blocklistTab) {
+            blocklistTab.addEventListener('shown.bs.tab', async () => {
+                if (typeof renderBlocklistMapping === 'function') {
+                    await renderBlocklistMapping();
+                }
+            });
+        }
+    
+        document.getElementById('refresh-btn').addEventListener('click', async () => {
+            const btn = document.getElementById('refresh-btn');
+            if (!btn) return;
+            const icon = btn.querySelector('i');
+            if (icon) icon.classList.add('spin-anim');
+        
+            await syncData();
+        
+            if (icon) icon.classList.remove('spin-anim');
+            showToast('Đã đồng bộ dữ liệu hệ thống', 'info');
         });
     }
 
-    // ✅ ADMIN ONLY: Tab Blocklist
-    const blocklistTab = document.getElementById('tab-blocklist-tab');
-    if (blocklistTab) {
-        blocklistTab.addEventListener('shown.bs.tab', async () => {
-            if (typeof renderBlocklistMapping === 'function') {
-                await renderBlocklistMapping();
-            }
-        });
-    }
-    
-    document.getElementById('refresh-btn').addEventListener('click', async () => {
-        const btn = document.getElementById('refresh-btn');
-        if (!btn) return;
-        const icon = btn.querySelector('i');
-        if (icon) icon.classList.add('spin-anim');
-        
-        await syncData();
-        
-        if (icon) icon.classList.remove('spin-anim');
-        showToast('Đã đồng bộ dữ liệu hệ thống', 'info');
-    });
+    bindRoverAdminTabControls();
 
     // ✅ Load and render blocklist relationships
     async function renderBlocklistMapping() {
