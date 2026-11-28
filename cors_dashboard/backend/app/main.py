@@ -326,6 +326,35 @@ class RequestIDFilter(logging.Filter):
 for handler in logging.root.handlers:
     handler.addFilter(RequestIDFilter())
 
+
+async def _record_security_violation(client_ip, method, path):
+    rate_limiter.record_block_event(client_ip, f"Security Gate: rejected {method} {path[:160]}", "security_gate")
+    if client_ip == "unknown":
+        return
+    score = security_rep_scores.get(client_ip, 0) + 1
+    security_rep_scores[client_ip] = score
+    if score < VIOLATION_THRESHOLD:
+        return
+    await redis_client.ban_ip(client_ip)
+    try:
+        from .database import auth_session_scope
+        async with auth_session_scope() as auth_db:
+            await rate_limiter.block_ip(
+                auth_db, client_ip,
+                reason=f"Security Gate: {score} violations; last {method} {path[:160]}",
+            )
+    except Exception as exc:
+        logger.exception("Could not persist automatic IP ban: %s", exc)
+    security_rep_scores[client_ip] = 0
+    logger.critical(f"🚨 AUTOMATIC BAN: IP {client_ip} has been BANNED after {score} violations.")
+
+
+def _security_path_pattern_matches(path, pattern):
+    if pattern.startswith("."):
+        return path.endswith(pattern) or f"{pattern}?" in path or f"{pattern}/" in path
+    return pattern in path
+
+
 class SecurityGateMiddleware(BaseHTTPMiddleware):
     """
     Middleware bảo mật: Chặn các yêu cầu quét tự động (bots) có chứa pattern nhạy cảm.
@@ -345,29 +374,10 @@ class SecurityGateMiddleware(BaseHTTPMiddleware):
                 content={"detail": "Your IP has been blocked due to multiple security violations."}
             )
 
-        # Helper để ghi nhận vi phạm và thực hiện BAN nếu cần
-        async def record_violation():
-            rate_limiter.record_block_event(client_ip, f"Security Gate: rejected {method} {path[:160]}", "security_gate")
-            if client_ip == "unknown": return
-            score = security_rep_scores.get(client_ip, 0) + 1
-            security_rep_scores[client_ip] = score
-            if score >= VIOLATION_THRESHOLD:
-                await redis_client.ban_ip(client_ip)
-                try:
-                    from .database import auth_session_scope
-                    async with auth_session_scope() as auth_db:
-                        await rate_limiter.block_ip(auth_db, client_ip,
-                            reason=f"Security Gate: {score} violations; last {method} {path[:160]}")
-                except Exception as exc:
-                    logger.exception("Could not persist automatic IP ban: %s", exc)
-                # Dọn dẹp score vì đã ban
-                security_rep_scores[client_ip] = 0
-                logger.critical(f"🚨 AUTOMATIC BAN: IP {client_ip} has been BANNED after {score} violations.")
-
         # 2. Chặn Method lạ (Linh tinh)
         if method not in ALLOWED_HTTP_METHODS:
             logger.warning(f"🚫 SECURITY BLOCK (METHOD): IP {client_ip} used forbidden method {method} on {path}")
-            await record_violation()
+            await _record_security_violation(client_ip, method, path)
             return JSONResponse(
                 status_code=403,
                 content={"detail": f"Method {method} is not allowed."}
@@ -375,20 +385,9 @@ class SecurityGateMiddleware(BaseHTTPMiddleware):
 
         # 3. Chặn các pattern nhạy cảm (Bots scanning)
         for pattern in SECURITY_BLACKLIST_PATTERNS:
-            blocked = False
-            if pattern.startswith("."):
-                if path.endswith(pattern) or f"{pattern}?" in path or f"{pattern}/" in path:
-                    blocked = True
-            elif "/" in pattern: # Check path substring
-                if pattern in path:
-                    blocked = True
-            else:
-                if pattern in path:
-                    blocked = True
-
-            if blocked:
+            if _security_path_pattern_matches(path, pattern):
                 logger.warning(f"⚠️ SECURITY BLOCK (PATH): IP {client_ip} tried suspicious path: {path} (Pattern: {pattern})")
-                await record_violation()
+                await _record_security_violation(client_ip, method, path)
                 return JSONResponse(
                     status_code=403,
                     content={"detail": "Access Forbidden: Security Gate Blocked this request."}

@@ -62,26 +62,38 @@ def region_options(question):
     return _region_options(_plain(question)[:1000])
 
 
-@lru_cache(maxsize=256)
-def _region_options(words):
-    text = f' {words} '
+def _exact_region_matches(text):
     exact, covered = {}, []
     for name, bounds, aliases in _regions():
         for alias in aliases:
-            for match in re.finditer(r'(?<!\S)' + re.escape(alias) + r'(?!\S)', text):
+            pattern = r'(?<!\S)' + re.escape(alias) + r'(?!\S)'
+            for match in re.finditer(pattern, text):
                 exact[(name, bounds)] = 100
                 covered.append(match.span())
+    return exact, covered
+
+
+def _record_fuzzy_region_matches(text, start, end, covered, choices, scores, spans):
+    if any(start < right and end > left for left, right in covered):
+        return
+    matches = process.extract(text[start:end], list(choices), scorer=fuzz.ratio, score_cutoff=90, limit=3)
+    for alias, score, _ in matches:
+        region = choices[alias]
+        if score > scores.get(region, 0):
+            scores[region], spans[region] = score, (start, end)
+
+
+def _fuzzy_region_matches(text, covered):
     scores, spans = {}, {}
     tokens = list(re.finditer(r'\S+', text))[:100]
     for size, choices in _fuzzy_aliases().items():
         for index in range(len(tokens) - size + 1):
             start, end = tokens[index].start(), tokens[index + size - 1].end()
-            if any(start < right and end > left for left, right in covered):
-                continue  # Do not turn an already resolved Hà Nội into Hà Nam.
-            for alias, score, _ in process.extract(text[start:end], list(choices), scorer=fuzz.ratio, score_cutoff=90, limit=3):
-                region = choices[alias]
-                if score > scores.get(region, 0):
-                    scores[region], spans[region] = score, (start, end)
+            _record_fuzzy_region_matches(text, start, end, covered, choices, scores, spans)
+    return scores, spans
+
+
+def _rank_region_options(exact, scores, spans):
     ranked = sorted(scores, key=lambda region: (-scores[region], region[0]))
     if exact:
         # A second, separately written province must not be replaced by chat history.
@@ -92,6 +104,14 @@ def _region_options(words):
         if separate or scores[first] - scores[second] < 5:
             return tuple(ranked[:3])
     return tuple(ranked[:1])
+
+
+@lru_cache(maxsize=256)
+def _region_options(words):
+    text = f' {words} '
+    exact, covered = _exact_region_matches(text)
+    scores, spans = _fuzzy_region_matches(text, covered)
+    return _rank_region_options(exact, scores, spans)
 
 
 def region_for_question(question):

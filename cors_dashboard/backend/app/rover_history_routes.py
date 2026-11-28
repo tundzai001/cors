@@ -50,6 +50,57 @@ async def _rover_history_user_scope(
     return {str(rover.username).strip().casefold() for rover in rovers if rover.username}
 
 
+def _daily_rover_history_query(range_start, range_end, visible_usernames):
+    stmt = select(
+        models.RoverSessionHistory.username,
+        models.RoverSessionHistory.receiver_id,
+        models.RoverSessionHistory.started_at,
+        models.RoverSessionHistory.last_seen_at,
+        models.RoverSessionHistory.ended_at,
+    ).where(
+        *_rover_history_overlap_filters(range_start, range_end),
+        models.RoverSessionHistory.username.is_not(None),
+        func.trim(models.RoverSessionHistory.username) != "",
+        models.RoverSessionHistory.receiver_id.is_not(None),
+        func.trim(models.RoverSessionHistory.receiver_id) != "",
+    )
+    if visible_usernames is not None:
+        stmt = stmt.where(func.lower(func.trim(models.RoverSessionHistory.username)).in_(visible_usernames))
+    return stmt
+
+
+def _add_daily_receiver_activity(daily_machines, date_from, date_to, row):
+    username, receiver_id, started_at, last_seen_at, ended_at = row
+    receiver_key = str(receiver_id or "").strip().casefold()
+    username_key = str(username or "").strip().casefold()
+    if not username_key or not receiver_key:
+        return
+    try:
+        first_active_at = int(started_at if started_at is not None else last_seen_at)
+        last_active_at = int(ended_at if ended_at is not None else last_seen_at)
+        first_active_day = datetime.fromtimestamp(first_active_at, ROVER_HISTORY_LOCAL_TIMEZONE).date()
+        last_active_day = datetime.fromtimestamp(
+            max(first_active_at, last_active_at - 1), ROVER_HISTORY_LOCAL_TIMEZONE
+        ).date()
+    except (TypeError, ValueError, OverflowError, OSError):
+        return
+    cursor = max(date_from, first_active_day)
+    last_day = min(date_to, last_active_day)
+    while cursor <= last_day:
+        daily_machines[cursor].add((username_key, receiver_key))
+        cursor += timedelta(days=1)
+
+
+async def _populate_daily_rover_activity(auth_db, date_from, date_to, visible_usernames, daily_machines):
+    if visible_usernames is not None and not visible_usernames:
+        return
+    range_start, _ = _rover_history_day_bounds(date_from)
+    _, range_end = _rover_history_day_bounds(date_to)
+    result = await auth_db.execute(_daily_rover_history_query(range_start, range_end, visible_usernames))
+    for row in result.all():
+        _add_daily_receiver_activity(daily_machines, date_from, date_to, row)
+
+
 @router.get("/api/rovers/activity/daily", responses={400: {"description": "Bad Request"}})
 async def get_rover_activity_daily(
     date_from: date = Query(...),
@@ -68,48 +119,7 @@ async def get_rover_activity_daily(
         date_from + timedelta(days=offset): set()
         for offset in range((date_to - date_from).days + 1)
     }
-    if visible_usernames is None or visible_usernames:
-        range_start, _ = _rover_history_day_bounds(date_from)
-        _, range_end = _rover_history_day_bounds(date_to)
-        stmt = select(
-            models.RoverSessionHistory.username,
-            models.RoverSessionHistory.receiver_id,
-            models.RoverSessionHistory.started_at,
-            models.RoverSessionHistory.last_seen_at,
-            models.RoverSessionHistory.ended_at,
-        ).where(
-            *_rover_history_overlap_filters(range_start, range_end),
-            models.RoverSessionHistory.username.is_not(None),
-            func.trim(models.RoverSessionHistory.username) != "",
-            models.RoverSessionHistory.receiver_id.is_not(None),
-            func.trim(models.RoverSessionHistory.receiver_id) != "",
-        )
-        if visible_usernames is not None:
-            stmt = stmt.where(func.lower(func.trim(models.RoverSessionHistory.username)).in_(visible_usernames))
-        result = await auth_db.execute(stmt)
-        for username, receiver_id, started_at, last_seen_at, ended_at in result.all():
-            receiver_key = str(receiver_id or "").strip().casefold()
-            username_key = str(username or "").strip().casefold()
-            if not username_key or not receiver_key:
-                continue
-            try:
-                first_active_at = int(started_at if started_at is not None else last_seen_at)
-                last_active_at = int(ended_at if ended_at is not None else last_seen_at)
-                first_active_day = datetime.fromtimestamp(
-                    first_active_at,
-                    ROVER_HISTORY_LOCAL_TIMEZONE,
-                ).date()
-                last_active_day = datetime.fromtimestamp(
-                    max(first_active_at, last_active_at - 1),
-                    ROVER_HISTORY_LOCAL_TIMEZONE,
-                ).date()
-            except (TypeError, ValueError, OverflowError, OSError):
-                continue
-            cursor = max(date_from, first_active_day)
-            last_day = min(date_to, last_active_day)
-            while cursor <= last_day:
-                daily_machines[cursor].add((username_key, receiver_key))
-                cursor += timedelta(days=1)
+    await _populate_daily_rover_activity(auth_db, date_from, date_to, visible_usernames, daily_machines)
 
     return {
         "date_from": date_from.isoformat(),

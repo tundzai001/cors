@@ -3104,11 +3104,7 @@ class MqttSourceWorker(threading.Thread):
 
         return False
 
-    def set_stream_active(self, active: bool, mountpoint=None):
-        active = bool(active)
-        target_mp = str(mountpoint or "").strip().lower()
-        runtime = status_mgr.get_runtime_config(self.serial)
-
+    def _matching_stream_servers(self, active, target_mp):
         matched_servers = []
         for server_id in (1, 2):
             server_cfg = self._server_target_config(server_id)
@@ -3121,8 +3117,10 @@ class MqttSourceWorker(threading.Thread):
                 matched_servers.append(server_id)
 
         if not matched_servers and active:
-            matched_servers = [1]
+            return [1]
+        return matched_servers
 
+    def _apply_stream_runtime(self, runtime, matched_servers, active, mountpoint):
         for server_id in matched_servers:
             if active:
                 runtime[f"server{server_id}_enabled"] = True
@@ -3137,17 +3135,26 @@ class MqttSourceWorker(threading.Thread):
         elif not active:
             runtime.pop("active_mountpoint", None)
 
+    def _reset_paused_stream_stats(self, matched_servers):
+        with self.socket_lock:
+            for server_id in matched_servers:
+                key = f"server{server_id}"
+                self.current_bps_by_server[key] = 0
+                self.bytes_sent_by_server[key] = 0
+            self.current_bps = self.current_bps_by_server.get("server1", 0)
+
+    def set_stream_active(self, active: bool, mountpoint=None):
+        active = bool(active)
+        target_mp = str(mountpoint or "").strip().lower()
+        runtime = status_mgr.get_runtime_config(self.serial)
+        matched_servers = self._matching_stream_servers(active, target_mp)
+        self._apply_stream_runtime(runtime, matched_servers, active, mountpoint)
         self.runtime_config = runtime
         self.cfg.update(runtime)
         status_mgr.update_runtime_config(self.serial, runtime)
 
         if not active:
-            with self.socket_lock:
-                for server_id in matched_servers:
-                    key = f"server{server_id}"
-                    self.current_bps_by_server[key] = 0
-                    self.bytes_sent_by_server[key] = 0
-                self.current_bps = self.current_bps_by_server.get("server1", 0)
+            self._reset_paused_stream_stats(matched_servers)
             self.log("INFO", "RTCM paused; keeping authenticated caster connections")
         else:
             self.log("INFO", f"Wake received; enabling NTRIP target for mountpoint={mountpoint or self.cfg.get('target_mp')}")

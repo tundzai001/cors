@@ -22,6 +22,55 @@ JSONLD_TYPE_KEY = "@type"
 SCHEMA_ORG_URL = "https://schema.org"
 
 
+async def _find_station_seo_device(db, token, token_slug):
+    device = await crud.get_device_by_serial(db, token)
+    if device:
+        return device
+    all_devices = (await db.execute(select(models.Device))).scalars().all()
+    for item in all_devices:
+        if station_slug(item.name or item.serial or "") == token_slug:
+            return item
+    return None
+
+
+def _station_page_metadata(html_content, device, slug, canonical_path):
+    station_name = device.name or device.serial
+    status_text = "Online" if device.status == "online" else "Offline"
+    base_cfg = device.base_config or {}
+    coords = base_cfg.get("coords", {})
+    lat = coords.get("lat") or base_cfg.get("lat", 0.0)
+    lon = coords.get("lon") or base_cfg.get("lon", 0.0)
+    alt = coords.get("alt") or base_cfg.get("alt", 0.0)
+    title = f"Trạm Base {station_name} | Hệ thống Base Aitogy"
+    page_url = f"https://base.aitogy.com{canonical_path}"
+    desc = f"Trạm Base {station_name} ({slug or device.serial}) tại {lat}, {lon}. Trạng thái: {status_text}. Theo dõi tín hiệu vệ tinh GPS/GLONASS/BDS và độ trễ RTK thời gian thực."
+    json_ld = {
+        JSONLD_CONTEXT_KEY: SCHEMA_ORG_URL,
+        JSONLD_TYPE_KEY: "Place",
+        "name": f"GNSS Base Station {station_name}",
+        "description": desc,
+        "identifier": slug or device.serial,
+        "geo": {
+            JSONLD_TYPE_KEY: "GeoCoordinates",
+            "latitude": lat,
+            "longitude": lon,
+            "elevation": alt
+        },
+        "additionalType": "https://en.wikipedia.org/wiki/GNSS_augmentation",
+        "provider": {
+            JSONLD_TYPE_KEY: "Organization",
+            "name": "AITOGY .,JSC",
+            "legalName": "Aitogy Infrastructure Technology Joint Stock Company",
+            "url": "https://base.aitogy.com"
+        }
+    }
+    json_ld_json = json.dumps(json_ld, ensure_ascii=False)
+    json_ld_json = json_ld_json.replace("&", "\\u0026").replace("<", "\\u003c").replace(">", "\\u003e")
+    json_ld_script = f'<script type="application/ld+json">{json_ld_json}</script>'
+    html_content = page_metadata(html_content, title=title, description=desc, url=page_url)
+    return html_content.replace("</head>", f"{json_ld_script}\n</head>")
+
+
 @router.get("/station/{serial}", responses={404: {"description": "Not Found"}})
 async def get_station_seo_page(serial: str, db: AsyncSession = Depends(get_db)):
     """
@@ -30,14 +79,7 @@ async def get_station_seo_page(serial: str, db: AsyncSession = Depends(get_db)):
     """
     token = (serial or "").strip()
     token_slug = station_slug(token)
-
-    device = await crud.get_device_by_serial(db, token)
-    if not device:
-        all_devices = (await db.execute(select(models.Device))).scalars().all()
-        for item in all_devices:
-            if station_slug(item.name or item.serial or "") == token_slug:
-                device = item
-                break
+    device = await _find_station_seo_device(db, token, token_slug)
     if device is None:
         raise HTTPException(status_code=404, detail="Không tìm thấy trạm Base")
 
@@ -53,57 +95,7 @@ async def get_station_seo_page(serial: str, db: AsyncSession = Depends(get_db)):
 
     try:
         html_content = await asyncio.to_thread(index_path.read_text, encoding="utf-8")
-
-        if device:
-            # 1. DATA EXTRACTION
-            station_name = device.name or device.serial
-            status_text = "Online" if device.status == "online" else "Offline"
-
-            # Extract Coordinates
-            base_cfg = device.base_config or {}
-            coords = base_cfg.get("coords", {})
-            lat = coords.get("lat") or base_cfg.get("lat", 0.0)
-            lon = coords.get("lon") or base_cfg.get("lon", 0.0)
-            alt = coords.get("alt") or base_cfg.get("alt", 0.0)
-
-            # 2. BUILD DYNAMIC SEO TAGS
-            title = f"Trạm Base {station_name} | Hệ thống Base Aitogy"
-            page_url = f"https://base.aitogy.com{canonical_path}"
-            desc = f"Trạm Base {station_name} ({slug or device.serial}) tại {lat}, {lon}. Trạng thái: {status_text}. Theo dõi tín hiệu vệ tinh GPS/GLONASS/BDS và độ trễ RTK thời gian thực."
-
-            # 3. BUILD DEEP JSON-LD (Schema.org)
-            json_ld = {
-                JSONLD_CONTEXT_KEY: SCHEMA_ORG_URL,
-                JSONLD_TYPE_KEY: "Place",
-                "name": f"GNSS Base Station {station_name}",
-                "description": desc,
-                "identifier": slug or device.serial,
-                "geo": {
-                    JSONLD_TYPE_KEY: "GeoCoordinates",
-                    "latitude": lat,
-                    "longitude": lon,
-                    "elevation": alt
-                },
-                "additionalType": "https://en.wikipedia.org/wiki/GNSS_augmentation",
-                "provider": {
-                    JSONLD_TYPE_KEY: "Organization",
-                    "name": "AITOGY .,JSC",
-                    "legalName": "Aitogy Infrastructure Technology Joint Stock Company",
-                    "url": "https://base.aitogy.com"
-                }
-            }
-            json_ld_json = json.dumps(json_ld, ensure_ascii=False)
-            json_ld_json = json_ld_json.replace("&", "\\u0026").replace("<", "\\u003c").replace(">", "\\u003e")
-            json_ld_script = f'<script type="application/ld+json">{json_ld_json}</script>'
-
-            html_content = page_metadata(
-                html_content, title=title, description=desc, url=page_url
-            )
-
-            # Inject JSON-LD before head closing
-            html_content = html_content.replace("</head>", f"{json_ld_script}\n</head>")
-
-        return HTMLResponse(content=html_content)
+        return HTMLResponse(content=_station_page_metadata(html_content, device, slug, canonical_path))
     except Exception as e:
         logging.exception(f"❌ Professional SEO Injection Failed: {e}")
         return FileResponse(index_path)
