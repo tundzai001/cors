@@ -34,6 +34,21 @@ def _map_config(value: Any) -> dict:
     return value if isinstance(value, dict) else {}
 
 
+def _map_coordinate_values(source: dict) -> tuple[Optional[Any], Optional[Any], Optional[Any]]:
+    coords = _map_config(source.get("coords"))
+    lat = coords.get("lat") if coords.get("lat") is not None else source.get("lat")
+    lon = coords.get("lon") if coords.get("lon") is not None else source.get("lon")
+    alt = coords.get("alt") if coords.get("alt") is not None else source.get("alt")
+    return lat, lon, alt
+
+
+def _map_altitude(value: Any) -> float:
+    try:
+        return float(value) if value is not None else 0.0
+    except (TypeError, ValueError):
+        return 0.0
+
+
 def _public_map_coords(dev: models.Device) -> tuple[Optional[Any], Optional[Any], Optional[Any]]:
     sources = []
     base_config = _map_config(getattr(dev, "base_config", None))
@@ -44,17 +59,10 @@ def _public_map_coords(dev: models.Device) -> tuple[Optional[Any], Optional[Any]
         sources.append(base_coords)
 
     for source in sources:
-        coords = _map_config(source.get("coords"))
-        lat = coords.get("lat") if coords.get("lat") is not None else source.get("lat")
-        lon = coords.get("lon") if coords.get("lon") is not None else source.get("lon")
-        alt = coords.get("alt") if coords.get("alt") is not None else source.get("alt")
+        lat, lon, alt = _map_coordinate_values(source)
         if lat is None or lon is None:
             continue
-        try:
-            alt = float(alt) if alt is not None else 0.0
-        except (TypeError, ValueError):
-            alt = 0.0
-        return lat, lon, alt
+        return lat, lon, _map_altitude(alt)
     return None, None, None
 
 

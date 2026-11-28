@@ -511,6 +511,64 @@ class CasterClient:
         response = await self._send_command(cmd)
         return self._is_success_response(response)
 
+    def _parse_custom_source_record(self, parts):
+        boolean_tokens = {"true", "false", "0", "1", "yes", "no", "on", "off"}
+        if len(parts) < 10 or parts[7].lower() not in boolean_tokens:
+            return None
+        return {
+            "identifier": parts[1],
+            "mountpoint": parts[2],
+            "password": parts[3] if len(parts) > 3 else "",
+            "datacount": self._parse_int(parts[4], 0),
+            "latitude": self._parse_float(parts[5], 0.0),
+            "longitude": self._parse_float(parts[6], 0.0),
+            "auth_required": self._parse_bool_token(parts[7], default=True),
+            "gga_required": self._parse_bool_token(parts[8], default=False),
+            "show_position": self._parse_bool_token(parts[9], default=True),
+            "host": self.host,
+            "domain": self.host,
+            "format": "",
+            "format_details": "",
+            "carrier": 0,
+            "nav_system": "",
+            "network": "",
+            "country": "",
+        }
+
+    def _parse_standard_source_record(self, parts):
+        if len(parts) < 15:
+            return None
+        raw_auth = parts[15] if len(parts) > 15 else "N"
+        return {
+            "mountpoint": parts[1],
+            "identifier": parts[2],
+            "password": "",
+            "datacount": 0,
+            "format": parts[3],
+            "format_details": parts[4],
+            "carrier": self._parse_int(parts[5], 0),
+            "nav_system": parts[6],
+            "network": parts[7],
+            "country": parts[8],
+            "latitude": self._parse_float(parts[9], 0.0),
+            "longitude": self._parse_float(parts[10], 0.0),
+            "gga_required": self._parse_bool_token(parts[11], default=False),
+            "show_position": True,
+            "single_base_solution": self._parse_bool_token(parts[12], default=True),
+            "generator": parts[13],
+            "compression": parts[14] if len(parts) > 14 else "",
+            "auth_required": str(raw_auth).strip().upper() in {"B", "D", "Y", "TRUE", "1"},
+            "fee": parts[16] if len(parts) > 16 else "N",
+            "bitrate": parts[17] if len(parts) > 17 else "",
+            "misc": parts[18] if len(parts) > 18 else "",
+            "host": self.host,
+            "domain": self.host,
+        }
+
+    def _parse_source_record(self, line):
+        parts = [part.strip() for part in line.split(";")]
+        return self._parse_custom_source_record(parts) or self._parse_standard_source_record(parts)
+
     async def get_sources(self, prefer_standard_ntrip: bool = False) -> Optional[List[dict]]:
         """
         Fetch all available mountpoints/sources from NTRIP Caster via /sourcetable or standard NTRIP GET /.
@@ -522,18 +580,13 @@ class CasterClient:
             token = base64.b64encode(f"{self.admin_user}:{self.admin_password}".encode("latin1", errors="ignore")).decode("ascii")
             headers.append(f"Authorization: Basic {token}")
         headers.append("Connection: close")
-        cmd_standard = "\r\n".join(headers) + "\r\n\r\n"
-        cmd_custom = "GET /sourcetable HTTP/1.0\r\n\r\n"
+        commands = ("\r\n".join(headers) + "\r\n\r\n", "GET /sourcetable HTTP/1.0\r\n\r\n")
+        first_command, fallback_command = commands if prefer_standard_ntrip else commands[::-1]
 
         try:
-            if prefer_standard_ntrip:
-                response = await self._send_command(cmd_standard)
-                if not response or SOURCETABLE_OK_RESPONSE not in response:
-                    response = await self._send_command(cmd_custom)
-            else:
-                response = await self._send_command(cmd_custom)
-                if not response or SOURCETABLE_OK_RESPONSE not in response:
-                    response = await self._send_command(cmd_standard)
+            response = await self._send_command(first_command)
+            if not response or SOURCETABLE_OK_RESPONSE not in response:
+                response = await self._send_command(fallback_command)
 
             if not response:
                 return None
@@ -558,64 +611,10 @@ class CasterClient:
                         line = line[idx:]
                     else:
                         continue
-
-                parts = [p.strip() for p in line.split(";")]
-
-                # Current caster variant returns:
-                # STR;Identifier;Mountpoint;Password;Datacount;Latitude;Longitude;AuthRequired;GGARequired;ShowPos
-                # Some older variants may return the full NTRIP sourcetable layout.
                 try:
-                    if len(parts) >= 10 and (parts[7].lower() in {"true", "false", "0", "1", "yes", "no", "on", "off"}):
-                        sources.append({
-                            "identifier": parts[1],
-                            "mountpoint": parts[2],
-                            "password": parts[3] if len(parts) > 3 else "",
-                            "datacount": self._parse_int(parts[4], 0),
-                            "latitude": self._parse_float(parts[5], 0.0),
-                            "longitude": self._parse_float(parts[6], 0.0),
-                            "auth_required": self._parse_bool_token(parts[7], default=True),
-                            "gga_required": self._parse_bool_token(parts[8], default=False),
-                            "show_position": self._parse_bool_token(parts[9], default=True),
-                            "host": self.host,
-                            "domain": self.host,
-                            "format": "",
-                            "format_details": "",
-                            "carrier": 0,
-                            "nav_system": "",
-                            "network": "",
-                            "country": "",
-                        })
-                        continue
-
-                    # Fallback to full NTRIP table layout
-                    if len(parts) >= 15:
-                        raw_auth = parts[15] if len(parts) > 15 else "N"
-                        is_auth_req = str(raw_auth).strip().upper() in {"B", "D", "Y", "TRUE", "1"}
-                        sources.append({
-                            "mountpoint": parts[1],
-                            "identifier": parts[2],
-                            "password": "",
-                            "datacount": 0,
-                            "format": parts[3],
-                            "format_details": parts[4],
-                            "carrier": self._parse_int(parts[5], 0),
-                            "nav_system": parts[6],
-                            "network": parts[7],
-                            "country": parts[8],
-                            "latitude": self._parse_float(parts[9], 0.0),
-                            "longitude": self._parse_float(parts[10], 0.0),
-                            "gga_required": self._parse_bool_token(parts[11], default=False),
-                            "show_position": True,
-                            "single_base_solution": self._parse_bool_token(parts[12], default=True),
-                            "generator": parts[13],
-                            "compression": parts[14] if len(parts) > 14 else "",
-                            "auth_required": is_auth_req,
-                            "fee": parts[16] if len(parts) > 16 else "N",
-                            "bitrate": parts[17] if len(parts) > 17 else "",
-                            "misc": parts[18] if len(parts) > 18 else "",
-                            "host": self.host,
-                            "domain": self.host,
-                        })
+                    record = self._parse_source_record(line)
+                    if record:
+                        sources.append(record)
                 except Exception as e:
                     logger.warning(f"Failed to parse source line: {line[:80]}, error: {e}")
                     continue

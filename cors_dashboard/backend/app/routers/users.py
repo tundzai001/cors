@@ -50,6 +50,82 @@ async def _notify_station_scope_changed(db: AsyncSession, user_ids: set[int]) ->
     for affected_id in user_ids | set(children.scalars().all()):
         await ui_manager.broadcast({"type": "user_assignment_updated", "data": {"user_id": affected_id}})
 
+
+async def _authorize_user_update_target(user_to_update, user_data, current_user, auth_db):
+    if current_user.role == 'admin':
+        return
+    if user_to_update.id != current_user.id:
+        my_created_ids, _ = await _get_ownership_info(auth_db, current_user.id)
+        is_my_viewer = user_to_update.role == 'viewer' and user_to_update.id in my_created_ids
+        if not is_my_viewer:
+            raise HTTPException(status_code=403, detail="Chỉ có thể sửa đổi tài khoản Viewer do bạn tạo")
+    if user_data.role and user_data.role != user_to_update.role:
+        raise HTTPException(status_code=403, detail="Không có quyền thay đổi Role")
+
+
+async def _validate_user_update_permissions(user_to_update, current_user, update_dict, devices_db):
+    if current_user.role == 'admin':
+        return
+    forbidden = {
+        'assigned_devices', 'view_only_bases', 'can_view_rovers', 'can_create_rovers',
+        'can_create_users', 'extra_mountpoints',
+    }
+    if not (current_user.role == 'coordinator' and getattr(current_user, 'can_view_mobile_bases', False)):
+        forbidden.add('can_view_mobile_bases')
+    if any(field in update_dict for field in forbidden):
+        raise HTTPException(status_code=403, detail="Chỉ admin được thay đổi quyền tài khoản")
+    if 'allowed_bases' not in update_dict:
+        return
+    if user_to_update.id == current_user.id:
+        raise HTTPException(status_code=403, detail="Không thể tự cấp quyền trạm")
+    visible = await crud.get_coordinator_visible_base_serials(devices_db, current_user)
+    requested = {
+        str(serial).strip().upper()
+        for serial in update_dict['allowed_bases'] or []
+        if str(serial).strip()
+    }
+    if not requested.issubset(visible):
+        raise HTTPException(status_code=403, detail="Chỉ được cấp trạm trong phạm vi của bạn")
+
+
+async def _broadcast_user_device_update(device):
+    await ui_manager.broadcast({
+        "type": "status_update",
+        "data": schemas.Device.from_orm(device).model_dump(),
+    })
+
+
+async def _assign_devices_to_coordinator(user_id, assigned_serials, devices_db, affected_users):
+    for serial in assigned_serials:
+        device = await crud.get_device_by_serial(devices_db, serial)
+        if not device:
+            continue
+        if device.user_id is not None:
+            affected_users.add(device.user_id)
+        device.user_id = user_id
+        await _broadcast_user_device_update(device)
+
+
+async def _update_assigned_user_devices(user_id, assigned_serials, update_dict, user_to_update, devices_db, auth_db):
+    target_role = update_dict.get('role', user_to_update.role)
+    current_devices = await crud.get_devices_by_user_id(devices_db, user_id)
+    for device in current_devices:
+        device.user_id = None
+        await _broadcast_user_device_update(device)
+
+    if target_role == 'coordinator':
+        affected_users = {user_id}
+        await _assign_devices_to_coordinator(user_id, assigned_serials, devices_db, affected_users)
+        await devices_db.commit()
+        await auth_db.execute(delete(models.SystemSetting).where(
+            models.SystemSetting.key == f'viewer_devices_{user_id}'
+        ))
+        await auth_db.commit()
+        return affected_users
+
+    await devices_db.commit()
+    return {user_id}
+
 # === USER MANAGEMENT ===
 @router.get("/api/users", response_model=list[schemas.UserResponse])
 async def get_users(db: AsyncSession = Depends(get_auth_db),
@@ -275,80 +351,23 @@ async def update_user(
     if not user_to_update:
         raise HTTPException(status_code=404, detail=USER_NOT_FOUND)
 
-    if current_user.role != 'admin':
-        if user_to_update.id != current_user.id:
-            # Chỉ được sửa viewer do mình tạo
-            my_created_ids, _ = await _get_ownership_info(auth_db, current_user.id)
-            is_my_viewer = user_to_update.role == 'viewer' and user_to_update.id in my_created_ids
-            if not is_my_viewer:
-                raise HTTPException(status_code=403, detail="Chỉ có thể sửa đổi tài khoản Viewer do bạn tạo")
-        if user_data.role and user_data.role != user_to_update.role:
-            raise HTTPException(status_code=403, detail="Không có quyền thay đổi Role")
+    await _authorize_user_update_target(user_to_update, user_data, current_user, auth_db)
 
     if current_user.id == user_id and user_data.is_active is False:
         raise HTTPException(status_code=400, detail="Không thể vô hiệu hóa tài khoản của chính bạn")
 
     update_dict = user_data.dict(exclude_unset=True)
-    if current_user.role != 'admin':
-        forbidden = {'assigned_devices', 'view_only_bases', 'can_view_rovers', 'can_create_rovers', 'can_create_users', 'extra_mountpoints'}
-        if not (current_user.role == 'coordinator' and getattr(current_user, 'can_view_mobile_bases', False)):
-            forbidden.add('can_view_mobile_bases')
-        if any(field in update_dict for field in forbidden):
-            raise HTTPException(status_code=403, detail="Chỉ admin được thay đổi quyền tài khoản")
-        if 'allowed_bases' in update_dict:
-            if user_to_update.id == current_user.id:
-                raise HTTPException(status_code=403, detail="Không thể tự cấp quyền trạm")
-            visible = await crud.get_coordinator_visible_base_serials(devices_db, current_user)
-            requested = {str(serial).strip().upper() for serial in update_dict['allowed_bases'] or [] if str(serial).strip()}
-            if not requested.issubset(visible):
-                raise HTTPException(status_code=403, detail="Chỉ được cấp trạm trong phạm vi của bạn")
+    await _validate_user_update_permissions(user_to_update, current_user, update_dict, devices_db)
     
     # ===================================================================
     # FIX: LOGIC CẬP NHẬT DANH SÁCH THIẾT BỊ (ASSIGN/UNASSIGN)
     # ===================================================================
     assigned_serials = update_dict.pop("assigned_devices", None)
     affected_users = {user_id}
-    
     if assigned_serials is not None:
-        target_role = update_dict.get('role', user_to_update.role)
-        
-        # 1. Lấy tất cả thiết bị HIỆN TẠI đang gán cho user này (chủ sở hữu)
-        current_devices = await crud.get_devices_by_user_id(devices_db, user_id)
-        
-        # 2. Gỡ bỏ tất cả ownership trước (Reset về None)
-        for dev in current_devices:
-            dev.user_id = None
-            # Broadcast cập nhật UI: Trạm này đã bị gỡ
-            await ui_manager.broadcast({
-                "type": "status_update",
-                "data": schemas.Device.from_orm(dev).model_dump()
-            })
-        
-        # 3. Áp dụng gán mới tùy theo vai trò
-        if target_role == 'coordinator':
-            for serial in assigned_serials:
-                device = await crud.get_device_by_serial(devices_db, serial)
-                if device:
-                    if device.user_id is not None:
-                        affected_users.add(device.user_id)
-                    device.user_id = user_id
-                    # Broadcast cập nhật UI: Trạm này đã có chủ mới
-                    await ui_manager.broadcast({
-                        "type": "status_update",
-                        "data": schemas.Device.from_orm(device).model_dump()
-                    })
-            await devices_db.commit()
-            
-            from sqlalchemy import delete
-            from .. import models
-            # Xóa cấu hình viewer cũ nếu có
-            await auth_db.execute(delete(models.SystemSetting).where(models.SystemSetting.key == f'viewer_devices_{user_id}'))
-            await auth_db.commit()
-            
-        elif target_role == 'viewer':
-            await devices_db.commit() # commit việc gỡ ownership
-        else:
-            await devices_db.commit()
+        affected_users = await _update_assigned_user_devices(
+            user_id, assigned_serials, update_dict, user_to_update, devices_db, auth_db
+        )
     # ===================================================================
 
     if 'password' in update_dict and update_dict['password']:

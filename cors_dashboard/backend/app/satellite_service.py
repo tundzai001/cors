@@ -112,21 +112,37 @@ class SatelliteService:
         self._assign_tle_codes(rows, owners)
         self._apply_status_snapshot(rows, owners)
         return payload
+        return payload
 
     def _merge_supplemental_constellations(self, payload, constellations):
         for key, sup_tle in SUPPLEMENTAL_TLE.items():
-            constellation_sats = constellations.get(key)
-            if isinstance(constellation_sats, list) and constellation_sats:
-                existing_norads = {str(s.get("norad_id", s.get("line1", "")[2:7])).strip().lstrip("0") for s in constellation_sats}
-                for sup_sat in self._parse_tle_text(sup_tle, key):
-                    sup_norad = str(sup_sat.get("norad_id", "")).strip().lstrip("0")
-                    if sup_norad and sup_norad not in existing_norads:
-                        constellation_sats.append(sup_sat)
-                        existing_norads.add(sup_norad)
-                if isinstance(payload.get("counts"), dict) and key in payload["counts"]:
-                    payload["counts"][key] = len(constellation_sats)
-                if "total_satellites" in payload:
-                    payload["total_satellites"] = sum(len(v) for v in constellations.values() if isinstance(v, list))
+            self._merge_constellation_supplement(payload, constellations, key, sup_tle)
+
+    def _merge_constellation_supplement(self, payload, constellations, key, sup_tle):
+        satellites = constellations.get(key)
+        if not isinstance(satellites, list) or not satellites:
+            return
+        existing_norads = {
+            str(sat.get("norad_id", sat.get("line1", "")[2:7])).strip().lstrip("0")
+            for sat in satellites
+        }
+        for supplemental in self._parse_tle_text(sup_tle, key):
+            norad = str(supplemental.get("norad_id", "")).strip().lstrip("0")
+            if not norad or norad in existing_norads:
+                continue
+            satellites.append(supplemental)
+            existing_norads.add(norad)
+        self._update_constellation_counts(payload, constellations, key, satellites)
+
+    @staticmethod
+    def _update_constellation_counts(payload, constellations, key, satellites):
+        counts = payload.get("counts")
+        if isinstance(counts, dict) and key in counts:
+            counts[key] = len(satellites)
+        if "total_satellites" in payload:
+            payload["total_satellites"] = sum(
+                len(items) for items in constellations.values() if isinstance(items, list)
+            )
 
     def _current_assignment_owners(self):
         owners = {}
@@ -148,44 +164,68 @@ class SatelliteService:
 
     def _apply_status_snapshot(self, rows, owners):
         for constellation, sat in rows:
-            norad = str(sat.get("norad_id", sat["line1"][2:7].strip())).lstrip("0")
-            for field in ("status_source", "status_as_of_utc", "operational_status"):
-                sat.pop(field, None)
-            known = "?" not in sat["code"]
-            sat["identity_source"] = IGS_METADATA_URL if norad in self._identifiers else "CelesTrak TLE name"
-            sat["identity_status"] = "assigned" if known else "unconfirmed"
-            record = self._status_snapshot.get("records", {}).get(norad)
-            if not record:
-                continue
-            published = self._status_snapshot.get("published_at_utc", "")
-            try:
-                date = datetime.fromisoformat(published)
-            except (ValueError, TypeError):
-                continue
-            if date.tzinfo is None:
-                continue
-            epoch = date.strftime(TLE_EPOCH_FORMAT) + f"{date.hour * 3600 + date.minute * 60 + date.second:05d}"
-            # A monthly table cannot override a later IGS reassignment.
-            boundaries = [boundary for start, end, _ in self._identifiers.get(norad, []) for boundary in (start, end) if boundary != "0000:000:00000"]
-            if date > datetime.now(timezone.utc) or (boundaries and max(boundaries) > epoch):
-                continue
-            sat["status_source"] = self._status_snapshot["source"]
-            sat["status_as_of_utc"] = published
-            sat["operational_status"] = record["status"]
-            if record["status"] == "retired":
-                sat["code"] = CONSTELLATIONS_CONFIG[constellation]["prefix"] + "?"
-                sat["identity_status"] = "retired"
-                sat["identity_source"] = self._status_snapshot["source"]
-                known = False
-            candidate = record.get("code")
-            # Independent fallback needs a recent dated PRN and no other current owner.
-            age = (datetime.now(timezone.utc) - date).total_seconds()
-            if not known and candidate and record["status"] != "retired" and candidate.startswith(CONSTELLATIONS_CONFIG[constellation]["prefix"]) and 0 <= age <= 90 * 86400 and not (owners.get(candidate, set()) - {norad}):
-                sat["code"] = candidate
-                sat["identity_status"] = "assigned"
-                sat["identity_source"] = self._status_snapshot["source"]
-                owners.setdefault(candidate, set()).add(norad)
-        return payload
+            self._apply_satellite_status(constellation, sat, owners)
+
+    def _apply_satellite_status(self, constellation, sat, owners):
+        norad = str(sat.get("norad_id", sat["line1"][2:7].strip())).lstrip("0")
+        for field in ("status_source", "status_as_of_utc", "operational_status"):
+            sat.pop(field, None)
+        known = "?" not in sat["code"]
+        sat["identity_source"] = IGS_METADATA_URL if norad in self._identifiers else "CelesTrak TLE name"
+        sat["identity_status"] = "assigned" if known else "unconfirmed"
+        record = self._status_snapshot.get("records", {}).get(norad)
+        if not record:
+            return
+        published = self._status_snapshot.get("published_at_utc", "")
+        try:
+            date = datetime.fromisoformat(published)
+        except (ValueError, TypeError):
+            return
+        if date.tzinfo is None:
+            return
+        epoch = date.strftime(TLE_EPOCH_FORMAT) + f"{date.hour * 3600 + date.minute * 60 + date.second:05d}"
+        if self._snapshot_is_superseded(norad, date, epoch):
+            return
+        self._record_satellite_status(constellation, sat, record, published)
+        self._apply_unconfirmed_status_code(constellation, sat, norad, record, date, owners)
+
+    def _snapshot_is_superseded(self, norad, date, epoch):
+        boundaries = [
+            boundary
+            for start, end, _ in self._identifiers.get(norad, [])
+            for boundary in (start, end)
+            if boundary != "0000:000:00000"
+        ]
+        return date > datetime.now(timezone.utc) or (boundaries and max(boundaries) > epoch)
+
+    def _record_satellite_status(self, constellation, sat, record, published):
+        sat["status_source"] = self._status_snapshot["source"]
+        sat["status_as_of_utc"] = published
+        sat["operational_status"] = record["status"]
+        if record["status"] != "retired":
+            return
+        sat["code"] = CONSTELLATIONS_CONFIG[constellation]["prefix"] + "?"
+        sat["identity_status"] = "retired"
+        sat["identity_source"] = self._status_snapshot["source"]
+
+    def _apply_unconfirmed_status_code(self, constellation, sat, norad, record, date, owners):
+        known = "?" not in sat["code"]
+        candidate = record.get("code")
+        age = (datetime.now(timezone.utc) - date).total_seconds()
+        eligible = (
+            not known
+            and candidate
+            and record["status"] != "retired"
+            and candidate.startswith(CONSTELLATIONS_CONFIG[constellation]["prefix"])
+            and 0 <= age <= 90 * 86400
+            and not (owners.get(candidate, set()) - {norad})
+        )
+        if not eligible:
+            return
+        sat["code"] = candidate
+        sat["identity_status"] = "assigned"
+        sat["identity_source"] = self._status_snapshot["source"]
+        owners.setdefault(candidate, set()).add(norad)
 
     async def _refresh_independent_status(self, client):
         try:

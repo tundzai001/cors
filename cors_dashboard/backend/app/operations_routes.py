@@ -67,13 +67,9 @@ def _device_total_bps(device: models.Device) -> int:
     return total if has_server_bps else int(getattr(device, "bps", 0) or 0)
 
 
-def _device_stream_alerts(device: models.Device, now_ts: int) -> list[dict]:
+def _device_status_alerts(device: models.Device, now_ts: int, raw_status: str) -> list[dict]:
     alerts = []
-    service = device.service_config if isinstance(device.service_config, dict) else {}
-    ntrip = device.ntrip_status if isinstance(device.ntrip_status, dict) else {}
-    raw_status = str(device.status or "offline").lower()
     stale_seconds = now_ts - int(device.timestamp or 0)
-
     if raw_status == "offline":
         alerts.append({
             "id": f"device-offline-{device.serial}",
@@ -94,7 +90,11 @@ def _device_stream_alerts(device: models.Device, now_ts: int) -> list[dict]:
             "device_serial": device.serial,
             "created_at": int(device.timestamp or now_ts),
         })
+    return alerts
 
+
+def _silent_stream_alerts(device: models.Device, now_ts: int, raw_status: str, service: dict, ntrip: dict) -> list[dict]:
+    alerts = []
     for idx in (1, 2):
         if not service.get(f"server{idx}_enabled"):
             continue
@@ -114,7 +114,44 @@ def _device_stream_alerts(device: models.Device, now_ts: int) -> list[dict]:
                 "mountpoint": mountpoint,
                 "created_at": now_ts,
             })
+    return alerts
 
+
+def _device_antenna_alerts(device: models.Device, now_ts: int, raw_status: str, ntrip: dict) -> list[dict]:
+    if raw_status not in ("online", "streaming", "sleep", "starting"):
+        return []
+    system_info = device.system_info if isinstance(device.system_info, dict) else {}
+    antenna_status = system_info.get("antenna_status") or ntrip.get("antenna_status")
+    if isinstance(antenna_status, dict) and antenna_status.get("state") == "FAULT":
+        return [{
+            "id": f"device-antenna-fault-{device.serial}",
+            "severity": "warning",
+            "type": "antenna_fault",
+            "title": "Antenna Fault",
+            "message": antenna_status.get("message") or f"{device.name or device.serial} has an antenna fault.",
+            "device_serial": device.serial,
+            "created_at": now_ts,
+        }]
+    rtcm_in_bps = int(ntrip.get("rtcm_input_bps") or 0)
+    if 0 < rtcm_in_bps < 100:
+        return [{
+            "id": f"device-antenna-low-bps-{device.serial}",
+            "severity": "warning",
+            "type": "antenna_fault",
+            "title": "Low RTCM Input Rate",
+            "message": f"{device.name or device.serial} has extremely low RTCM input rate ({rtcm_in_bps} B/s). Possible antenna fault.",
+            "device_serial": device.serial,
+            "created_at": now_ts,
+        }]
+    return []
+
+
+def _device_stream_alerts(device: models.Device, now_ts: int) -> list[dict]:
+    service = device.service_config if isinstance(device.service_config, dict) else {}
+    ntrip = device.ntrip_status if isinstance(device.ntrip_status, dict) else {}
+    raw_status = str(device.status or "offline").lower()
+    alerts = _device_status_alerts(device, now_ts, raw_status)
+    alerts.extend(_silent_stream_alerts(device, now_ts, raw_status, service, ntrip))
     if device.is_synced is False:
         alerts.append({
             "id": f"device-unsynced-{device.serial}",
@@ -125,34 +162,7 @@ def _device_stream_alerts(device: models.Device, now_ts: int) -> list[dict]:
             "device_serial": device.serial,
             "created_at": now_ts,
         })
-
-    # Antenna health checks based on agent reported antenna_status or rtcm_input_bps
-    if raw_status in ("online", "streaming", "sleep", "starting"):
-        system_info = device.system_info if isinstance(device.system_info, dict) else {}
-        antenna_status = system_info.get("antenna_status") or ntrip.get("antenna_status")
-        if isinstance(antenna_status, dict) and antenna_status.get("state") == "FAULT":
-            alerts.append({
-                "id": f"device-antenna-fault-{device.serial}",
-                "severity": "warning",
-                "type": "antenna_fault",
-                "title": "Antenna Fault",
-                "message": antenna_status.get("message") or f"{device.name or device.serial} has an antenna fault.",
-                "device_serial": device.serial,
-                "created_at": now_ts,
-            })
-        else:
-            rtcm_in_bps = int(ntrip.get("rtcm_input_bps") or 0)
-            if 0 < rtcm_in_bps < 100:
-                alerts.append({
-                    "id": f"device-antenna-low-bps-{device.serial}",
-                    "severity": "warning",
-                    "type": "antenna_fault",
-                    "title": "Low RTCM Input Rate",
-                    "message": f"{device.name or device.serial} has extremely low RTCM input rate ({rtcm_in_bps} B/s). Possible antenna fault.",
-                    "device_serial": device.serial,
-                    "created_at": now_ts,
-                })
-
+    alerts.extend(_device_antenna_alerts(device, now_ts, raw_status, ntrip))
     return alerts
 
 
