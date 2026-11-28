@@ -77,66 +77,65 @@ document.addEventListener('DOMContentLoaded', async () => {
         || (hasRoverPageAccess() && currentUser?.can_create_rovers === true)
     );
 
+    function forceRoverPageLogout() {
+        if (typeof NavigationManager !== 'undefined') {
+            NavigationManager.forceLogout();
+            return;
+        }
+        localStorage.removeItem('access_token');
+        sessionStorage.removeItem('access_token');
+        window.location.href = '/';
+    }
+
+    function updateRoverPageUserUI() {
+        const userName = document.getElementById('user-info-name');
+        if (userName) userName.textContent = currentUser.username;
+        const userRole = document.getElementById('user-info-role');
+        if (userRole) userRole.textContent = currentUser.role.toUpperCase();
+        const userAvatar = document.getElementById('user-avatar-text');
+        if (userAvatar) userAvatar.textContent = currentUser.username.charAt(0).toUpperCase();
+
+        if (currentUser.permissions?.includes('manage:caster')) {
+            document.getElementById('caster-rover-tab-li')?.classList.remove('d-none');
+        }
+
+        if (String(currentUser.role || '').toLowerCase() === 'admin') {
+            document.getElementById('tab-mountpoints-li')?.classList.remove('d-none');
+            document.querySelectorAll('.admin-only-field').forEach(el => el.classList.remove('d-none'));
+        }
+
+        if (!hasRoverEditAccess()) {
+            document.querySelectorAll('[data-bs-target="#createRoverModal"]').forEach(el => el.classList.add('d-none'));
+            document.getElementById('rover-bulk-toolbar')?.classList.add('d-none');
+            document.getElementById('rover-bulk-toolbar-mobile')?.classList.add('d-none');
+        }
+    }
+
+    function handleRoverInitializationError(error) {
+        console.error('Initialization error:', error);
+        if (error.message === 'Unauthorized') {
+            forceRoverPageLogout();
+            return;
+        }
+        if (typeof showToast === 'function') {
+            showToast('Lỗi kết nối hệ thống. Vui lòng tải lại trang.', 'danger');
+        } else {
+            window.CorsUI?.showToast?.('danger', 'Cannot initialize rover data. Reload the page.');
+        }
+    }
+
     async function initializeRoverPageUser() {
         // === 2. AUTH & PERMISSIONS CHECK ===
         try {
             const userRes = await apiFetchRaw('/api/auth/me', { headers: API_HEADERS });
             if (!userRes.ok) {
-                if (userRes.status === 401 || userRes.status === 403) {
-                    throw new Error("Unauthorized");
-                }
-                throw new Error(`Server error: ${userRes.status}`);
+                const isUnauthorized = userRes.status === 401 || userRes.status === 403;
+                throw new Error(isUnauthorized ? 'Unauthorized' : `Server error: ${userRes.status}`);
             }
             currentUser = await userRes.json();
-
-            // Cập nhật UI Navbar
-            if(document.getElementById('user-info-name')) document.getElementById('user-info-name').textContent = currentUser.username;
-            if(document.getElementById('user-info-role')) document.getElementById('user-info-role').textContent = currentUser.role.toUpperCase();
-            if(document.getElementById('user-avatar-text')) document.getElementById('user-avatar-text').textContent = currentUser.username.charAt(0).toUpperCase();
-
-            if (currentUser.permissions?.includes('manage:caster')) {
-                const casterRoverTab = document.getElementById('caster-rover-tab-li');
-                if (casterRoverTab) casterRoverTab.classList.remove('d-none');
-            }
-
-            // Mountpoints tab is strictly admin-only.
-            if (String(currentUser.role || '').toLowerCase() === 'admin') {
-                const mountpointsTab = document.getElementById('tab-mountpoints-li');
-                if (mountpointsTab) mountpointsTab.classList.remove('d-none');
-            
-                document.querySelectorAll('.admin-only-field').forEach(el => el.classList.remove('d-none'));
-            }
-
-            // Chỉ tài khoản có quyền tạo/sửa mới thấy các công cụ ghi dữ liệu.
-            if (!hasRoverEditAccess()) {
-                document.querySelectorAll('[data-bs-target="#createRoverModal"]').forEach(el => el.classList.add('d-none'));
-                const bulkToolbar = document.getElementById('rover-bulk-toolbar');
-                if (bulkToolbar) bulkToolbar.classList.add('d-none');
-                const bulkToolbarMobile = document.getElementById('rover-bulk-toolbar-mobile');
-                if (bulkToolbarMobile) bulkToolbarMobile.classList.add('d-none');
-            }
-
+            updateRoverPageUserUI();
             initData().catch(error => console.error('initData failed:', error));
-
-        } catch (e) {
-            console.error("Initialization error:", e);
-            if (e.message === "Unauthorized") {
-                if (typeof NavigationManager !== 'undefined') {
-                    NavigationManager.forceLogout();
-                } else {
-                    localStorage.removeItem('access_token');
-                    sessionStorage.removeItem('access_token');
-                    window.location.href = '/';
-                }
-            } else {
-                // Hiển thị thông báo lỗi thay vì văng ra login nếu chỉ là lỗi mạng/server
-                if (typeof showToast === 'function') {
-                    showToast("Lỗi kết nối hệ thống. Vui lòng tải lại trang.", "danger");
-                } else {
-                    window.CorsUI?.showToast?.('danger', 'Cannot initialize rover data. Reload the page.');
-                }
-            }
-        }
+        } catch (error) { handleRoverInitializationError(error); }
     }
 
     await initializeRoverPageUser();
