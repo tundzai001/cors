@@ -258,17 +258,19 @@ const RoverManagementPanel = memo(function RoverManagementPanel({ device }) {
 
             {/* DANH SÁCH TÀI KHOẢN */}
             <h5 className="mt-4 mb-3">Danh sách Rover đã tạo</h5>
-            {isLoading ? (
+            {isLoading && (
                 <div className="text-center py-3">
                     <div className="spinner-border text-primary" role="status"></div>
                     <p className="mt-2 text-muted">Đang đồng bộ danh sách...</p>
                 </div>
-            ) : rovers.length === 0 ? (
+            )}
+            {!isLoading && rovers.length === 0 && (
                 <div className="text-center p-4 bg-dark rounded text-muted border border-secondary">
                     <i className="bi bi-people display-6 d-block mb-3 opacity-50"></i>
                     Chưa có tài khoản Rover nào được tạo cho trạm này.
                 </div>
-            ) : (
+            )}
+            {!isLoading && rovers.length > 0 && (
                 <div className="table-responsive">
                     <table className="table table-hover align-middle table-bordered border-secondary">
                         <thead className="table-dark text-center">
@@ -295,15 +297,7 @@ const RoverManagementPanel = memo(function RoverManagementPanel({ device }) {
                                     <td className="text-center">
                                         <span className="badge bg-info text-dark border border-info-subtle">
                                             <i className="bi bi-broadcast me-1"></i>
-                                            {/* Logic hiển thị Mountpoint, ưu tiên lấy từ config hiện tại nếu khớp, ko thì hiển thị cái fallback */}
-                                            {availableMountpoints.find(mp => mp.name === rover.base_serial)
-                                                ? rover.base_serial // Lưu ý: Backend đang lưu base_serial, nên cần sửa backend để lưu mountpoint nếu muốn hiển thị chính xác lịch sử.
-                                                : (availableMountpoints.length > 0 ? availableMountpoints[0].name : "Mặc định")
-                                            }
-                                            {/* Tạm thời hiển thị MP hiện tại của trạm vì logic DB đang lưu base_serial chứ chưa lưu mountpoint cụ thể từng user. 
-                                                Nhưng với caster, user đó chỉ login được vào MP đã đăng ký. 
-                                                Ở đây hiển thị MP hiện tại của trạm là hợp lý nhất. */}
-                                            {selectedMountpoint || (availableMountpoints[0]?.name || "N/A")}
+                                            {selectedMountpoint || availableMountpoints[0]?.name || 'Mặc định'}
                                         </span>
                                     </td>
                                     <td className="text-center">
@@ -370,9 +364,12 @@ const EspStoragePanel = memo(function EspStoragePanel({ device }) {
             const validInventory = !pending.inspect || report?.command_id === pending.id;
             setFailed(action.status !== 'success' || !validInventory);
             if (action.status === 'success' && pending.inspect && validInventory) setInventory(report);
-            setNotice(action.status !== 'success' ? (action.detail || 'Thiết bị từ chối thao tác.')
-                : !validInventory ? 'Chưa nhận được bảng NVS đúng yêu cầu. Hãy kiểm tra lại.'
-                : pending.inspect ? 'Đã đọc dữ liệu NVS từ thiết bị.' : 'Thiết bị đã cập nhật bộ nhớ.');
+            let actionNotice;
+            if (action.status !== 'success') actionNotice = action.detail || 'Thiết bị từ chối thao tác.';
+            else if (!validInventory) actionNotice = 'Chưa nhận được bảng NVS đúng yêu cầu. Hãy kiểm tra lại.';
+            else if (pending.inspect) actionNotice = 'Đã đọc dữ liệu NVS từ thiết bị.';
+            else actionNotice = 'Thiết bị đã cập nhật bộ nhớ.';
+            setNotice(actionNotice);
             return;
         }
         const timeout = setTimeout(() => {
@@ -399,7 +396,11 @@ const EspStoragePanel = memo(function EspStoragePanel({ device }) {
         if (group) setInventory(null);
         setPending({ id: null, inspect }); setFailed(false); setNotice('Đang gửi yêu cầu tới ESP32…');
         try {
-            const response = await window.DeviceApi.sendCommand(device.serial, group ? 'CLEAR_NVS_DATA' : 'CHECK_STORAGE_STATUS', group ? { group, confirm: group } : inspect ? { inspect: true, offset } : {});
+            const command = group ? 'CLEAR_NVS_DATA' : 'CHECK_STORAGE_STATUS';
+            let payload = {};
+            if (group) payload = { group, confirm: group };
+            else if (inspect) payload = { inspect: true, offset };
+            const response = await window.DeviceApi.sendCommand(device.serial, command, payload);
             const result = await response.json();
             if (!response.ok || !result.command_id) throw new Error(result.detail || 'Không gửi được yêu cầu.');
             setPending({ id: result.command_id, inspect });
@@ -430,6 +431,15 @@ const EspStoragePanel = memo(function EspStoragePanel({ device }) {
         serverhost2: 'Máy chủ S2', port2: 'Cổng S2', mountpoint2: 'Mountpoint S2',
         username2: 'Tài khoản S2', password2: 'Mật khẩu S2',
     };
+    function getNvsEntryValue(entry) {
+        if (entry.error) return entry.error;
+        if (entry.redacted) {
+            if (entry.bytes === 0) return '(trống)';
+            return 'Đã lưu · Nội dung được che';
+        }
+        if (entry.value === '') return '(trống)';
+        return entry.value ?? 'Đã lưu';
+    }
     return <section className="info-section mt-3" aria-label="Bộ nhớ ESP32" aria-busy={!!pending}>
         <div className="d-flex align-items-center justify-content-between gap-2 mb-2">
             <h6 className="mb-0">Bộ nhớ ESP32</h6>
@@ -489,7 +499,7 @@ const EspStoragePanel = memo(function EspStoragePanel({ device }) {
                                 <td>{['myPrefs', 'backend'].includes(entry.namespace) ? 'Cấu hình đã lưu' : 'Dữ liệu hệ thống'}</td>
                                 <th scope="row"><div>{savedFieldLabels[entry.field || entry.key] || savedFieldLabels[entry.key] || entry.key}</div><div className="small text-muted">{entry.namespace} · {entry.key}</div>{entry.field && <code>{entry.field}</code>}</th>
                                 <td>{entry.type || '—'}</td><td>{entry.bytes == null ? '—' : `${entry.bytes} B`}</td>
-                                <td className="esp-nvs-value">{entry.error || (entry.redacted ? entry.bytes === 0 ? '(trống)' : 'Đã lưu · Nội dung được che' : entry.value === '' ? '(trống)' : entry.value ?? 'Đã lưu')}{entry.truncated && <span className="small text-muted d-block">Chỉ hiển thị 96 ký tự đầu.</span>}</td>
+                                <td className="esp-nvs-value">{getNvsEntryValue(entry)}{entry.truncated && <span className="small text-muted d-block">Chỉ hiển thị 96 ký tự đầu.</span>}</td>
                             </tr>)}</tbody>
                         </table>
                     </div>
@@ -606,9 +616,10 @@ function SystemTemperature({temperature}) {
 }
 
 function SystemDiskMetric({disk}) {
-    const freeSpace = disk.total_gb >= 1 ? `Free: ${(disk.total_gb - disk.used_gb).toFixed(1)} GB`
-        : disk.total_mb !== undefined ? `Free: ${(disk.total_mb - (disk.used_mb || 0)).toFixed(1)} MB (${Math.round(disk.total_mb)}MB Flash)`
-            : `Free: ${(disk.total_gb - disk.used_gb).toFixed(2)} GB`;
+    let freeSpace;
+    if (disk.total_gb >= 1) freeSpace = `Free: ${(disk.total_gb - disk.used_gb).toFixed(1)} GB`;
+    else if (disk.total_mb !== undefined) freeSpace = `Free: ${(disk.total_mb - (disk.used_mb || 0)).toFixed(1)} MB (${Math.round(disk.total_mb)}MB Flash)`;
+    else freeSpace = `Free: ${(disk.total_gb - disk.used_gb).toFixed(2)} GB`;
     return <div className="metric-card">
         <div className="d-flex justify-content-between mb-1">
             <span className="fw-bold text-light">{disk.percent}% Used</span><span className="text-muted small">{freeSpace}</span>
@@ -647,7 +658,9 @@ const SystemInfoPanel = memo(function SystemInfoPanel({device, isOpen, onClose})
     const info = device.system_info;
     const isEsp = /^esp_/i.test(device.serial || '');
     const healthScore = getSystemHealthScore(info, device);
-    const healthColor = healthScore >= 80 ? '#51cf66' : healthScore >= 60 ? '#ffd43b' : '#fa5252';
+    let healthColor = '#fa5252';
+    if (healthScore >= 80) healthColor = '#51cf66';
+    else if (healthScore >= 60) healthColor = '#ffd43b';
     return <div className={`system-info-panel ${isOpen ? 'open' : ''}`}>
         <div className="panel-header-sys">
             <div className="d-flex align-items-center gap-2"><i className="bi bi-cpu text-primary"></i><h5 className="mb-0">System Monitor</h5></div>
@@ -872,36 +885,48 @@ function getEspSetupContext(device) {
 }
 
 function getEspHealthStep(device, offline, waiting, ready) {
-    return makeEspSetupStep('Health', offline ? 'Mất kết nối' : device.timestamp ? ready : waiting,
+    let status = waiting;
+    if (offline) status = 'Mất kết nối';
+    else if (device.timestamp) status = ready;
+    return makeEspSetupStep('Health', status,
         offline ? 'Hiển thị trạng thái lần nhận gần nhất.' : 'Backend nhận trạng thái từ ESP32.');
 }
 
 function getEspTokenStep(context, offline, tokenConfirmed, waiting, ready) {
     const {auth, licenseBypass} = context;
-    const status = tokenConfirmed ? ready
-        : licenseBypass ? 'Đã bỏ qua'
-        : offlineStepStatus(auth.token_deployment_pending ? 'Đang đồng bộ' : waiting, offline);
-    const detail = tokenConfirmed ? 'ESP32 và backend đã xác nhận token.'
-        : licenseBypass ? 'Trạm được miễn kiểm tra token.'
-        : offline ? 'Chưa xác nhận token trước khi mất kết nối.'
-        : 'Cần đăng ký hoặc kích hoạt thiết bị.';
+    let status = offlineStepStatus(waiting, offline);
+    let detail = 'Cần đăng ký hoặc kích hoạt thiết bị.';
+    if (tokenConfirmed) {
+        status = ready;
+        detail = 'ESP32 và backend đã xác nhận token.';
+    } else if (licenseBypass) {
+        status = 'Đã bỏ qua';
+        detail = 'Trạm được miễn kiểm tra token.';
+    } else if (offline) detail = 'Chưa xác nhận token trước khi mất kết nối.';
+    else if (auth.token_deployment_pending) status = 'Đang đồng bộ';
     return makeEspSetupStep('Token thiết bị', status, detail);
 }
 
 function getEspSourceStep(context, offline, waiting, retrying) {
     const {source, name} = context;
-    const status = source.mountpoint === name && source.state === 'ready' ? 'Đã cấu hình'
-        : offlineStepStatus(source.state === 'retrying' ? retrying
-            : ['registering', 'waiting_health'].includes(source.state) ? 'Đang đồng bộ' : waiting, offline);
+    let sourceStatus = waiting;
+    if (source.state === 'retrying') sourceStatus = retrying;
+    else if (['registering', 'waiting_health'].includes(source.state)) sourceStatus = 'Đang đồng bộ';
+    const status = source.mountpoint === name && source.state === 'ready'
+        ? 'Đã cấu hình'
+        : offlineStepStatus(sourceStatus, offline);
     const detail = source.state === 'waiting_config' ? 'Chưa cấu hình caster phát.' : source.detail || name;
     return makeEspSetupStep('Mountpoint phát', status, detail);
 }
 
 function getEspRoverStep(context, offline, waiting, ready, retrying) {
     const {rover, name} = context;
-    const status = rover.username === name && rover.state === 'ready' ? ready
-        : offlineStepStatus(rover.state === 'partial' ? 'Đồng bộ một phần'
-            : rover.state === 'retrying' ? retrying : waiting, offline);
+    let roverStatus = waiting;
+    if (rover.state === 'partial') roverStatus = 'Đồng bộ một phần';
+    else if (rover.state === 'retrying') roverStatus = retrying;
+    const status = rover.username === name && rover.state === 'ready'
+        ? ready
+        : offlineStepStatus(roverStatus, offline);
     return makeEspSetupStep('Tài khoản rover', status, name);
 }
 
@@ -913,9 +938,11 @@ function getEspNearestStep(context, offline, waiting, ready, retrying) {
     const requested = startup.state === 'awaiting_auto_base' || startup.state === 'auto_base_running'
         || !!nearest.state || !!actualSource;
     if (!requested) return null;
-    const status = offlineStepStatus(nearest.state === 'sent' ? 'Đã gửi cấu hình'
-        : nearest.state === 'ready' ? 'Đã nạp cấu hình'
-        : ['retrying', 'delivery_retry'].includes(nearest.state) ? retrying : waiting, offline);
+    let nearestStatus = waiting;
+    if (nearest.state === 'sent') nearestStatus = 'Đã gửi cấu hình';
+    else if (nearest.state === 'ready') nearestStatus = 'Đã nạp cấu hình';
+    else if (['retrying', 'delivery_retry'].includes(nearest.state)) nearestStatus = retrying;
+    const status = offlineStepStatus(nearestStatus, offline);
     return makeEspSetupStep('AutoNearest', status, detail);
 }
 
@@ -1161,6 +1188,9 @@ function DetailsPanelName({device, role, canEdit, isEditingName, setIsEditingNam
 
 function DetailsPanelStatusBadges({device, isReadonly4g, canEdit, displayStatusKey, staleOffline, lifecycleStatus, isDeviceLocked, lockedServers, lockApplied}) {
     const syncErrorText = device.sync_errors ? device.sync_errors.join('\n') : 'Đang chờ dữ liệu...';
+    const lockedServerLabel = lockedServers.length
+        ? `Khoá ${lockedServers.map(serverId => `S${serverId}`).join(', ')}${lockApplied ? '' : ' · Chờ áp dụng'}`
+        : 'Khoá toàn trạm';
     return <div className="d-flex align-items-center">
         {(isReadonly4g || device.is_lte) && <span className="badge bg-primary me-2" title="Trạm kết nối qua 4G/LTE">
             <i className="bi bi-reception-4 me-1"></i>{isReadonly4g ? 'Base 4G · Chỉ xem' : 'LTE'}
@@ -1186,9 +1216,7 @@ function DetailsPanelStatusBadges({device, isReadonly4g, canEdit, displayStatusK
                     style={{fontSize: '1rem'}}></i>}
         </div>
         {isDeviceLocked && <span className="badge bg-danger ms-2">
-            <i className="bi bi-lock-fill me-1"></i>{lockedServers.length
-                ? `Khoá ${lockedServers.map(serverId => `S${serverId}`).join(', ')}${lockApplied ? '' : ' · Chờ áp dụng'}`
-                : 'Khoá toàn trạm'}
+            <i className="bi bi-lock-fill me-1"></i>{lockedServerLabel}
         </span>}
     </div>;
 }
@@ -1252,16 +1280,15 @@ function DetailsPanelHeader(props) {
 
 function DetailsPanelNotices({device, staleOffline, tokenConfirmed, rawStatusKey, activeTab, isReadonly4g}) {
     const configStatus = device.system_info?.config_status;
+    let configStatusIcon = <i className="bi bi-info-circle-fill me-2 fs-5"></i>;
+    if (configStatus?.state === 'executing') configStatusIcon = <div className="spinner-border spinner-border-sm me-2" role="status"></div>;
+    else if (configStatus?.state === 'error') configStatusIcon = <i className="bi bi-x-circle-fill me-2 fs-5"></i>;
     return <>
         {/^esp_/i.test(String(device.serial || '').trim()) && <EspSetupProgress device={device} offline={staleOffline} tokenConfirmed={tokenConfirmed} />}
         {configStatus && !['done', 'success', 'idle'].includes(configStatus.state) && (
             <div className={'alert ' + (configStatus.state === 'error' ? 'alert-danger' : 'alert-info') + ' mb-3'}>
                 <div className="d-flex align-items-center">
-                    {configStatus.state === 'executing'
-                        ? <div className="spinner-border spinner-border-sm me-2" role="status"></div>
-                        : configStatus.state === 'error'
-                            ? <i className="bi bi-x-circle-fill me-2 fs-5"></i>
-                            : <i className="bi bi-info-circle-fill me-2 fs-5"></i>}
+                    {configStatusIcon}
                     <div>
                         <strong>Trạng thái cấu hình thiết bị:</strong> {configStatus.progress}
                         {configStatus.error && <div className="small mt-1 text-danger">Lỗi: {configStatus.error}</div>}
