@@ -202,147 +202,165 @@ def _geocode_matches_query(query: str, display_name: str) -> bool:
     return name_matches_query(query, display_name)
 
 
+def _add_geocode_result(results, seen_coords, query, lat, lon, display_name, name, source, score=100.0):
+    if not _geocode_matches_query(query, display_name):
+        return
+    coord_key = (round(lat, 4), round(lon, 4))
+    if coord_key in seen_coords:
+        return
+    seen_coords.add(coord_key)
+    results.append({
+        "lat": lat,
+        "lon": lon,
+        "display_name": display_name,
+        "name": name,
+        "source": source,
+        "score": score,
+    })
+
+
+async def _fetch_arcgis_geocodes(lookup_query, cleaned, results, seen_coords):
+    try:
+        async with httpx.AsyncClient(timeout=4.0) as client:
+            response = await client.get(
+                "https://geocode.arcgis.com/arcgis/rest/services/World/GeocodeServer/findAddressCandidates",
+                params={
+                    "f": "json", "singleLine": lookup_query, "countryCode": "VNM",
+                    "maxLocations": 5, "outFields": "Match_addr,PlaceName,Type",
+                },
+            )
+            if response.status_code != 200:
+                return
+            for candidate in response.json().get("candidates", []):
+                score = float(candidate.get("score", 0))
+                location = candidate.get("location", {})
+                lat = float(location.get("y", 0))
+                lon = float(location.get("x", 0))
+                if score < 70.0 or not (8.0 <= lat <= 24.0 and 102.0 <= lon <= 110.0):
+                    continue
+                address = str(candidate.get("address") or cleaned).strip()
+                _add_geocode_result(
+                    results, seen_coords, cleaned, lat, lon, address,
+                    candidate.get("attributes", {}).get("PlaceName") or address, "arcgis", score,
+                )
+    except Exception as exc:
+        logger.debug("ArcGIS geocode lookup failed for '%s': %s", cleaned, exc)
+
+
+async def _fetch_photon_geocodes(lookup_query, cleaned, results, seen_coords):
+    try:
+        async with httpx.AsyncClient(timeout=4.0) as client:
+            response = await client.get(
+                "https://photon.komoot.io/api/",
+                params={"q": lookup_query, "limit": 4},
+                headers={"User-Agent": "Aitogy-CORS-System/1.0 (contact@aitogy.com)"},
+            )
+            if response.status_code != 200:
+                return
+            for feature in response.json().get("features", []):
+                properties = feature.get("properties", {})
+                country = str(properties.get("country", "")).lower()
+                coordinates = feature.get("geometry", {}).get("coordinates", [])
+                if len(coordinates) != 2:
+                    continue
+                lon, lat = float(coordinates[0]), float(coordinates[1])
+                in_vietnam = country in ("việt nam", "vietnam", "vn") or (8.0 <= lat <= 24.0 and 102.0 <= lon <= 110.0)
+                if not in_vietnam:
+                    continue
+                parts = [properties.get("name"), properties.get("street"), properties.get("district"),
+                         properties.get("city"), properties.get("state"), "Việt Nam"]
+                display = ", ".join(dict.fromkeys(part for part in parts if part))
+                _add_geocode_result(
+                    results, seen_coords, cleaned, lat, lon, display,
+                    properties.get("name") or cleaned, "photon", 85.0,
+                )
+    except Exception as exc:
+        logger.debug("Photon geocode lookup failed for '%s': %s", cleaned, exc)
+
+
+async def _fetch_open_meteo_geocodes(cleaned, results, seen_coords):
+    try:
+        async with httpx.AsyncClient(timeout=4.0) as client:
+            response = await client.get(
+                "https://geocoding-api.open-meteo.com/v1/search",
+                params={"name": cleaned, "count": 5, "language": "vi", "format": "json"},
+            )
+            if response.status_code != 200:
+                return
+            for item in response.json().get("results", []):
+                lat = float(item.get("latitude", 0))
+                lon = float(item.get("longitude", 0))
+                country_code = str(item.get("country_code", "")).upper()
+                in_vietnam = country_code == "VN" or (8.0 <= lat <= 24.0 and 102.0 <= lon <= 110.0)
+                if not in_vietnam:
+                    continue
+                parts = [item.get("name"), item.get("admin2"), item.get("admin1"), "Việt Nam"]
+                display_name = ", ".join(part for part in parts if part)
+                _add_geocode_result(
+                    results, seen_coords, cleaned, lat, lon, display_name,
+                    item.get("name", cleaned), "open-meteo", 80.0,
+                )
+    except Exception as exc:
+        logger.debug("Open-Meteo geocode lookup failed for '%s': %s", cleaned, exc)
+
+
+async def _fetch_nominatim_geocodes(lookup_query, cleaned, results, seen_coords):
+    try:
+        async with httpx.AsyncClient(timeout=3.0) as client:
+            response = await client.get(
+                "https://nominatim.openstreetmap.org/search",
+                params={
+                    "format": "jsonv2", "limit": "5", "countrycodes": "vn",
+                    "viewbox": "102,24,110,8", "bounded": "1", "addressdetails": "1",
+                    "namedetails": "1", "dedupe": "1", "accept-language": "vi,en",
+                    "q": f"{lookup_query}, Viet Nam",
+                },
+                headers={"User-Agent": "Aitogy-CORS-System/1.0 (contact@aitogy.com)"},
+            )
+            if response.status_code != 200:
+                return
+            data = response.json()
+            if not isinstance(data, list):
+                return
+            for item in data:
+                lat = float(item.get("lat", 0))
+                lon = float(item.get("lon", 0))
+                if not (8.0 <= lat <= 24.0 and 102.0 <= lon <= 110.0):
+                    continue
+                _add_geocode_result(
+                    results, seen_coords, cleaned, lat, lon,
+                    item.get("display_name", cleaned), item.get("name") or cleaned,
+                    "nominatim", 75.0,
+                )
+    except Exception as exc:
+        logger.debug("Nominatim geocode lookup failed for '%s': %s", cleaned, exc)
+
+
 async def _fetch_geocode(query: str) -> list[dict[str, Any]]:
     cleaned = str(query or "").strip()
     if not cleaned:
         return []
-
     cache_key = cleaned.lower()
     now = time.monotonic()
     cached = _GEOCODE_CACHE.get(cache_key)
-    if cached and (now - cached[0] < _GEOCODE_CACHE_TTL):
+    if cached and now - cached[0] < _GEOCODE_CACHE_TTL:
         return cached[1]
 
     known_places = search_catalog(cleaned, limit=1)
-    # Restore a historical ward's district/province context before asking a geocoder.
     lookup_query = known_places[0]['display_name'] if known_places else cleaned
     results: list[dict[str, Any]] = []
     seen_coords: set[tuple[float, float]] = set()
-
-    def _add_result(lat: float, lon: float, display_name: str, name: str, source: str, score: float = 100.0):
-        if not _geocode_matches_query(cleaned, display_name):
-            return
-        # Round coordinates to ~11 meters to deduplicate near-identical hits
-        coord_key = (round(lat, 4), round(lon, 4))
-        if coord_key in seen_coords:
-            return
-        seen_coords.add(coord_key)
-        results.append({
-            "lat": lat,
-            "lon": lon,
-            "display_name": display_name,
-            "name": name,
-            "source": source,
-            "score": score,
-        })
-
-    # 1. Tier 1: ESRI ArcGIS World Geocoding (high precision for Vietnam: streets, wards, districts, landmarks)
-    try:
-        async with httpx.AsyncClient(timeout=4.0) as client:
-            resp = await client.get(
-                "https://geocode.arcgis.com/arcgis/rest/services/World/GeocodeServer/findAddressCandidates",
-                params={
-                    "f": "json",
-                    "singleLine": lookup_query,
-                    "countryCode": "VNM",
-                    "maxLocations": 5,
-                    "outFields": "Match_addr,PlaceName,Type",
-                },
-            )
-            if resp.status_code == 200:
-                data = resp.json()
-                for c in data.get("candidates", []):
-                    score = float(c.get("score", 0))
-                    loc = c.get("location", {})
-                    lat = float(loc.get("y", 0))
-                    lon = float(loc.get("x", 0))
-                    if score >= 70.0 and (8.0 <= lat <= 24.0 and 102.0 <= lon <= 110.0):
-                        addr = str(c.get("address") or cleaned).strip()
-                        _add_result(lat, lon, addr, c.get("attributes", {}).get("PlaceName") or addr, "arcgis", score)
-    except Exception as exc:
-        logger.debug("ArcGIS geocode lookup failed for '%s': %s", cleaned, exc)
-
-    # 2. Tier 2: Photon Komoot (OpenStreetMap Elasticsearch index - great for POIs, markets, airports)
+    await _fetch_arcgis_geocodes(lookup_query, cleaned, results, seen_coords)
     if len(results) < 3:
-        try:
-            async with httpx.AsyncClient(timeout=4.0) as client:
-                resp = await client.get(
-                    "https://photon.komoot.io/api/",
-                    params={"q": lookup_query, "limit": 4},
-                    headers={"User-Agent": "Aitogy-CORS-System/1.0 (contact@aitogy.com)"},
-                )
-                if resp.status_code == 200:
-                    data = resp.json()
-                    for f in data.get("features", []):
-                        props = f.get("properties", {})
-                        country = str(props.get("country", "")).lower()
-                        coords = f.get("geometry", {}).get("coordinates", [])
-                        if len(coords) == 2:
-                            lon, lat = float(coords[0]), float(coords[1])
-                            if country in ("việt nam", "vietnam", "vn") or (8.0 <= lat <= 24.0 and 102.0 <= lon <= 110.0):
-                                parts = [props.get("name"), props.get("street"), props.get("district"), props.get("city"), props.get("state"), "Việt Nam"]
-                                display = ", ".join(dict.fromkeys(p for p in parts if p))
-                                _add_result(lat, lon, display, props.get("name") or cleaned, "photon", 85.0)
-        except Exception as exc:
-            logger.debug("Photon geocode lookup failed for '%s': %s", cleaned, exc)
-
-    # 3. Tier 3: Open-Meteo Geocoding (settlements, towns, cities)
+        await _fetch_photon_geocodes(lookup_query, cleaned, results, seen_coords)
     if not results:
-        try:
-            async with httpx.AsyncClient(timeout=4.0) as client:
-                resp = await client.get(
-                    "https://geocoding-api.open-meteo.com/v1/search",
-                    params={"name": cleaned, "count": 5, "language": "vi", "format": "json"},
-                )
-                if resp.status_code == 200:
-                    data = resp.json()
-                    for item in data.get("results", []):
-                        lat = float(item.get("latitude", 0))
-                        lon = float(item.get("longitude", 0))
-                        country_code = str(item.get("country_code", "")).upper()
-                        if country_code == "VN" or (8.0 <= lat <= 24.0 and 102.0 <= lon <= 110.0):
-                            parts = [item.get("name"), item.get("admin2"), item.get("admin1"), "Việt Nam"]
-                            display_name = ", ".join(p for p in parts if p)
-                            _add_result(lat, lon, display_name, item.get("name", cleaned), "open-meteo", 80.0)
-        except Exception as exc:
-            logger.debug("Open-Meteo geocode lookup failed for '%s': %s", cleaned, exc)
-
-    # 4. Tier 4: Nominatim fallback
+        await _fetch_open_meteo_geocodes(cleaned, results, seen_coords)
     if not results:
-        try:
-            async with httpx.AsyncClient(timeout=3.0) as client:
-                query_vn = f"{lookup_query}, Viet Nam"
-                resp = await client.get(
-                    "https://nominatim.openstreetmap.org/search",
-                    params={
-                        "format": "jsonv2",
-                        "limit": "5",
-                        "countrycodes": "vn",
-                        "viewbox": "102,24,110,8",
-                        "bounded": "1",
-                        "addressdetails": "1",
-                        "namedetails": "1",
-                        "dedupe": "1",
-                        "accept-language": "vi,en",
-                        "q": query_vn,
-                    },
-                    headers={"User-Agent": "Aitogy-CORS-System/1.0 (contact@aitogy.com)"},
-                )
-                if resp.status_code == 200:
-                    data = resp.json()
-                    if isinstance(data, list):
-                        for item in data:
-                            lat = float(item.get("lat", 0))
-                            lon = float(item.get("lon", 0))
-                            if 8.0 <= lat <= 24.0 and 102.0 <= lon <= 110.0:
-                                _add_result(lat, lon, item.get("display_name", cleaned), item.get("name") or cleaned, "nominatim", 75.0)
-        except Exception as exc:
-            logger.debug("Nominatim geocode lookup failed for '%s': %s", cleaned, exc)
+        await _fetch_nominatim_geocodes(lookup_query, cleaned, results, seen_coords)
 
     if len(_GEOCODE_CACHE) >= _GEOCODE_CACHE_MAX_SIZE:
         _GEOCODE_CACHE.clear()
     _GEOCODE_CACHE[cache_key] = (now, results)
-
     return results
 
 

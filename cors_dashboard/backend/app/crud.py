@@ -178,244 +178,210 @@ def normalize_base_config(base_config: dict | None) -> dict:
 
     return normalized
 
+def _normalize_batch_text(value):
+    if value is None:
+        return None
+    text = str(value).strip()
+    return text or None
+
+
+def _normalize_batch_json(value, *, require_coords: bool = False):
+    if value is None or isinstance(value, list) or (isinstance(value, dict) and not value):
+        return None
+    if require_coords:
+        return normalize_base_config(value) or None
+    return value
+
+
+def _normalize_device_ntrip_fields(device):
+    normalized_status = normalize_ntrip_status_payload(device)
+    if not normalized_status:
+        return
+    device['ntrip_status'] = normalized_status
+    has_server_rates = any(
+        f"server{server_id}_bps" in _ensure_dict(device.get('ntrip_stats'))
+        or 'bps' in _ensure_dict(normalized_status.get(f'server{server_id}'))
+        or f"server{server_id}_bps" in _ensure_dict(normalized_status)
+        for server_id in (1, 2)
+    )
+    if has_server_rates:
+        device['bps'] = sum(
+            int(_ensure_dict(normalized_status.get(f'server{server_id}')).get('bps', 0) or 0)
+            for server_id in (1, 2)
+        )
+    if not isinstance(device.get('ntrip_connected'), bool):
+        device['ntrip_connected'] = any(
+            bool(_ensure_dict(normalized_status.get(f'server{server_id}')).get('connected'))
+            for server_id in (1, 2)
+        )
+
+
+def _build_batch_device_record(device):
+    _normalize_device_ntrip_fields(device)
+    normalized_system_info = _normalize_batch_json(device.get('system_info'))
+    if isinstance(normalized_system_info, dict):
+        normalized_system_info = dict(normalized_system_info)
+        for managed_key in (
+            'auth_license_bypass',
+            'auth_license_bypass_by',
+            'auth_license_bypass_at',
+        ):
+            normalized_system_info.pop(managed_key, None)
+
+    record = {
+        'serial': device['serial'],
+        'name': _normalize_batch_text(device.get('name')),
+        'status': device.get('status'),
+        'timestamp': device.get('timestamp', int(time.time())),
+        'offline_since': device.get('offline_since'),
+        'bps': device.get('bps'),
+        'ntrip_status': device.get('ntrip_status'),
+        'ntrip_connected': device.get('ntrip_connected'),
+        'detected_chip_type': _normalize_batch_text(device.get('detected_chip_type')),
+        'base_config': _normalize_batch_json(device.get('base_config'), require_coords=True),
+        'service_config': _normalize_batch_json(normalize_service_config(device.get('service_config'))),
+        'system_info': normalized_system_info,
+        'version': device.get('version'),
+        'is_provisioned': device.get('is_provisioned'),
+        'device_token': None,
+    }
+    if 'is_synced' in device:
+        record['is_synced'] = True if device.get('is_synced') is None else bool(device.get('is_synced'))
+    return record
+
+
+def _prepare_batch_device_records(devices_data):
+    unique_devices = {}
+    for device in devices_data:
+        if not isinstance(device, dict):
+            continue
+        serial = device.get('serial')
+        if not serial:
+            continue
+        unique_devices[serial] = _build_batch_device_record(device)
+    return sorted(unique_devices.values(), key=lambda item: item['serial'])
+
+
+def _build_device_upsert_statement(batch_values, update_is_synced=False):
+    statement = pg_insert(models.Device).values(batch_values)
+    update_values = {
+        'status': func.coalesce(statement.excluded.status, models.Device.status),
+        'timestamp': statement.excluded.timestamp,
+        'offline_since': case(
+            (statement.excluded.status.is_(None), models.Device.offline_since),
+            (
+                statement.excluded.status == 'offline',
+                case(
+                    (
+                        models.Device.status == 'offline',
+                        func.coalesce(models.Device.offline_since, statement.excluded.offline_since),
+                    ),
+                    else_=func.coalesce(
+                        statement.excluded.offline_since,
+                        case(
+                            (
+                                and_(
+                                    models.Device.timestamp > 0,
+                                    statement.excluded.timestamp - models.Device.timestamp > 180,
+                                ),
+                                models.Device.timestamp + 180,
+                            ),
+                            else_=statement.excluded.timestamp,
+                        ),
+                    ),
+                ),
+            ),
+            else_=None,
+        ),
+        'bps': func.coalesce(statement.excluded.bps, models.Device.bps),
+        'ntrip_status': func.coalesce(statement.excluded.ntrip_status, models.Device.ntrip_status),
+        'ntrip_connected': func.coalesce(statement.excluded.ntrip_connected, models.Device.ntrip_connected),
+        'detected_chip_type': case(
+            (or_(models.Device.is_synced == True, models.Device.detected_chip_type == 'UNKNOWN'),
+             func.coalesce(func.nullif(statement.excluded.detected_chip_type, 'UNKNOWN'), models.Device.detected_chip_type)),
+            else_=models.Device.detected_chip_type
+        ),
+        'base_config': case(
+            (models.Device.is_synced == False, models.Device.base_config),
+            (and_(models.Device.base_config != None, statement.excluded.base_config != None),
+             models.Device.base_config.op('||')(statement.excluded.base_config)),
+            (statement.excluded.base_config != None, statement.excluded.base_config),
+            else_=models.Device.base_config
+        ),
+        'service_config': case(
+            (and_(models.Device.server_config_lock.is_not(None), models.Device.server_config_lock != {}), models.Device.service_config),
+            (models.Device.is_synced == False, models.Device.service_config),
+            (and_(models.Device.service_config != None, statement.excluded.service_config != None),
+             case(
+                 (func.jsonb_typeof(models.Device.service_config) == 'object',
+                  models.Device.service_config.op('||')(statement.excluded.service_config)),
+                 else_=statement.excluded.service_config,
+             )),
+            (statement.excluded.service_config != None, statement.excluded.service_config),
+            else_=models.Device.service_config
+        ),
+        'system_info': case(
+            (and_(models.Device.system_info != None, statement.excluded.system_info != None),
+             models.Device.system_info.op('||')(statement.excluded.system_info)),
+            (statement.excluded.system_info != None, statement.excluded.system_info),
+            else_=models.Device.system_info
+        ),
+        'is_provisioned': func.coalesce(statement.excluded.is_provisioned, models.Device.is_provisioned),
+        'version': func.coalesce(statement.excluded.version, models.Device.version),
+    }
+    if update_is_synced:
+        update_values['is_synced'] = statement.excluded.is_synced
+    return statement.on_conflict_do_update(
+        index_elements=['serial'],
+        set_=update_values,
+        where=(statement.excluded.timestamp >= models.Device.timestamp),
+    )
+
+
+async def _execute_device_upsert(db: AsyncSession, batch_values: list[dict], update_is_synced: bool = False):
+    if batch_values:
+        await db.execute(_build_device_upsert_statement(batch_values, update_is_synced))
+
+
+async def _upsert_device_records(db: AsyncSession, values_list: list[dict]):
+    with_is_synced = [item for item in values_list if 'is_synced' in item]
+    without_is_synced = [item for item in values_list if 'is_synced' not in item]
+    await _execute_device_upsert(db, without_is_synced)
+    await _execute_device_upsert(db, with_is_synced, update_is_synced=True)
+
+
 async def batch_update_devices(db: AsyncSession, devices_data: list[dict]) -> int:
-    """
-    Cập nhật hàng loạt thiết bị (Batch Update) sử dụng PostgreSQL UPSERT.
-    Hàm này được tối ưu để chịu tải cao, tự động Retry khi gặp Deadlock.
-    """
+    """Batch upsert device state with deadlock retry."""
     if not devices_data:
         return 0
-    
-    # ===== CẤU HÌNH RETRY =====
-    MAX_RETRIES = 3
-    RETRY_DELAY = 0.1  # 100ms
-    
-    for attempt in range(MAX_RETRIES):
+
+    max_retries = 3
+    retry_delay = 0.1
+    for attempt in range(max_retries):
         try:
-            def _normalize_optional_text(value):
-                if value is None:
-                    return None
-                text = str(value).strip()
-                return text if text else None
-
-            def _normalize_optional_json(value, *, require_coords: bool = False):
-                if value is None:
-                    return None
-                # 🔥 FIX: Nếu là List (do migration JSONB hoặc lỗi Agent), chuyển về None để tránh lỗi .get() sau này
-                if isinstance(value, list) or (isinstance(value, dict) and len(value) == 0):
-                    return None
-                if require_coords:
-                    normalized = normalize_base_config(value)
-                    return normalized or None
-                return value
-
-            # 1. Deduplication: Chỉ giữ lại update mới nhất cho mỗi Serial
-            unique_devices_map = {}
-            
-            for device in devices_data:
-                # 🔥 FIX: Đảm bảo item trong list là dict
-                if not isinstance(device, dict):
-                    continue
-                    
-                serial = device.get('serial')
-                if not serial:
-                    continue
-
-                normalized_ntrip_status = normalize_ntrip_status_payload(device)
-                if normalized_ntrip_status:
-                    device['ntrip_status'] = normalized_ntrip_status
-                    has_server_rates = any(
-                        f"server{sid}_bps" in _ensure_dict(device.get('ntrip_stats'))
-                        or 'bps' in _ensure_dict(device['ntrip_status'].get(f'server{sid}'))
-                        or f"server{sid}_bps" in _ensure_dict(device.get('ntrip_status'))
-                        for sid in (1, 2)
-                    )
-                    if has_server_rates:
-                        device['bps'] = sum(
-                            int(_ensure_dict(device['ntrip_status'].get(f'server{sid}')).get('bps', 0) or 0)
-                            for sid in (1, 2)
-                        )
-                    if not isinstance(device.get('ntrip_connected'), bool):
-                        device['ntrip_connected'] = any(
-                            bool(_ensure_dict(device['ntrip_status'].get(f'server{sid}')).get('connected'))
-                            for sid in (1, 2)
-                        )
-
-                # Chuẩn bị record
-                # Lưu ý: Dùng .get(key, default) để tránh lỗi KeyError
-                normalized_name = _normalize_optional_text(device.get('name'))
-                normalized_chip_type = _normalize_optional_text(device.get('detected_chip_type'))
-                normalized_base_config = _normalize_optional_json(device.get('base_config'), require_coords=True)
-                normalized_service_config = _normalize_optional_json(
-                    normalize_service_config(device.get('service_config'))
-                )
-                normalized_system_info = _normalize_optional_json(device.get('system_info'))
-                if isinstance(normalized_system_info, dict):
-                    normalized_system_info = dict(normalized_system_info)
-                    for managed_key in (
-                        'auth_license_bypass',
-                        'auth_license_bypass_by',
-                        'auth_license_bypass_at',
-                    ):
-                        normalized_system_info.pop(managed_key, None)
-
-                device_record = {
-                    'serial': serial,
-                    'name': normalized_name,
-                    # Với payload partial (ví dụ offline event), không ép default để tránh ghi đè dữ liệu cũ.
-                    'status': device.get('status'),
-                    'timestamp': device.get('timestamp', int(time.time())),
-                    'offline_since': device.get('offline_since'),
-                    'bps': device.get('bps'),
-                    'ntrip_status': device.get('ntrip_status'),
-                    'ntrip_connected': device.get('ntrip_connected'),
-                    'detected_chip_type': normalized_chip_type,
-                    'base_config': normalized_base_config,
-                    'service_config': normalized_service_config,
-                    'system_info': normalized_system_info,
-                    'version': device.get('version'),
-                    'is_provisioned': device.get('is_provisioned'),
-                    # Created only by the explicit auto-deploy flow so the UI can
-                    # show a real "token not sent yet" state for new agents.
-                    'device_token': None,
-                    # is_locked thường ít khi gửi qua websocket status, nên dùng default cẩn thận
-                    # Tốt nhất là không update is_locked ở đây nếu không có trong payload
-                }
-
-                # Chỉ mang theo is_synced khi payload gửi thật sự.
-                # Tránh đưa NULL vào cột NOT NULL khi dùng bulk UPSERT.
-                if 'is_synced' in device:
-                    device_record['is_synced'] = True if device.get('is_synced') is None else bool(device.get('is_synced'))
-                
-                unique_devices_map[serial] = device_record
-            
-            # 2. Sắp xếp để tránh Deadlock (Lock order consistency)
-            values_list = sorted(unique_devices_map.values(), key=lambda x: x['serial'])
-            
+            values_list = _prepare_batch_device_records(devices_data)
             if not values_list:
                 return 0
-            
-            async def execute_upsert(batch_values: list[dict], update_is_synced: bool = False) -> None:
-                if not batch_values:
-                    return
-
-                stmt = pg_insert(models.Device).values(batch_values)
-
-                # Định nghĩa các cột cần update khi trùng Serial
-                update_dict = {
-                    'status': func.coalesce(stmt.excluded.status, models.Device.status),
-                    'timestamp': stmt.excluded.timestamp,
-                    'offline_since': case(
-                        (stmt.excluded.status.is_(None), models.Device.offline_since),
-                        (
-                            stmt.excluded.status == 'offline',
-                            case(
-                                (
-                                    models.Device.status == 'offline',
-                                    func.coalesce(models.Device.offline_since, stmt.excluded.offline_since),
-                                ),
-                                else_=func.coalesce(
-                                    stmt.excluded.offline_since,
-                                    case(
-                                        (
-                                            and_(
-                                                models.Device.timestamp > 0,
-                                                stmt.excluded.timestamp - models.Device.timestamp > 180,
-                                            ),
-                                            models.Device.timestamp + 180,
-                                        ),
-                                        else_=stmt.excluded.timestamp,
-                                    ),
-                                ),
-                            ),
-                        ),
-                        else_=None,
-                    ),
-                    'bps': func.coalesce(stmt.excluded.bps, models.Device.bps),
-                    'ntrip_status': func.coalesce(stmt.excluded.ntrip_status, models.Device.ntrip_status),
-                    'ntrip_connected': func.coalesce(stmt.excluded.ntrip_connected, models.Device.ntrip_connected),
-                    # Không cho UNKNOWN ghi đè chip type hợp lệ đã lưu trước đó.
-                    # RÀO CHẮN (IMPORTANT): Chỉ cập nhật Chip Type nếu đang Synced hoặc đang chờ kích hoạt lần đầu.
-                    'detected_chip_type': case(
-                        (or_(models.Device.is_synced == True, models.Device.detected_chip_type == 'UNKNOWN'), 
-                         func.coalesce(func.nullif(stmt.excluded.detected_chip_type, 'UNKNOWN'), models.Device.detected_chip_type)),
-                        else_=models.Device.detected_chip_type
-                    ),
-                    
-                    # 🔥 FIX: Sử dụng JSONB merge (||) để gộp config thay vì ghi đè toàn bộ.
-                    # RÀO CHẮN (IMPORTANT): Nếu trạm đang OUT OF SYNC (is_synced=False), KHÔNG cho phép status đè lên cấu hình mục tiêu.
-                    'base_config': case(
-                        (models.Device.is_synced == False, models.Device.base_config), 
-                        (and_(models.Device.base_config != None, stmt.excluded.base_config != None), 
-                         models.Device.base_config.op('||')(stmt.excluded.base_config)),
-                        (stmt.excluded.base_config != None, stmt.excluded.base_config),
-                        else_=models.Device.base_config
-                    ),
-                    'service_config': case(
-                        (and_(models.Device.server_config_lock.is_not(None), models.Device.server_config_lock != {}), models.Device.service_config),
-                        (models.Device.is_synced == False, models.Device.service_config),
-                        (and_(models.Device.service_config != None, stmt.excluded.service_config != None), 
-                         case(
-                             (func.jsonb_typeof(models.Device.service_config) == 'object',
-                              models.Device.service_config.op('||')(stmt.excluded.service_config)),
-                             else_=stmt.excluded.service_config,
-                         )),
-                        (stmt.excluded.service_config != None, stmt.excluded.service_config),
-                        else_=models.Device.service_config
-                    ),
-                    'system_info': case(
-                        (and_(models.Device.system_info != None, stmt.excluded.system_info != None), 
-                         models.Device.system_info.op('||')(stmt.excluded.system_info)),
-                        (stmt.excluded.system_info != None, stmt.excluded.system_info),
-                        else_=models.Device.system_info
-                    ),
-                    
-                    'is_provisioned': func.coalesce(stmt.excluded.is_provisioned, models.Device.is_provisioned),
-                    'version': func.coalesce(stmt.excluded.version, models.Device.version),
-                }
-
-                if update_is_synced:
-                    update_dict['is_synced'] = stmt.excluded.is_synced
-
-                stmt = stmt.on_conflict_do_update(
-                    index_elements=['serial'],
-                    set_=update_dict,
-                    # Ignore out-of-order stale status packets.
-                    where=(stmt.excluded.timestamp >= models.Device.timestamp)
-                )
-
-                await db.execute(stmt)
-
-            batch_with_is_synced = [item for item in values_list if 'is_synced' in item]
-            batch_without_is_synced = [item for item in values_list if 'is_synced' not in item]
-
-            await execute_upsert(batch_without_is_synced, update_is_synced=False)
-            await execute_upsert(batch_with_is_synced, update_is_synced=True)
+            await _upsert_device_records(db, values_list)
             await db.commit()
-            
-            # Log thành công (chỉ log khi retry để đỡ rác)
             if attempt > 0:
-                logger.info(f"✓ Batch update succeeded on attempt {attempt+1}")
-            
+                logger.info(f"✓ Batch update succeeded on attempt {attempt + 1}")
             return len(values_list)
-
-        except DBAPIError as e:
+        except DBAPIError as error:
             await db.rollback()
-            msg = str(e).lower()
-            if "deadlock" in msg or "concurrent update" in msg:
-                if attempt < MAX_RETRIES - 1:
-                    wait = RETRY_DELAY * (2 ** attempt)
-                    logger.warning(f"⚠️ DB Deadlock (Attempt {attempt+1}). Retrying in {wait}s...")
-                    await asyncio.sleep(wait)
-                    continue
+            message = str(error).lower()
+            retryable = "deadlock" in message or "concurrent update" in message
+            if retryable and attempt < max_retries - 1:
+                wait = retry_delay * (2 ** attempt)
+                logger.warning(f"⚠️ DB Deadlock (Attempt {attempt + 1}). Retrying in {wait}s...")
+                await asyncio.sleep(wait)
+                continue
             logger.exception("❌ Batch update DB Error")
             return 0
-            
         except Exception:
             await db.rollback()
             logger.exception("❌ Batch update Unexpected Error")
             return 0
-            
     return 0
 
 async def get_device_for_update(db: AsyncSession, serial: str):
