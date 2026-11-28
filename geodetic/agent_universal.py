@@ -873,26 +873,24 @@ def _update_automatic_rf_monitor():
     globals()['AUTOMATIC_RF_REPORT'] = monitor.observe(dict(receiver_quality_status(now), status='online'), now)
 
 
-async def refresh_receiver_quality(agent, reader):
-    if agent.detected_chip.get('type') == 'Unicorecomm':
+async def _refresh_unicore_quality(reader):
+    try:
+        packet = await reader.query_base(b'\r\nAGCA\r\n', UNICORE_AGCA_MESSAGE.encode('ascii'))
+        globals()['LAST_UNICORE_AGC'] = _unicore_rf_log(packet)
+        globals()['LAST_UNICORE_AGC_TS'] = time.time()
+    except Exception as error:
+        logging.warning('[GNSS][AGCA] %s', error)
+    for name in (b'FREQJAMSTATUSA', b'JAMSTATUSA'):
         try:
-            packet = await reader.query_base(b'\r\nAGCA\r\n', UNICORE_AGCA_MESSAGE.encode('ascii'))
-            globals()['LAST_UNICORE_AGC'] = _unicore_rf_log(packet)
-            globals()['LAST_UNICORE_AGC_TS'] = time.time()
+            packet = await reader.query_base(b'\r\n' + name + b'\r\n', b'#' + name)
+            globals()['LAST_UNICORE_JAM'] = _unicore_rf_log(packet)
+            globals()['LAST_UNICORE_JAM_TS'] = time.time()
+            break
         except Exception as error:
-            logging.warning('[GNSS][AGCA] %s', error)
-        for name in (b'FREQJAMSTATUSA', b'JAMSTATUSA'):
-            try:
-                packet = await reader.query_base(b'\r\n' + name + b'\r\n', b'#' + name)
-                globals()['LAST_UNICORE_JAM'] = _unicore_rf_log(packet)
-                globals()['LAST_UNICORE_JAM_TS'] = time.time()
-                break
-            except Exception as error:
-                logging.warning('[GNSS][%s] %s', name.decode('ascii'), error)
-        _update_automatic_rf_monitor()
-        return
-    if agent.detected_chip.get('type') != 'Ublox':
-        return
+            logging.warning('[GNSS][%s] %s', name.decode('ascii'), error)
+
+
+async def _refresh_ubx_navigation_quality(reader):
     try:
         packet = await reader.query_base(_ubx_packet(1, 7), (1, 7))
         quality = _ubx_navigation_quality(_base_ubx_payload(packet, (1, 7)))
@@ -913,6 +911,8 @@ async def refresh_receiver_quality(agent, reader):
     except Exception as error:
         logging.warning('[GNSS][NAV-SAT] %s', error)
 
+
+async def _refresh_ubx_rf_quality(reader):
     for message_id, key in [(0x38, 'LAST_UBX_RF'), (0x31, 'LAST_UBX_SPECTRUM')]:
         packet = None
         try:
@@ -929,6 +929,9 @@ async def refresh_receiver_quality(agent, reader):
                 globals()['LAST_UBX_RF_ERROR'] = failure
                 globals()['LAST_UBX_RF_ERROR_TS'] = time.time()
             logging.warning('[GNSS][RF %02X] %s', message_id, error)
+
+
+async def _refresh_ubx_security(reader):
     await _refresh_ubx_receiver_info(reader)
     if (globals().get('LAST_UBX_RECEIVER_INFO') or {}).get('itfm_supported') is False:
         for message_id, key in ((9, 'LAST_UBX_SECURITY'), (0x10, 'LAST_UBX_SECURITY_LOG')):
@@ -941,6 +944,19 @@ async def refresh_receiver_quality(agent, reader):
                                       'error':(str(error) or type(error).__name__)[:160]}
                 globals()[key + '_TS'] = time.time()
                 logging.warning('[GNSS][SEC %02X] %s', message_id, error)
+
+
+async def refresh_receiver_quality(agent, reader):
+    chip_type = agent.detected_chip.get('type')
+    if chip_type == 'Unicorecomm':
+        await _refresh_unicore_quality(reader)
+        _update_automatic_rf_monitor()
+        return
+    if chip_type != 'Ublox':
+        return
+    await _refresh_ubx_navigation_quality(reader)
+    await _refresh_ubx_rf_quality(reader)
+    await _refresh_ubx_security(reader)
     _update_automatic_rf_monitor()
 
 
@@ -1406,105 +1422,127 @@ def get_chip_info(port: str, baudrate: int) -> dict | None:
     
     return None
 
+def _probe_unicore(port_name, baud):
+    commands = [UNICORE_VERSION_COMMAND, b'config version\r\n', b'config\r\n']
+    keywords = ['Unicore', 'UM982', 'UM9', 'UB4', 'FIRMWARE', 'COMPTYPE', 'MODEL']
+    for command in commands:
+        try:
+            with serial.Serial(port_name, baud, timeout=2.5, write_timeout=2.0) as ser:
+                ser.reset_input_buffer()
+                ser.reset_output_buffer()
+                ser.write(command)
+                ser.flush()
+                response = _wait_for_serial_response(ser, wait_seconds=1.2, max_bytes=2048)
+            if not response:
+                continue
+            response_text = response.decode('ascii', errors='ignore')
+            if any(keyword in response_text for keyword in keywords):
+                logging.info(f"!!! [ACTIVE] Detected UM982/Unicorecomm on {port_name} @ {baud}")
+                logging.info(f"    Response snippet: {response_text[:100]}")
+                _remember_baud_hint(port_name, baud)
+                return {"port": port_name, "type": "Unicorecomm", "baud": baud}
+        except Exception as exc:
+            logging.debug(f"Unicore command test failed: {exc}")
+    return None
+
+
+def _probe_ublox(port_name, baud):
+    try:
+        with serial.Serial(port_name, baud, timeout=2.0, write_timeout=2.0) as ser:
+            ser.reset_input_buffer()
+            ser.write(b'\xB5\x62\x0A\x04\x00\x00\x0E\x34')
+            ser.flush()
+            response = _wait_for_serial_response(ser, wait_seconds=0.9, max_bytes=512)
+        if b'\xB5\x62\x0A\x04' not in response:
+            return None
+        logging.info(f"!!! [ACTIVE] Detected U-blox on {port_name} @ {baud}")
+        _remember_baud_hint(port_name, baud)
+        return {"port": port_name, "type": "Ublox", "baud": baud}
+    except Exception as exc:
+        logging.debug(f"Ublox test failed: {exc}")
+        return None
+
+
+def _probe_active_port(port_name, baud_rates):
+    for baud in baud_rates:
+        logging.info(f"  -> [ACTIVE] Probing {port_name} @ {baud}...")
+        detection = _probe_unicore(port_name, baud)
+        if detection:
+            return detection
+        detection = _probe_ublox(port_name, baud)
+        if detection:
+            return detection
+    return None
+
+
+def _is_non_receiver_port(port_name):
+    name = port_name.lower()
+    return 'bluetooth' in name or 'rfcomm' in name
+
+
+def _probe_active_ports(ports, common_baud_rates):
+    for port in ports:
+        if _is_non_receiver_port(port.device):
+            continue
+        detection = _probe_active_port(
+            port.device, _ordered_baud_rates(port.device, common_baud_rates)
+        )
+        if detection:
+            return detection
+    return None
+
+
+def _probe_passive_port(port_name, baud_rates):
+    for baud in baud_rates:
+        logging.info(f"  -> [PASSIVE] Listening on {port_name} @ {baud}...")
+        try:
+            with serial.Serial(port_name, baud, timeout=4.0) as ser:
+                raw_data = _wait_for_serial_response(ser, wait_seconds=1.6, max_bytes=4096)
+            if b'\xD3' in raw_data:
+                chip_type = "RTCM3_Source"
+            elif b'$GP' in raw_data or b'$GN' in raw_data:
+                chip_type = "Ublox" if b'$PUBX' in raw_data else "Generic_NMEA"
+                if chip_type == "Generic_NMEA":
+                    logging.warning(f"    Detected NMEA on {port_name} - might be UM982")
+            else:
+                continue
+            logging.info(f"!!! [PASSIVE] Detected {chip_type} on {port_name} @ {baud}")
+            _remember_baud_hint(port_name, baud)
+            return {"port": port_name, "type": chip_type, "baud": baud}
+        except Exception as exc:
+            logging.debug(f"Passive scan error: {exc}")
+    return None
+
+
+def _probe_passive_ports(ports, common_baud_rates):
+    for port in ports:
+        if _is_non_receiver_port(port.device):
+            continue
+        detection = _probe_passive_port(
+            port.device, _ordered_baud_rates(port.device, common_baud_rates)
+        )
+        if detection:
+            return detection
+    return None
+
+
 def find_chip_robustly():
     common_baud_rates = [115200, 460800, 921600, 230400, 38400, 9600]
     ports = serial.tools.list_ports.comports()
-    
     if not ports:
         logging.warning("[ChipDetector] No ports found.")
         return {"port": None, "type": "UNKNOWN", "baud": None}
-    
+
     logging.info("[ChipDetector] Starting ACTIVE COMMAND-BASED scan...")
-    
-    # ========== PHASE 1: ACTIVE COMMAND PROBING ==========
-    for port in ports:
-        if 'bluetooth' in port.device.lower() or 'rfcomm' in port.device.lower():
-            continue
-            
-        for baud in _ordered_baud_rates(port.device, common_baud_rates):
-            logging.info(f"  -> [ACTIVE] Probing {port.device} @ {baud}...")
-            
-            # === TEST UNICORECOMM FIRST ===
-            unicore_commands = [
-                UNICORE_VERSION_COMMAND,
-                b'config version\r\n',
-                b'config\r\n'
-            ]
-            
-            for cmd in unicore_commands:
-                try:
-                    with serial.Serial(port.device, baud, timeout=2.5, write_timeout=2.0) as ser:
-                        ser.reset_input_buffer()
-                        ser.reset_output_buffer()
-                        
-                        ser.write(cmd)
-                        ser.flush()
-                        response = _wait_for_serial_response(ser, wait_seconds=1.2, max_bytes=2048)
-                        if response:
-                            response_str = response.decode('ascii', errors='ignore')
-                            
-                            # Check keywords
-                            unicore_keywords = ['Unicore', 'UM982', 'UM9', 'UB4', 'FIRMWARE', 'COMPTYPE', 'MODEL']
-                            if any(kw in response_str for kw in unicore_keywords):
-                                logging.info(f"!!! [ACTIVE] Detected UM982/Unicorecomm on {port.device} @ {baud}")
-                                logging.info(f"    Response snippet: {response_str[:100]}")
-                                _remember_baud_hint(port.device, baud)
-                                return {"port": port.device, "type": "Unicorecomm", "baud": baud}
-                except Exception as e:
-                    logging.debug(f"Unicore command test failed: {e}")
-                    continue
-            
-            # === TEST U-BLOX ===
-            try:
-                with serial.Serial(port.device, baud, timeout=2.0, write_timeout=2.0) as ser:
-                    ser.reset_input_buffer()
-                    ser.write(b'\xB5\x62\x0A\x04\x00\x00\x0E\x34')
-                    ser.flush()
-                    response = _wait_for_serial_response(ser, wait_seconds=0.9, max_bytes=512)
-                    if b'\xB5\x62\x0A\x04' in response:
-                        logging.info(f"!!! [ACTIVE] Detected U-blox on {port.device} @ {baud}")
-                        _remember_baud_hint(port.device, baud)
-                        return {"port": port.device, "type": "Ublox", "baud": baud}
-            except Exception as e:
-                logging.debug(f"Ublox test failed: {e}")
-    
-    # ========== PHASE 2: PASSIVE LISTENING (fallback only) ==========
+    active_detection = _probe_active_ports(ports, common_baud_rates)
+    if active_detection:
+        return active_detection
+
     logging.warning("[ChipDetector] Active scan failed. Starting PASSIVE scan...")
     logging.warning("              (May misidentify UM982 as Generic_NMEA)")
-    
-    for port in ports:
-        if 'bluetooth' in port.device.lower() or 'rfcomm' in port.device.lower():
-            continue
-            
-        for baud in _ordered_baud_rates(port.device, common_baud_rates):
-            logging.info(f"  -> [PASSIVE] Listening on {port.device} @ {baud}...")
-            try:
-                with serial.Serial(port.device, baud, timeout=4.0) as ser:
-                    raw_data = _wait_for_serial_response(ser, wait_seconds=1.6, max_bytes=4096)
-                    if raw_data:
-                        
-                        # Check for RTCM3 first (priority)
-                        if b'\xD3' in raw_data:
-                            logging.info(f"!!! [PASSIVE] Detected RTCM3 output on {port.device} @ {baud}")
-                            _remember_baud_hint(port.device, baud)
-                            return {"port": port.device, "type": "RTCM3_Source", "baud": baud}
-                        
-                        # Check for NMEA (last resort)
-                        elif b'$GP' in raw_data or b'$GN' in raw_data:
-                            if b'$PUBX' in raw_data:
-                                chip_type = "Ublox"
-                            else:
-                                logging.warning(f"    Detected NMEA on {port.device} - might be UM982")
-                                chip_type = "Generic_NMEA"
-                            
-                            logging.info(f"!!! [PASSIVE] Detected {chip_type} on {port.device} @ {baud}")
-                            _remember_baud_hint(port.device, baud)
-                            return {"port": port.device, "type": chip_type, "baud": baud}
-                        
-            except Exception as e:
-                logging.debug(f"Passive scan error: {e}")
-                continue
-
+    passive_detection = _probe_passive_ports(ports, common_baud_rates)
+    if passive_detection:
+        return passive_detection
     logging.error("[ChipDetector] All scans failed. No supported chip found.")
     return {"port": None, "type": "UNKNOWN", "baud": None}
 
@@ -6017,6 +6055,57 @@ async def send_status(agent: AgentManager, mqtt_client: mqtt.Client):
 # ==============================================================================
 # === ASYNC FUNCTIONS - PROCESS COMMAND (UPDATED)                           ===
 # ==============================================================================
+def _validate_simple_command_payload(command, payload):
+    if command == "PROVISION_DEVICE" and not str(payload.get("name") or "").strip():
+        return "missing payload.name"
+    if command == "DEPLOY_LICENSE" and not str(payload.get("license_key") or "").strip():
+        return "missing payload.license_key"
+    if command == "DEPLOY_SERVICE_CONFIG" and not payload:
+        return "missing service config payload"
+    if command == "SET_RTCM_STREAM_ACTIVE" and "active" not in payload:
+        return "missing payload.active"
+    if command == "APPLY_VN2000_PROVINCE" and not str(payload.get("province_code") or "").strip():
+        return "missing payload.province_code"
+    return None
+
+
+def _validate_auto_base_payload(payload):
+    if 'enable_itrf_vn2000_transform' in payload and not isinstance(payload['enable_itrf_vn2000_transform'], bool):
+        return "enable_itrf_vn2000_transform must be a boolean"
+    required_fields = ("ip", "port", "user", "password", "mountpoint")
+    if any(not str(payload.get(key) or "").strip() for key in required_fields if key != "password"):
+        return "missing CORS connection fields"
+    if not str(payload.get("password") or ""):
+        return "missing CORS connection fields"
+    try:
+        port = int(payload.get("port"))
+    except (TypeError, ValueError):
+        return "invalid CORS port"
+    if not 1 <= port <= 65535:
+        return "invalid CORS port"
+    if any(char in "\r\n" for char in "".join(str(payload.get(key) or "") for key in required_fields)):
+        return "invalid CORS connection fields"
+    return None
+
+
+def _validate_raw_commands_payload(payload, agent):
+    commands_b64 = payload.get("commands_b64")
+    if not isinstance(commands_b64, list) or not commands_b64:
+        return "missing payload.commands_b64"
+    if len(commands_b64) > 200:
+        return "too many raw commands"
+    for item in commands_b64:
+        if not isinstance(item, str) or len(item) > 4096:
+            return "invalid raw command item"
+        try:
+            base64.b64decode(item, validate=True)
+        except Exception:
+            return "raw command is not valid base64"
+    if not agent.detected_chip.get("port"):
+        return "no detected serial port"
+    return None
+
+
 def _validate_command_payload(command: str, payload: dict, data: dict, agent: AgentManager, gnss_reader: GNSSReader) -> tuple[bool, str]:
     if not command:
         return False, "missing command"
@@ -6025,47 +6114,17 @@ def _validate_command_payload(command: str, payload: dict, data: dict, agent: Ag
     if not isinstance(payload, dict):
         return False, "payload must be an object"
 
-    if command == "PROVISION_DEVICE" and not str(payload.get("name") or "").strip():
-        return False, "missing payload.name"
-    if command == "DEPLOY_LICENSE" and not str(payload.get("license_key") or "").strip():
-        return False, "missing payload.license_key"
-    if command == "DEPLOY_SERVICE_CONFIG" and not payload:
-        return False, "missing service config payload"
-    if command == "SET_RTCM_STREAM_ACTIVE" and "active" not in payload:
-        return False, "missing payload.active"
-    if command == "APPLY_VN2000_PROVINCE" and not str(payload.get("province_code") or "").strip():
-        return False, "missing payload.province_code"
+    error = _validate_simple_command_payload(command, payload)
+    if error:
+        return False, error
     if command == "TRIGGER_AUTO_BASE":
-        if 'enable_itrf_vn2000_transform' in payload and not isinstance(payload['enable_itrf_vn2000_transform'], bool):
-            return False, "enable_itrf_vn2000_transform must be a boolean"
-        required_fields = ("ip", "port", "user", "password", "mountpoint")
-        if any(not str(payload.get(key) or "").strip() for key in required_fields if key != "password"):
-            return False, "missing CORS connection fields"
-        if not str(payload.get("password") or ""):
-            return False, "missing CORS connection fields"
-        try:
-            port = int(payload.get("port"))
-        except (TypeError, ValueError):
-            return False, "invalid CORS port"
-        if not 1 <= port <= 65535:
-            return False, "invalid CORS port"
-        if any(char in "\r\n" for char in "".join(str(payload.get(key) or "") for key in required_fields)):
-            return False, "invalid CORS connection fields"
+        error = _validate_auto_base_payload(payload)
+        if error:
+            return False, error
     if command == "EXECUTE_RAW_COMMANDS":
-        commands_b64 = payload.get("commands_b64")
-        if not isinstance(commands_b64, list) or not commands_b64:
-            return False, "missing payload.commands_b64"
-        if len(commands_b64) > 200:
-            return False, "too many raw commands"
-        for item in commands_b64:
-            if not isinstance(item, str) or len(item) > 4096:
-                return False, "invalid raw command item"
-            try:
-                base64.b64decode(item, validate=True)
-            except Exception:
-                return False, "raw command is not valid base64"
-        if not agent.detected_chip.get("port"):
-            return False, "no detected serial port"
+        error = _validate_raw_commands_payload(payload, agent)
+        if error:
+            return False, error
 
     known_commands = {
         "LOCK_DEVICE",
