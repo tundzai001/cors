@@ -590,6 +590,37 @@ const formatExpectedLogPeriod = (expected, compare) => {
     if (compare) return 'Không bật';
     return 'Không đối chiếu';
 };
+const verificationResultText = (offline, expired, state) => {
+    if (offline) return 'Thiết bị ngoại tuyến. Kết quả là lần xác minh gần nhất.';
+    if (expired) return 'Kết quả là lần đọc trước. Xác minh lại để cập nhật.';
+    if (state === 'match') return 'Cấu hình đang chạy khớp.';
+    if (state === 'mismatch') return 'Cấu hình chưa khớp.';
+    return 'Chưa đọc đủ cấu hình để xác minh.';
+};
+const verificationResultClass = (offline, expired, state) =>
+    offline || expired || state !== 'match' ? 'text-warning' : 'text-success-emphasis';
+const verificationAdvice = (supported, fixed) => {
+    if (!supported) return 'Cập nhật agent để xác minh cấu hình.';
+    if (!fixed) return 'Lưu cấu hình Fixed LLA trước khi xác minh.';
+    return 'Đối chiếu cấu hình đang chạy với cấu hình đã lưu. Không thay đổi cấu hình chip.';
+};
+const verificationGroups = chipType => {
+    const isUblox = chipType === 'Ublox';
+    return [
+        ['fixed', isUblox ? 'Fixed LLA và độ chính xác' : 'Fixed LLA'],
+        ...(isUblox ? [['protocols', 'Giao thức đầu ra']] : []),
+        ['diagnostics', isUblox ? 'Bản tin NMEA / UBX' : 'Bản tin NMEA'],
+        ['rtcm', 'Bản tin RTCM'],
+    ];
+};
+const verificationGroupStatus = group => {
+    const unread = !group || Number(group.unread) > 0 || !(Number(group.checked) > 0);
+    const mismatch = Number(group?.mismatched) > 0;
+    return {
+        className: unread ? 'text-warning' : mismatch ? 'text-danger-emphasis' : 'text-success-emphasis',
+        label: unread ? 'Chưa đọc được' : mismatch ? `Sai (${group.mismatched}/${group.checked})` : 'Khớp',
+    };
+};
 const GnssConfigVerification = ({ device, disabled }) => {
     const [pending, setPending] = useState(null);
     const [result, setResult] = useState(null);
@@ -661,35 +692,26 @@ const GnssConfigVerification = ({ device, disabled }) => {
             {pending && <span className="spinner-border spinner-border-sm me-2" aria-hidden="true" />}
             {pending ? 'Đang xác minh…' : 'Xác minh cấu hình'}
         </button>
-        {!supported ? <div className="small text-muted mt-2">Cập nhật agent để xác minh cấu hình.</div>
-            : !fixed ? <div className="small text-muted mt-2">Lưu cấu hình Fixed LLA trước khi xác minh.</div>
-            : <div className="small text-muted mt-2">Đối chiếu cấu hình đang chạy với cấu hình đã lưu. Không thay đổi cấu hình chip.</div>}
+        <div className="small text-muted mt-2">{verificationAdvice(supported, fixed)}</div>
         <div role="status" aria-live="polite" aria-atomic="true">
             {pending && <div className="small text-info mt-2">Đang chờ chip trả cấu hình…</div>}
             {notice && <div className="small text-warning mt-2">{notice}</div>}
             {result && <>
-                <div className={`small fw-bold mt-2 ${offline || expired || result.state !== 'match' ? 'text-warning' : 'text-success-emphasis'}`}>
-                    {offline ? 'Thiết bị ngoại tuyến. Kết quả là lần xác minh gần nhất.'
-                        : expired ? 'Kết quả là lần đọc trước. Xác minh lại để cập nhật.'
-                        : result.state === 'match' ? 'Cấu hình đang chạy khớp.'
-                        : result.state === 'mismatch' ? 'Cấu hình chưa khớp.' : 'Chưa đọc đủ cấu hình để xác minh.'}
+                <div className={`small fw-bold mt-2 ${verificationResultClass(offline, expired, result.state)}`}>
+                    {verificationResultText(offline, expired, result.state)}
                 </div>
                 {result.details?.ports?.some(port => port.state !== 'ok') && <div className="small text-warning mt-2">Một số cổng chưa đọc được; xem trạng thái trong bảng.</div>}
                 {result.details ? <GnssReadbackDetails details={result.details} />
                     : <div className="small text-warning mt-2">Cập nhật agent để xem giá trị và từng cổng chip trả về.</div>}
                 <details className="mt-3"><summary>Đối chiếu các nhóm cấu hình</summary>
                 <dl className="row g-2 small mt-2 mb-0">
-                    {[[ 'fixed', device.detected_chip_type === 'Ublox' ? 'Fixed LLA và độ chính xác' : 'Fixed LLA'],
-                        ...(device.detected_chip_type === 'Ublox' ? [['protocols', 'Giao thức đầu ra']] : []),
-                        ['diagnostics', device.detected_chip_type === 'Ublox' ? 'Bản tin NMEA / UBX' : 'Bản tin NMEA'],
-                        ['rtcm', 'Bản tin RTCM']].map(([key, label]) => {
+                    {verificationGroups(device.detected_chip_type).map(([key, label]) => {
                         const group = result.groups?.[key];
-                        const unread = !group || Number(group.unread) > 0 || !(Number(group.checked) > 0);
-                        const mismatch = Number(group?.mismatched) > 0;
+                        const status = verificationGroupStatus(group);
                         return <React.Fragment key={key}>
                             <dt className="col-7 fw-normal">{label}</dt>
-                            <dd className={`col-5 text-end mb-0 ${unread ? 'text-warning' : mismatch ? 'text-danger-emphasis' : 'text-success-emphasis'}`}>
-                                {unread ? 'Chưa đọc được' : mismatch ? `Sai (${group.mismatched}/${group.checked})` : 'Khớp'}
+                            <dd className={`col-5 text-end mb-0 ${status.className}`}>
+                                {status.label}
                             </dd>
                         </React.Fragment>;
                     })}
