@@ -95,8 +95,7 @@ def transformer(source, target, dimensions=2):
                                 area_of_interest=AreaOfInterest(102, 8, 110, 24))
 
 
-@router.post("/convert", responses={422: {"description": "Unprocessable Entity"}})
-def convert(request: ConversionRequest):
+def _validate_conversion_request(request: ConversionRequest):
     allowed = {s["id"] for s in catalog()["systems"]}
     if request.source not in allowed or request.target not in allowed:
         raise HTTPException(422, "Hệ tọa độ không được hỗ trợ.")
@@ -107,34 +106,49 @@ def convert(request: ConversionRequest):
             raise HTTPException(422, "XYZ địa tâm cần đủ ba tọa độ; tùy chọn độ cao H không áp dụng cho XYZ.")
     if source.is_geographic and any(abs(p[0]) > 90 or abs(p[1]) > 180 for p in request.points):
         raise HTTPException(422, "Vĩ độ phải trong ±90°, kinh độ trong ±180°.")
+    return source, target, dimensions
+
+
+def _transform_conversion(request, source, target, dimensions):
+    operation = transformer(request.source, request.target, dimensions)
+    first = [p[0 if source.is_geocentric else 1] for p in request.points]
+    second = [p[1 if source.is_geocentric else 0] for p in request.points]
+    coordinates = [first, second]
+    if dimensions == 3:
+        coordinates.append([p[2] + (request.source_geoid if request.source_height == "orthometric" else 0)
+                            for p in request.points])
+    transformed = list(operation.transform(*coordinates, errcheck=True))
+    if not target.is_geocentric:
+        transformed[0], transformed[1] = transformed[1], transformed[0]
+    if dimensions == 3 and request.target_height == "orthometric":
+        transformed[2] = [h - request.target_geoid for h in transformed[2]]
+    points = list(zip(*transformed))
+    if not all(math.isfinite(v) for point in points for v in point):
+        raise ValueError("Non-finite result")
+    used = operation
     try:
-        operation = transformer(request.source, request.target, dimensions)
-        first = [p[0 if source.is_geocentric else 1] for p in request.points]
-        second = [p[1 if source.is_geocentric else 0] for p in request.points]
-        coordinates = [first, second]
-        if dimensions == 3:
-            coordinates.append([p[2] + (request.source_geoid if request.source_height == "orthometric" else 0)
-                                for p in request.points])
-        transformed = list(operation.transform(*coordinates, errcheck=True))
-        if not target.is_geocentric:
-            transformed[0], transformed[1] = transformed[1], transformed[0]
-        if dimensions == 3 and request.target_height == "orthometric":
-            transformed[2] = [h - request.target_geoid for h in transformed[2]]
-        points = list(zip(*transformed))
-        if not all(math.isfinite(v) for point in points for v in point):
-            raise ValueError("Non-finite result")
-        used = operation
-        try:
-            used = operation.get_last_used_operation()
-        except ProjError:
-            pass  # Identity operations have no last-used operation.
-        return {"points": points, "source": request.source, "target": request.target,
-                "operation": used.description,
-                "accuracy_m": used.accuracy if used.accuracy >= 0 else None,
-                "dimensions": dimensions,
-                "note": ("Đã chuyển tọa độ 3D, gồm độ cao ellipsoid qua phép đổi datum. H chỉ được tính theo N bạn cung cấp; không tự áp mô hình geoid."
-                         if dimensions == 3 else "Không nhập độ cao: chỉ chuyển tọa độ ngang.")
-                        + " Chọn đúng vùng đo và kinh tuyến theo hồ sơ; kết quả không thay thế hiệu chỉnh địa phương."}
+        used = operation.get_last_used_operation()
+    except ProjError:
+        pass  # Identity operations have no last-used operation.
+    return {
+        "points": points,
+        "source": request.source,
+        "target": request.target,
+        "operation": used.description,
+        "accuracy_m": used.accuracy if used.accuracy >= 0 else None,
+        "dimensions": dimensions,
+        "note": (
+            "Đã chuyển tọa độ 3D, gồm độ cao ellipsoid qua phép đổi datum. H chỉ được tính theo N bạn cung cấp; không tự áp mô hình geoid."
+            if dimensions == 3 else "Không nhập độ cao: chỉ chuyển tọa độ ngang."
+        ) + " Chọn đúng vùng đo và kinh tuyến theo hồ sơ; kết quả không thay thế hiệu chỉnh địa phương.",
+    }
+
+
+@router.post("/convert", responses={422: {"description": "Unprocessable Entity"}})
+def convert(request: ConversionRequest):
+    source, target, dimensions = _validate_conversion_request(request)
+    try:
+        return _transform_conversion(request, source, target, dimensions)
     except (ProjError, ValueError) as exc:
         raise HTTPException(422, "Không thể chuyển đổi. Kiểm tra hệ tọa độ, thứ tự trục và phạm vi tọa độ.") from exc
 

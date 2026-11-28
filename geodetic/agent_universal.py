@@ -925,13 +925,22 @@ async def _refresh_ubx_rf_quality(reader):
             if message_id == 0x38:
                 globals()['LAST_UBX_RF_ERROR'] = None
         except Exception as error:
-            if message_id == 0x38:
-                failure = {'error':(str(error) or type(error).__name__)[:160], 'error_kind':'timeout' if isinstance(error, TimeoutError) else 'invalid_response' if isinstance(error, ValueError) else 'query_failed'}
-                if packet:
-                    failure['frame_b64'] = base64.b64encode(packet[:128]).decode('ascii')
-                globals()['LAST_UBX_RF_ERROR'] = failure
-                globals()['LAST_UBX_RF_ERROR_TS'] = time.time()
+            _record_ubx_rf_failure(message_id, error, packet)
             logging.warning('[GNSS][RF %02X] %s', message_id, error)
+
+
+def _record_ubx_rf_failure(message_id, error, packet):
+    if message_id != 0x38:
+        return
+    failure = {
+        'error': (str(error) or type(error).__name__)[:160],
+        'error_kind': 'timeout' if isinstance(error, TimeoutError)
+        else 'invalid_response' if isinstance(error, ValueError) else 'query_failed',
+    }
+    if packet:
+        failure['frame_b64'] = base64.b64encode(packet[:128]).decode('ascii')
+    globals()['LAST_UBX_RF_ERROR'] = failure
+    globals()['LAST_UBX_RF_ERROR_TS'] = time.time()
 
 
 async def _refresh_ubx_security(reader):

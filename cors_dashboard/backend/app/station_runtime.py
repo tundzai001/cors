@@ -631,12 +631,11 @@ async def ui_websocket_endpoint(websocket: WebSocket):
         ui_manager.disconnect(websocket)
 
 
-async def flush_device_buffer(db: AsyncSession):
-    global device_update_buffer, buffer_metrics
-
+async def _take_device_update_snapshot():
+    global device_update_buffer
     async with device_update_buffer_lock:
         if not device_update_buffer:
-            return
+            return None
 
         # Dedup in-place to avoid duplicating the whole buffer in memory.
         snapshot_size = len(device_update_buffer)
@@ -656,38 +655,53 @@ async def flush_device_buffer(db: AsyncSession):
                 ) if previous else (-1, -1.0)
                 if item_order >= previous_order:
                     unique_updates[serial] = item
+    return snapshot_size, list(unique_updates.values())
 
-    final_batch = list(unique_updates.values())
-    duplicates_count = snapshot_size - len(final_batch)
 
-    if final_batch:
-        try:
-            # Order UPSERT against explicit device deletion and re-check the
-            # tombstone only after acquiring that ordering lock.
-            async with mqtt_handler.mqtt_db_write_lock:
-                final_batch = [
-                    item for item in final_batch
-                    if not mqtt_handler.device_was_deleted(item.get("serial"))
-                ]
-                if not final_batch:
-                    return
-                await crud.batch_update_devices(db, final_batch)
+async def _persist_device_update_batch(db: AsyncSession, batch: list[dict]):
+    # Order UPSERT against explicit device deletion and re-check the
+    # tombstone only after acquiring that ordering lock.
+    async with mqtt_handler.mqtt_db_write_lock:
+        remaining = [
+            item for item in batch
+            if not mqtt_handler.device_was_deleted(item.get("serial"))
+        ]
+        if not remaining:
+            return []
+        await crud.batch_update_devices(db, remaining)
+    return remaining
 
-            # Update metrics
-            buffer_metrics["flush_count"] += 1
-            buffer_metrics["total_updates_flushed"] += len(final_batch)
-            buffer_metrics["total_duplicates_deduped"] += duplicates_count
-            buffer_metrics["last_flush_time"] = time.time()
-            buffer_metrics["last_buffer_size"] = snapshot_size
 
-            if buffer_metrics["flush_count"] % 100 == 0:
-                logger.info(
-                    f"Buffer flush stats: flushes={buffer_metrics['flush_count']}, "
-                    f"total_flushed={buffer_metrics['total_updates_flushed']}, "
-                    f"dedup_ratio={buffer_metrics['total_duplicates_deduped']/max(1, buffer_metrics['total_updates_flushed']):.2%}"
-                )
-        except Exception as e:
-            logger.exception(f"Error flushing DB: {e}")
+def _record_device_buffer_flush(snapshot_size: int, updates_flushed: int, duplicates_count: int) -> None:
+    buffer_metrics["flush_count"] += 1
+    buffer_metrics["total_updates_flushed"] += updates_flushed
+    buffer_metrics["total_duplicates_deduped"] += duplicates_count
+    buffer_metrics["last_flush_time"] = time.time()
+    buffer_metrics["last_buffer_size"] = snapshot_size
+    if buffer_metrics["flush_count"] % 100 == 0:
+        logger.info(
+            f"Buffer flush stats: flushes={buffer_metrics['flush_count']}, "
+            f"total_flushed={buffer_metrics['total_updates_flushed']}, "
+            f"dedup_ratio={buffer_metrics['total_duplicates_deduped']/max(1, buffer_metrics['total_updates_flushed']):.2%}"
+        )
+
+
+async def flush_device_buffer(db: AsyncSession):
+    snapshot = await _take_device_update_snapshot()
+    if snapshot is None:
+        return
+    snapshot_size, batch = snapshot
+    duplicates_count = snapshot_size - len(batch)
+    if not batch:
+        return
+
+    try:
+        final_batch = await _persist_device_update_batch(db, batch)
+        if not final_batch:
+            return
+        _record_device_buffer_flush(snapshot_size, len(final_batch), duplicates_count)
+    except Exception as error:
+        logger.exception(f"Error flushing DB: {error}")
 
 
 pi_websocket_endpoint_router = APIRouter()
