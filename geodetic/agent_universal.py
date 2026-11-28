@@ -2506,47 +2506,47 @@ def dispatch_rtcm_data(data):
                 except (Empty, Full):
                     pass
 
-def dispatch_nmea_data(data):
-    """
-    Enhanced NMEA dispatcher with overflow protection
-    """
+def _update_dispatched_nmea_health(text):
     global LAST_NMEA_GSV_GSA_TS
-    # Parse GGA outside lock to keep subscriber fan-out fast under high NMEA throughput.
+    if text and '$G' in text:
+        _update_local_nmea_health(text.strip())
+        if any(sentence_type in text for sentence_type in ('GSV', 'GSA')):
+            LAST_NMEA_GSV_GSA_TS = time.time()
+
+
+def _record_dispatched_gga(text):
     try:
-        s = None
-        if isinstance(data, (bytes, bytearray)):
-            s = data.decode('ascii', errors='ignore')
-        elif isinstance(data, str):
-            s = data
+        new_status, lat, lon, alt = parse_gga_data(text)
+        globals()['LAST_GGA_FIX_STATUS'] = new_status
+        if lat is not None:
+            globals()['LAST_GGA_COORD'] = (lat, lon, alt)
+        raw_line = text.strip()
+        if '\n' in raw_line:
+            raw_line = next((line.strip() for line in raw_line.split('\n') if 'GGA' in line), raw_line)
+        globals()['LAST_RAW_GGA'] = raw_line
+        globals()['LAST_RAW_GGA_TS'] = time.time()
+        agent = globals().get('agent')
+        if agent and hasattr(agent, 'last_gga_fix_status'):
+            agent.last_gga_fix_status = new_status
+        now_ts = time.time()
+        if now_ts - getattr(dispatch_nmea_data, '_last_gga_log_ts', 0) >= 2.0:
+            dispatch_nmea_data._last_gga_log_ts = now_ts
+            lat_str = repr(lat) if lat is not None else "None"
+            lon_str = repr(lon) if lon is not None else "None"
+            alt_str = f"{alt!r}m" if alt is not None else "None"
+            logging.info(f"[GNSS NMEA] Rx GGA: {raw_line} | Fix={new_status} | Lat={lat_str} Lon={lon_str} Alt={alt_str}")
+    except Exception:
+        pass
 
-        if s and '$G' in s:
-            _update_local_nmea_health(s.strip())
-            if any(t in s for t in ('GSV', 'GSA')):
-                LAST_NMEA_GSV_GSA_TS = time.time()
 
-        if s and '$G' in s and 'GGA' in s[:10]:
-            try:
-                new_status, lat, lon, alt = parse_gga_data(s)
-                globals()['LAST_GGA_FIX_STATUS'] = new_status
-                if lat is not None:
-                    globals()['LAST_GGA_COORD'] = (lat, lon, alt)
-                raw_line = s.strip()
-                if '\n' in raw_line:
-                    raw_line = next((l.strip() for l in raw_line.split('\n') if 'GGA' in l), raw_line)
-                globals()['LAST_RAW_GGA'] = raw_line
-                globals()['LAST_RAW_GGA_TS'] = time.time()
-                ag = globals().get('agent')
-                if ag and hasattr(ag, 'last_gga_fix_status'):
-                    ag.last_gga_fix_status = new_status
-                now_ts = time.time()
-                if now_ts - getattr(dispatch_nmea_data, '_last_gga_log_ts', 0) >= 2.0:
-                    dispatch_nmea_data._last_gga_log_ts = now_ts
-                    lat_str = repr(lat) if lat is not None else "None"
-                    lon_str = repr(lon) if lon is not None else "None"
-                    alt_str = f"{alt!r}m" if alt is not None else "None"
-                    logging.info(f"[GNSS NMEA] Rx GGA: {raw_line} | Fix={new_status} | Lat={lat_str} Lon={lon_str} Alt={alt_str}")
-            except Exception:
-                pass
+def dispatch_nmea_data(data):
+    """Update NMEA status and fan out data with overflow protection."""
+    try:
+        text = data.decode('ascii', errors='ignore') if isinstance(data, (bytes, bytearray)) else data
+        if isinstance(text, str):
+            _update_dispatched_nmea_health(text)
+            if '$G' in text and 'GGA' in text[:10]:
+                _record_dispatched_gga(text)
     except Exception:
         pass
 
@@ -5351,12 +5351,7 @@ async def verify_receiver_configuration(agent, reader, payload, command_id):
     return await _verify_ublox_configuration(agent, reader, payload, command_id)
 
 
-def receiver_base_system_info(agent):
-    result = copy.deepcopy(getattr(agent, 'receiver_base_readback', {}))
-    checked_at = getattr(agent, 'receiver_base_readback_at', None)
-    age = max(0, time.monotonic() - checked_at) if checked_at is not None else None
-    system = {'gnss_valset_supported':True, 'gnss_verification_supported':True, 'gnss_verification_details_supported':True, 'gnss_verification_uart1':False,
-                  'gnss_verification':None}
+def _receiver_verification_status(agent, system):
     verification = getattr(agent, 'gnss_verification', None)
     verified_at = getattr(agent, 'gnss_verification_at', None)
     if verification and verified_at is not None:
@@ -5365,11 +5360,9 @@ def receiver_base_system_info(agent):
             system['gnss_verification'] = {**copy.deepcopy(verification), 'age_seconds': int(verification_age)}
         else:
             agent.gnss_verification = None
-    if result:
-        result['age_seconds'] = int(age) if age is not None else 0xffffffff
-        system['receiver_base_readback'] = result
-    if agent.config.get('survey_in_result'):
-        system['survey_in_result'] = copy.deepcopy(agent.config['survey_in_result'])
+
+
+def _receiver_survey_status(agent, result, age):
     monitoring = result.get('mode_kind') == 'survey_in'
     position = result.get('bestpos', {})
     ready = position.get('state') == 'ok' and position.get('position_type') == 'FIXEDPOS'
@@ -5390,7 +5383,22 @@ def receiver_base_system_info(agent):
                 survey[key] = result[key]
     elif agent.get_base_config().get('base_setup_method') == 'SURVEY_IN' and (not result or result.get('error')):
         survey['state'] = 'awaiting_readback'
-    system['survey_in_status'] = survey
+    return survey
+
+
+def receiver_base_system_info(agent):
+    result = copy.deepcopy(getattr(agent, 'receiver_base_readback', {}))
+    checked_at = getattr(agent, 'receiver_base_readback_at', None)
+    age = max(0, time.monotonic() - checked_at) if checked_at is not None else None
+    system = {'gnss_valset_supported':True, 'gnss_verification_supported':True, 'gnss_verification_details_supported':True, 'gnss_verification_uart1':False,
+              'gnss_verification':None}
+    _receiver_verification_status(agent, system)
+    if result:
+        result['age_seconds'] = int(age) if age is not None else 0xffffffff
+        system['receiver_base_readback'] = result
+    if agent.config.get('survey_in_result'):
+        system['survey_in_result'] = copy.deepcopy(agent.config['survey_in_result'])
+    system['survey_in_status'] = _receiver_survey_status(agent, result, age)
     return system
 
 
@@ -7090,6 +7098,45 @@ def _verify_ublox_values(ser, values):
                 raise RuntimeError(f'Receiver configuration differs in layer {layer}; configuration is unconfirmed')
 
 
+def _next_ubx_packet(buffer):
+    while len(buffer) >= 8:
+        start = buffer.find(b'\xb5\x62')
+        if start < 0:
+            del buffer[:-1]
+            break
+        del buffer[:start]
+        if len(buffer) < 8:
+            break
+        length = int.from_bytes(buffer[4:6], 'little')
+        if length > 8192:
+            del buffer[0]
+            continue
+        if len(buffer) < length + 8:
+            break
+        packet = bytes(buffer[:length + 8])
+        del buffer[:length + 8]
+        if packet == _ubx_packet(packet[2], packet[3], packet[6:-2]):
+            return packet
+    return None
+
+
+def _verify_tmode_packet(packet, expected_packet, expected_flags):
+    if packet[2:4] == b'\x05\x00' and packet[6:-2] == b'\x06\x71':
+        raise RuntimeError("Receiver rejected UBX-CFG-TMODE3 poll")
+    if packet[2:4] != b'\x06\x71' or len(packet) != 48:
+        return False
+    actual_flags = int.from_bytes(packet[8:10], 'little') & 0x1ff
+    if actual_flags != expected_flags:
+        raise RuntimeError(f"Receiver TMODE mismatch: expected {expected_flags:#x}, got {actual_flags:#x}")
+    if expected_flags & 0xff == 2 and (
+        packet[10:25] != expected_packet[10:25]
+        or packet[26:30] != expected_packet[26:30]
+    ):
+        raise RuntimeError("Receiver fixed coordinates differ from requested coordinates")
+    logging.info("Receiver TMODE3 readback verified: mode=%s", actual_flags & 0xff)
+    return True
+
+
 def _verify_ublox_tmode(ser, expected_packet, timeout=4.0):
     """Poll TMODE3; a successful serial write is not proof of receiver mode."""
     expected_flags = int.from_bytes(expected_packet[8:10], 'little') & 0x1ff
@@ -7104,37 +7151,11 @@ def _verify_ublox_tmode(ser, expected_packet, timeout=4.0):
         while time.monotonic() < deadline:
             buffer.extend(ser.read(min(ser.in_waiting or 1, 4096)))
             while len(buffer) >= 8:
-                start = buffer.find(b'\xb5\x62')
-                if start < 0:
-                    del buffer[:-1]
+                packet = _next_ubx_packet(buffer)
+                if packet is None:
                     break
-                del buffer[:start]
-                if len(buffer) < 8:
-                    break
-                length = int.from_bytes(buffer[4:6], 'little')
-                if length > 8192:
-                    del buffer[0]
-                    continue
-                if len(buffer) < length + 8:
-                    break
-                packet = bytes(buffer[:length + 8])
-                del buffer[:length + 8]
-                if packet != _ubx_packet(packet[2], packet[3], packet[6:-2]):
-                    continue
-                if packet[2:4] == b'\x05\x00' and packet[6:-2] == b'\x06\x71':
-                    raise RuntimeError("Receiver rejected UBX-CFG-TMODE3 poll")
-                if packet[2:4] != b'\x06\x71' or length != 40:
-                    continue
-                actual_flags = int.from_bytes(packet[8:10], 'little') & 0x1ff
-                if actual_flags != expected_flags:
-                    raise RuntimeError(f"Receiver TMODE mismatch: expected {expected_flags:#x}, got {actual_flags:#x}")
-                if expected_flags & 0xff == 2 and (
-                    packet[10:25] != expected_packet[10:25]
-                    or packet[26:30] != expected_packet[26:30]
-                ):
-                    raise RuntimeError("Receiver fixed coordinates differ from requested coordinates")
-                logging.info("Receiver TMODE3 readback verified: mode=%s", actual_flags & 0xff)
-                return
+                if _verify_tmode_packet(packet, expected_packet, expected_flags):
+                    return
         raise TimeoutError("No valid TMODE3 readback from receiver; configuration is unconfirmed")
     finally:
         ser.timeout = previous_timeout
