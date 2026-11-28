@@ -618,6 +618,171 @@ class GnssRfMonitor:
             if connection is not None:
                 connection.close()
 
+    @staticmethod
+    def _decode_security_sample(raw):
+        data = _rf_monitor_decode(raw, 'ubx_sec_sig', 92)
+        if not data or raw.get('error'):
+            return None, None, False, False
+        try:
+            security = _ubx_security_payload(data, 9)
+        except ValueError:
+            return None, None, False, False
+        age = _rf_monitor_age(raw)
+        jam_warning = security['jam_enabled'] and security['jam_state'] == 2
+        spoof_warning = security['spoof_enabled'] and security['spoof_state'] >= 2
+        if jam_warning or spoof_warning:
+            severity = 2 if spoof_warning and security['spoof_state'] == 3 else 1
+        elif (security['jam_enabled'] and security['jam_state'] == 1
+              and security['spoof_enabled'] and security['spoof_state'] == 1):
+            severity = 0
+        else:
+            severity = None
+        return age, severity, jam_warning, spoof_warning
+
+    @staticmethod
+    def _decode_monitor_rf_sample(payload, raw):
+        data = _rf_monitor_decode(raw, 'ubx_mon_rf', 136)
+        if not data or len(data) < 4 or data[0] != 0 or not 1 <= data[1] <= 4 or len(data) != 4 + 24 * data[1]:
+            return None, None, []
+        blocks = [[data[offset], data[offset + 1] & 3, int.from_bytes(data[offset + 12:offset + 14], 'little'),
+                   int.from_bytes(data[offset + 14:offset + 16], 'little'), data[offset + 16]]
+                  for offset in range(4, len(data), 24)]
+        flags = [block[1] for block in blocks]
+        severity = max(flags) if max(flags) >= 2 or 0 not in flags else None
+        if severity is not None:
+            severity -= 1
+        age = _rf_monitor_age(raw)
+        receiver = payload.get('gnss_receiver')
+        receiver_disabled = (
+            _rf_monitor_age(receiver) is not None and receiver.get('itfm_enabled') is False
+        )
+        if receiver_disabled or raw.get('last_error'):
+            severity = None
+        return age, severity, blocks
+
+    @staticmethod
+    def _decode_unicore_rf_sample(raw):
+        jam = raw.get('jamming')
+        age = _rf_monitor_age(jam)
+        count = {'unicore_freqjamstatusa': 3, 'unicore_jamstatusa': 1}.get(jam.get('source')) if isinstance(jam, dict) else None
+        flags = jam.get('flags') if isinstance(jam, dict) else None
+        severity = None
+        if age is not None and count and isinstance(flags, list) and len(flags) == count and all(
+            type(flag) is int and 0 <= flag <= 2 for flag in flags
+        ):
+            severity = max(flags)
+        return age, severity
+
+    def _decode_rf_sample(self, payload, raw, source):
+        if payload.get('status') == 'offline':
+            return None, None, [], False, False
+        if source == 'ubx_sec_sig':
+            age, severity, jam_warning, spoof_warning = self._decode_security_sample(raw)
+            return age, severity, [], jam_warning, spoof_warning
+        if source == 'ubx_mon_rf':
+            age, severity, blocks = self._decode_monitor_rf_sample(payload, raw)
+            return age, severity, blocks, False, False
+        if source == 'unicore_rf':
+            age, severity = self._decode_unicore_rf_sample(raw)
+            return age, severity, [], False, False
+        return None, None, [], False, False
+
+    @staticmethod
+    def _decode_satellite_cno(payload, source, age):
+        satellites = payload.get('gnss_satellites')
+        data = _rf_monitor_decode(satellites, 'ubx_nav_sat', 2060) if source in ('ubx_mon_rf', 'ubx_sec_sig') else None
+        if not (data and len(data) >= 8 and data[4] == 1 and data[5] <= 128
+                and len(data) == 8 + 12 * data[5] and abs(_rf_monitor_age(satellites) - age) <= 10):
+            return {}, None
+        epoch = int.from_bytes(data[:4], 'little')
+        cno = {}
+        for offset in range(8, len(data), 12):
+            gnss, sv, value = data[offset:offset + 3]
+            flags = int.from_bytes(data[offset + 8:offset + 12], 'little')
+            if gnss <= 7 and sv and value > 0 and (flags & 7) >= 4:
+                key = (gnss, sv)
+                if key in cno:
+                    return {}, epoch
+                cno[key] = value
+        return cno, epoch
+
+    def _cno_changes(self, cno, epoch, sample_at):
+        common = cno.keys() & self.previous_cno.keys()
+        if not (len(common) >= 4 and epoch != self.previous_epoch and self.previous_at is not None
+                and 0 < sample_at - self.previous_at <= 45):
+            return None, []
+        changes = [cno[key] - self.previous_cno[key] for key in common]
+        return round(statistics.median(changes), 1), changes
+
+    def _append_rf_sample(self, sample_at, severity, age, jam_warning, spoof_warning, blocks, payload, now):
+        if self.started_at is None:
+            self.started_at = sample_at
+        elif sample_at >= self.started_at + 600:
+            self.started_at += int((sample_at - self.started_at) // 600) * 600
+            self.samples.clear()
+        cno, epoch = self._decode_satellite_cno(payload, self.source, age)
+        delta, changes = self._cno_changes(cno, epoch, sample_at)
+        sample = {
+            'at': sample_at, 'severity': severity, 'cno_delta': delta,
+            'jamming': jam_warning, 'spoofing': spoof_warning, 'rf_blocks': blocks,
+            'matched': len(changes), 'changed': sum(value != 0 for value in changes),
+            'minimum': min(changes) if changes else None,
+            'maximum': max(changes) if changes else None,
+        }
+        self.samples.append(sample)
+        if epoch != self.previous_epoch:
+            self.previous_cno, self.previous_at, self.previous_epoch = cno, sample_at, epoch
+        self._archive(sample, now)
+
+    def _build_rf_summary(self, severity):
+        warnings = [sample for sample in self.samples if sample['severity'] > 0]
+        episodes = sum(
+            sample['severity'] > 0 and (
+                index == 0 or self.samples[index - 1]['severity'] == 0
+                or sample['at'] - self.samples[index - 1]['at'] > 45
+            )
+            for index, sample in enumerate(self.samples)
+        )
+        block_ranges = []
+        for index in range(4):
+            readings = [sample['rf_blocks'][index] for sample in self.samples if len(sample['rf_blocks']) > index]
+            if readings:
+                # Preserve receiver order: old firmware can report duplicate block IDs.
+                block_ranges.append([
+                    index + 1, readings[-1][0], len(readings),
+                    sum(row[1] == 2 for row in readings), sum(row[1] == 3 for row in readings),
+                    *[value for column in (2, 3, 4) for value in (
+                        min(row[column] for row in readings), max(row[column] for row in readings)
+                    )],
+                ])
+        last = self.samples[-1] if self.samples else {
+            'at': self.history['last_sample_at'], 'cno_delta': None, 'matched': 0,
+        }
+        return {
+            'source': self.source or self.history['source'], 'window_seconds': 600,
+            'sample_count': len(self.samples), 'window_mode': 'fixed',
+            'window_started_at': self.started_at,
+            'window_ends_at': self.started_at + 600 if self.started_at is not None else None,
+            'jamming_samples': sum(sample.get('jamming', False) for sample in self.samples),
+            'spoofing_samples': sum(sample.get('spoofing', False) for sample in self.samples),
+            'observed_seconds': min(600, max(0, round(last['at'] - self.started_at, 1))) if self.started_at is not None else 0,
+            'samples': [[round(last['at'] - sample['at'], 1), sample['severity'], sample['cno_delta'],
+                         sample['matched'], sample['changed'], sample['minimum'], sample['maximum']]
+                        for sample in self.samples],
+            'history_24h': self.history, 'history_error': self.history_error,
+            'block_ranges': block_ranges, 'warning_samples': len(warnings),
+            'critical_samples': sum(sample['severity'] == 2 for sample in self.samples),
+            'episodes': episodes,
+            'coincident_cno_drops': sum(
+                sample['cno_delta'] is not None and sample['cno_delta'] <= -3 for sample in warnings
+            ),
+            'quality_comparisons': sum(sample['cno_delta'] is not None for sample in self.samples),
+            'first_sample_at': self.samples[0]['at'] if self.samples else last['at'],
+            'last_sample_at': last['at'], 'last_warning_at': warnings[-1]['at'] if warnings else None,
+            'current_severity': severity, 'cno_delta_dbhz': last['cno_delta'],
+            'matched_satellites': last['matched'],
+        }
+
     def observe(self, payload, now):
         while self.samples and now - self.samples[0]['at'] > 600:
             self.samples.popleft()
@@ -625,46 +790,8 @@ class GnssRfMonitor:
         modern = (payload.get('gnss_receiver') or {}).get('itfm_supported') is False
         if modern or payload.get('gnss_security'):
             raw = payload.get('gnss_security') or {'source': 'ubx_sec_sig'}
-        age, severity = None, None
-        blocks = []
         source = raw.get('source') if isinstance(raw, dict) else None
-        jam_warning = spoof_warning = False
-        if payload.get('status') != 'offline' and source == 'ubx_sec_sig':
-            data = _rf_monitor_decode(raw, source, 92)
-            if data and not raw.get('error'):
-                try:
-                    security = _ubx_security_payload(data, 9)
-                    age = _rf_monitor_age(raw)
-                    jam_warning = security['jam_enabled'] and security['jam_state'] == 2
-                    spoof_warning = security['spoof_enabled'] and security['spoof_state'] >= 2
-                    if jam_warning or spoof_warning:
-                        severity = 2 if spoof_warning and security['spoof_state'] == 3 else 1
-                    elif security['jam_enabled'] and security['jam_state'] == 1 and security['spoof_enabled'] and security['spoof_state'] == 1:
-                        severity = 0
-                except ValueError:
-                    pass
-        elif payload.get('status') != 'offline' and source == 'ubx_mon_rf':
-            data = _rf_monitor_decode(raw, source, 136)
-            if data and len(data) >= 4 and data[0] == 0 and 1 <= data[1] <= 4 and len(data) == 4 + 24 * data[1]:
-                blocks = [[data[o], data[o + 1] & 3, int.from_bytes(data[o+12:o+14], 'little'),
-                           int.from_bytes(data[o+14:o+16], 'little'), data[o+16]] for o in range(4, len(data), 24)]
-                flags = [block[1] for block in blocks]
-                # Any unknown block means coverage is incomplete, unless another warns.
-                severity = max(flags) if max(flags) >= 2 or 0 not in flags else None
-                if severity is not None:
-                    severity -= 1  # 0 clear, 1 warning, 2 critical.
-                age = _rf_monitor_age(raw)
-                receiver = payload.get('gnss_receiver')
-                if (_rf_monitor_age(receiver) is not None and receiver.get('itfm_enabled') is False) or raw.get('last_error'):
-                    severity = None
-        elif payload.get('status') != 'offline' and source == 'unicore_rf':
-            jam = raw.get('jamming')
-            age = _rf_monitor_age(jam)
-            count = {'unicore_freqjamstatusa': 3, 'unicore_jamstatusa': 1}.get(jam.get('source')) if isinstance(jam, dict) else None
-            flags = jam.get('flags') if isinstance(jam, dict) else None
-            if age is not None and count and isinstance(flags, list) and len(flags) == count and all(type(flag) is int and 0 <= flag <= 2 for flag in flags):
-                severity = max(flags)
-
+        age, severity, blocks, jam_warning, spoof_warning = self._decode_rf_sample(payload, raw, source)
         if source != self.source and severity is not None:
             self.samples.clear()
             self.previous_cno = {}
@@ -673,72 +800,16 @@ class GnssRfMonitor:
             self.started_at = None
             self.previous_epoch = None
         sample_at = now - age if age is not None else None
-        if severity is not None and (not self.samples or sample_at - self.samples[-1]['at'] >= 5):
-            if self.started_at is None:
-                self.started_at = sample_at
-            elif sample_at >= self.started_at + 600:
-                self.started_at += int((sample_at - self.started_at) // 600) * 600
-                self.samples.clear()
-            cno = {}
-            epoch = None
-            satellites = payload.get('gnss_satellites')
-            data = _rf_monitor_decode(satellites, 'ubx_nav_sat', 2060) if source in ('ubx_mon_rf', 'ubx_sec_sig') else None
-            if (data and len(data) >= 8 and data[4] == 1 and data[5] <= 128
-                    and len(data) == 8 + 12 * data[5] and abs(_rf_monitor_age(satellites) - age) <= 10):
-                epoch = int.from_bytes(data[:4], 'little')
-                for offset in range(8, len(data), 12):
-                    gnss, sv, value = data[offset:offset + 3]
-                    flags = int.from_bytes(data[offset + 8:offset + 12], 'little')
-                    if gnss <= 7 and sv and value > 0 and (flags & 7) >= 4:
-                        key = (gnss, sv)
-                        if key in cno:
-                            cno = {}
-                            break
-                        cno[key] = value
-            common = cno.keys() & self.previous_cno.keys()
-            delta = None
-            changes = []
-            if len(common) >= 4 and epoch != self.previous_epoch and self.previous_at is not None and 0 < sample_at - self.previous_at <= 45:
-                changes = [cno[key] - self.previous_cno[key] for key in common]
-                delta = round(statistics.median(changes), 1)
-            self.samples.append({'at': sample_at, 'severity': severity, 'cno_delta': delta,
-                                 'jamming': jam_warning, 'spoofing': spoof_warning,
-                                 'rf_blocks': blocks, 'matched': len(changes), 'changed': sum(value != 0 for value in changes),
-                                 'minimum': min(changes) if changes else None, 'maximum': max(changes) if changes else None})
-            if epoch != self.previous_epoch:
-                self.previous_cno, self.previous_at, self.previous_epoch = cno, sample_at, epoch
-            self._archive(self.samples[-1], now)
+        should_append = severity is not None and (
+            not self.samples or sample_at - self.samples[-1]['at'] >= 5
+        )
+        if should_append:
+            self._append_rf_sample(sample_at, severity, age, jam_warning, spoof_warning, blocks, payload, now)
         elif self.history_path:
             self._archive(None, now)
         if not self.samples and not self.history:
             return None
-        warnings = [sample for sample in self.samples if sample['severity'] > 0]
-        episodes = sum(sample['severity'] > 0 and (index == 0 or self.samples[index - 1]['severity'] == 0
-                       or sample['at'] - self.samples[index - 1]['at'] > 45)
-                       for index, sample in enumerate(self.samples))
-        block_ranges = []
-        for index in range(4):
-            readings = [sample['rf_blocks'][index] for sample in self.samples if len(sample['rf_blocks']) > index]
-            if readings:
-                # Preserve receiver order: old firmware can report duplicate block IDs.
-                block_ranges.append([index + 1, readings[-1][0], len(readings),
-                    sum(row[1] == 2 for row in readings), sum(row[1] == 3 for row in readings),
-                    *[value for column in (2, 3, 4) for value in (min(row[column] for row in readings), max(row[column] for row in readings))]])
-        last = self.samples[-1] if self.samples else {'at':self.history['last_sample_at'], 'cno_delta':None, 'matched':0}
-        return {'source': self.source or self.history['source'], 'window_seconds': 600, 'sample_count': len(self.samples),
-                'window_mode': 'fixed', 'window_started_at': self.started_at,
-                'window_ends_at': self.started_at + 600 if self.started_at is not None else None,
-                'jamming_samples': sum(sample.get('jamming', False) for sample in self.samples),
-                'spoofing_samples': sum(sample.get('spoofing', False) for sample in self.samples),
-                'observed_seconds': min(600, max(0, round(last['at'] - self.started_at, 1))) if self.started_at is not None else 0,
-                'samples': [[round(last['at'] - sample['at'], 1), sample['severity'], sample['cno_delta'], sample['matched'], sample['changed'], sample['minimum'], sample['maximum']] for sample in self.samples],
-                'history_24h': self.history, 'history_error': self.history_error, 'block_ranges': block_ranges,
-                'warning_samples': len(warnings), 'critical_samples': sum(sample['severity'] == 2 for sample in self.samples),
-                'episodes': episodes, 'coincident_cno_drops': sum(sample['cno_delta'] is not None and sample['cno_delta'] <= -3 for sample in warnings),
-                'quality_comparisons': sum(sample['cno_delta'] is not None for sample in self.samples),
-                'first_sample_at': self.samples[0]['at'] if self.samples else last['at'], 'last_sample_at': last['at'],
-                'last_warning_at': warnings[-1]['at'] if warnings else None,
-                'current_severity': severity, 'cno_delta_dbhz': last['cno_delta'], 'matched_satellites': last['matched']}
+        return self._build_rf_summary(severity)
 
 
 def receiver_quality_status(now):
@@ -6175,6 +6246,33 @@ async def _handle_command_deploy_service_config(context):
     await send_status(agent, mqtt_client)
 
 
+def _resolve_rtcm_server_id(raw_server_id, agent):
+    try:
+        parsed_server_id = int(raw_server_id)
+    except (TypeError, ValueError):
+        return None
+    if parsed_server_id in _get_ntrip_server_ids(agent.get_service_config() or {}):
+        return parsed_server_id
+    return None
+
+
+def _log_rtcm_stream_status(active, server_id, address, mountpoint):
+    if active:
+        if server_id:
+            logging.info(f"[RTCM] Stream activated for server {server_id} by control plane")
+        elif address:
+            logging.info(f"[RTCM] Stream activated for address '{address}' by control plane")
+        elif mountpoint:
+            logging.info(f"[RTCM] Stream activated for mountpoint '{mountpoint}' by control plane")
+        else:
+            logging.info("[RTCM] Stream activated by control plane - forwarding to NTRIP caster enabled")
+        return
+    if server_id:
+        logging.info(f"[RTCM] Stream set to standby for server {server_id} by control plane")
+    else:
+        logging.info("[RTCM] Stream set to standby by control plane - forwarding to NTRIP caster disabled")
+
+
 async def _handle_command_set_rtcm_stream_active(context):
     global current_state, rtcm_stream_active_flag
     payload = context['payload']
@@ -6192,32 +6290,12 @@ async def _handle_command_set_rtcm_stream_active(context):
         "server_id",
         payload.get("server_idx", payload.get("server")),
     )
-    server_id = None
-    try:
-        if raw_server_id is not None:
-            parsed_server_id = int(raw_server_id)
-            if parsed_server_id in _get_ntrip_server_ids(agent.get_service_config() or {}):
-                server_id = parsed_server_id
-    except (TypeError, ValueError):
-        server_id = None
+    server_id = _resolve_rtcm_server_id(raw_server_id, agent) if raw_server_id is not None else None
 
     agent.set_rtcm_stream_active(active, mountpoint=mountpoint, server_id=server_id, address=address)
     rtcm_stream_active_flag = bool(agent.rtcm_stream_active)  # Update global dispatch gate immediately
 
-    if active:
-        if server_id:
-            logging.info(f"[RTCM] Stream activated for server {server_id} by control plane")
-        elif address:
-            logging.info(f"[RTCM] Stream activated for address '{address}' by control plane")
-        elif mountpoint:
-            logging.info(f"[RTCM] Stream activated for mountpoint '{mountpoint}' by control plane")
-        else:
-            logging.info("[RTCM] Stream activated by control plane - forwarding to NTRIP caster enabled")
-    else:
-        if server_id:
-            logging.info(f"[RTCM] Stream set to standby for server {server_id} by control plane")
-        else:
-            logging.info("[RTCM] Stream set to standby by control plane - forwarding to NTRIP caster disabled")
+    _log_rtcm_stream_status(active, server_id, address, mountpoint)
     current_state = "ONLINE"
     await send_status(agent, mqtt_client)
 
