@@ -550,6 +550,43 @@ async def seed_vietnam_units_endpoint(
 get_authenticated_map_stations_router = APIRouter()
 
 @get_authenticated_map_stations_router.get("/api/map/stations", responses={403: {"description": "Forbidden"}})
+async def _authenticated_map_visible_serials(current_user, db, auth_db):
+    if current_user.role == auth.Role.COORDINATOR:
+        return await crud.get_coordinator_visible_base_serials(db, current_user)
+    if current_user.role == auth.Role.VIEWER:
+        return await crud.get_viewer_visible_base_serials(auth_db, db, current_user)
+    if current_user.role != auth.Role.ADMIN:
+        raise HTTPException(status_code=403, detail="Bạn không có quyền xem cấu hình trạm.")
+    return None
+
+
+def _map_device_index(devices):
+    return {
+        str(device.serial).strip().upper(): device
+        for device in devices
+        if device.serial
+    }
+
+
+def _authenticated_map_station_item(public_item, devices, visible_serials, current_user):
+    serial = str(public_item.get("serial") or "").strip().upper()
+    if not serial or (visible_serials is not None and serial not in visible_serials):
+        return None
+    device = devices.get(serial)
+    if not device:
+        return None
+    item = dict(public_item)
+    config = device.service_config if isinstance(device.service_config, dict) else {}
+    can_reveal_config = (
+        current_user.role == auth.Role.ADMIN
+        or (current_user.role == auth.Role.COORDINATOR and device.user_id == current_user.id)
+    )
+    item["service_config"] = config if can_reveal_config else schemas.redact_config_secrets(config)
+    item["detected_chip_type"] = device.detected_chip_type
+    item["system_info"] = schemas.redact_config_secrets(device.system_info)
+    return item
+
+
 async def get_authenticated_map_stations(
     response: Response,
     db: AsyncSession = Depends(get_db),
@@ -559,40 +596,13 @@ async def get_authenticated_map_stations(
     """Return map data and in-scope station config to authenticated users."""
     public_items = await _get_map_station_items(response, db)
     response.headers["Cache-Control"] = "private, no-store"
-
-    visible_serials = None
-    if current_user.role == auth.Role.COORDINATOR:
-        visible_serials = await crud.get_coordinator_visible_base_serials(db, current_user)
-    elif current_user.role == auth.Role.VIEWER:
-        visible_serials = await crud.get_viewer_visible_base_serials(auth_db, db, current_user)
-    elif current_user.role != auth.Role.ADMIN:
-        raise HTTPException(status_code=403, detail="Bạn không có quyền xem cấu hình trạm.")
-
+    visible_serials = await _authenticated_map_visible_serials(current_user, db, auth_db)
     result = await db.execute(select(models.Device))
-    devices = {
-        str(device.serial).strip().upper(): device
-        for device in result.scalars().all()
-        if device.serial
-    }
-    items = []
-    for public_item in public_items:
-        serial = str(public_item.get("serial") or "").strip().upper()
-        if not serial or (visible_serials is not None and serial not in visible_serials):
-            continue
-        device = devices.get(serial)
-        if not device:
-            continue
-        item = dict(public_item)
-        config = device.service_config if isinstance(device.service_config, dict) else {}
-        can_reveal_config = (
-            current_user.role == auth.Role.ADMIN
-            or (current_user.role == auth.Role.COORDINATOR and device.user_id == current_user.id)
-        )
-        item["service_config"] = config if can_reveal_config else schemas.redact_config_secrets(config)
-        item["detected_chip_type"] = device.detected_chip_type
-        item["system_info"] = schemas.redact_config_secrets(device.system_info)
-        items.append(item)
-    return items
+    devices = _map_device_index(result.scalars().all())
+    return [
+        item for public_item in public_items
+        if (item := _authenticated_map_station_item(public_item, devices, visible_serials, current_user)) is not None
+    ]
 
 
 get_public_network_summary_router = APIRouter()

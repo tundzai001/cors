@@ -2474,8 +2474,7 @@ class MonitorWorker(threading.Thread):
                 self._sock = None
     
     @staticmethod
-    def _read_ntrip_response(sock):
-        """Validate HTTP/ICY success and preserve coalesced binary stream bytes."""
+    def _read_ntrip_response_line(sock):
         response = bytearray()
         while b'\r\n' not in response:
             chunk = sock.recv(4096)
@@ -2485,12 +2484,10 @@ class MonitorWorker(threading.Thread):
             if len(response) > 16384:
                 raise ConnectionError('NTRIP response headers too large')
         line = bytes(response).split(b'\r\n', 1)[0]
-        fields = line.split()
-        if len(fields) < 2 or fields[1] != b'200' or not (fields[0] == b'ICY' or fields[0].startswith(b'HTTP/')):
-            raise ConnectionError('Caster rejected NTRIP stream')
-        if fields[0] == b'ICY':
-            body = bytes(response).split(b'\r\n', 1)[1]
-            return body[2:] if body.startswith(b'\r\n') else body
+        return response, line.split()
+
+    @staticmethod
+    def _read_http_ntrip_body(sock, response):
         while b'\r\n\r\n' not in response:
             chunk = sock.recv(4096)
             if not chunk:
@@ -2502,6 +2499,18 @@ class MonitorWorker(threading.Thread):
         if b'transfer-encoding: chunked' in header.lower():
             raise ConnectionError('Chunked NTRIP stream unsupported')
         return body
+
+    @staticmethod
+    def _read_ntrip_response(sock):
+        """Validate HTTP/ICY success and preserve coalesced binary stream bytes."""
+        response, fields = MonitorWorker._read_ntrip_response_line(sock)
+        valid_protocol = len(fields) >= 2 and (fields[0] == b'ICY' or fields[0].startswith(b'HTTP/'))
+        if not valid_protocol or fields[1] != b'200':
+            raise ConnectionError('Caster rejected NTRIP stream')
+        if fields[0] == b'ICY':
+            body = bytes(response).split(b'\r\n', 1)[1]
+            return body[2:] if body.startswith(b'\r\n') else body
+        return MonitorWorker._read_http_ntrip_body(sock, response)
 
     def _wait_for_monitor_connect_interval(self):
         global MONITOR_LAST_CONNECT_AT
