@@ -5048,132 +5048,219 @@ async def _verify_unicore_configuration(agent, reader, payload, command_id):
     return result
 
 
-async def verify_receiver_configuration(agent, reader, payload, command_id):
-    """Read the live receiver through its owning UART thread; never write config."""
-    agent.gnss_verification = None
-    if agent.detected_chip.get('type') not in ('Ublox', 'Unicorecomm') or reader is None:
-        raise RuntimeError('Configuration verification requires a supported GNSS reader')
-    if agent.detected_chip['type'] == 'Unicorecomm':
-        return await _verify_unicore_configuration(agent, reader, payload, command_id)
-    expected, records = _gnss_verification_expected(payload)
-    groups = {name: {'checked':0, 'mismatched':0, 'unread':0}
-              for name in ('fixed', 'protocols', 'diagnostics', 'rtcm')}
-    result = {'command_id':command_id, 'groups':groups}
+def _ublox_readback_jobs(payload, records, result):
     inspection = payload.get('readback')
-    details = None
-    if inspection:
-        fields = inspection.get('fields', [])
-        if not 3 <= len(fields) <= 40 or any(not isinstance(field, str) or len(field) > 32 for field in fields):
-            raise ValueError('Invalid readback field names')
-        if len(inspection.get('ports', [])) != 5:
-            raise ValueError('Expected five u-blox readback ports')
-        jobs = []
-        for port in inspection['ports']:
-            if port.get('name') not in ('I2C', 'UART1', 'UART2', 'USB', 'SPI') or any(name == port['name'] for name, _ in jobs):
-                raise ValueError('Invalid or duplicate readback port')
-            _, port_records = _gnss_verification_expected({**payload, 'output_b64': port.get('output_b64')})
-            if len(port_records) != len(fields):
-                raise ValueError('Readback field/key count mismatch')
-            jobs.append((port['name'], port_records))
-        details = {'kind':'Ublox', 'fields':fields, 'expected':inspection.get('expected', []),
-                       'compare_ports':inspection.get('compare_ports', []), 'ports':[], 'fixed':{}}
-        result['details'] = details
-    else:
-        jobs = [(None, records[i:i + 40]) for i in range(0, len(records), 40)]
-    desired = dict(records)
-    if details is not None:
-        for port_name, chunk in jobs:
-            if port_name in details['compare_ports']:
-                for key, _ in chunk:
-                    if key in (0x10510003, 0x10520005, 0x10530005, 0x10650001, 0x10640006): desired[key] = 1
+    if not inspection:
+        return [(None, records[index:index + 40]) for index in range(0, len(records), 40)], None
+    fields = inspection.get('fields', [])
+    if not 3 <= len(fields) <= 40 or any(
+        not isinstance(field, str) or len(field) > 32 for field in fields
+    ):
+        raise ValueError('Invalid readback field names')
+    ports = inspection.get('ports', [])
+    if len(ports) != 5:
+        raise ValueError('Expected five u-blox readback ports')
+    jobs = []
+    seen_ports = set()
+    allowed_ports = ('I2C', 'UART1', 'UART2', 'USB', 'SPI')
+    for port in ports:
+        name = port.get('name')
+        if name not in allowed_ports or name in seen_ports:
+            raise ValueError('Invalid or duplicate readback port')
+        _, port_records = _gnss_verification_expected(
+            {**payload, 'output_b64': port.get('output_b64')}
+        )
+        if len(port_records) != len(fields):
+            raise ValueError('Readback field/key count mismatch')
+        jobs.append((name, port_records))
+        seen_ports.add(name)
+    details = {
+        'kind': 'Ublox', 'fields': fields,
+        'expected': inspection.get('expected', []),
+        'compare_ports': inspection.get('compare_ports', []),
+        'ports': [], 'fixed': {},
+    }
+    result['details'] = details
+    return jobs, details
+
+
+def _ublox_describe_tmode(mode):
+    state = {
+        'mode': {0: 'Rover', 1: 'Survey-In', 2: 'Fixed'}.get(mode[2], 'Unknown'),
+        'coordinate_type': 'LLA' if mode[3] & 1 else 'ECEF',
+        'accuracy_m': struct.unpack_from('<I', mode, 20)[0] * 0.0001,
+    }
+    if mode[2] == 2:
+        position = _base_ubx_position(mode, ready=True)
+        if mode[3] & 1:
+            units = [
+                struct.unpack_from('<i', mode, 4 + index * 4)[0] * 100
+                + struct.unpack_from('<b', mode, 16 + index)[0]
+                for index in range(3)
+            ]
+            position.update(
+                lat=f'{units[0] / 1e9:.9f}',
+                lon=f'{units[1] / 1e9:.9f}',
+                alt=f'{units[2] / 1e4:.4f}',
+            )
+        state.update(self_position=position)
+    return state
+
+
+async def _verify_ublox_fixed_mode(reader, expected, payload, groups, result, details):
     try:
         actual = await _read_ublox_tmode(reader, payload.get('tmode_valget') is True)
-        expected_position = [struct.unpack_from('<i', expected, 4 + i * 4)[0] * 100
-                             + struct.unpack_from('<b', expected, 16 + i)[0] for i in range(3)]
-        actual_position = [struct.unpack_from('<i', actual, 4 + i * 4)[0] * 100
-                           + struct.unpack_from('<b', actual, 16 + i)[0] for i in range(3)]
+        expected_position = [
+            struct.unpack_from('<i', expected, 4 + index * 4)[0] * 100
+            + struct.unpack_from('<b', expected, 16 + index)[0]
+            for index in range(3)
+        ]
+        actual_position = [
+            struct.unpack_from('<i', actual, 4 + index * 4)[0] * 100
+            + struct.unpack_from('<b', actual, 16 + index)[0]
+            for index in range(3)
+        ]
         # Same quantization tolerance as the ESP32 verifier: 1e-9 degree / 0.1 mm.
-        matches = (actual[2:4] == b'\x02\x01'
-                   and all(abs(value) <= 99 for value in struct.unpack_from('<bbb', actual, 16))
-                   and all(abs(a - b) <= 1 for a, b in zip(actual_position, expected_position))
-                   and abs(struct.unpack_from('<I', actual, 20)[0] - struct.unpack_from('<I', expected, 20)[0]) <= 1)
+        matches = (
+            actual[2:4] == b'\x02\x01'
+            and all(abs(value) <= 99 for value in struct.unpack_from('<bbb', actual, 16))
+            and all(abs(a - b) <= 1 for a, b in zip(actual_position, expected_position))
+            and abs(struct.unpack_from('<I', actual, 20)[0] - struct.unpack_from('<I', expected, 20)[0]) <= 1
+        )
         groups['fixed'].update(checked=1, mismatched=int(not matches))
         if details is not None:
-            def describe(mode):
-                state = {'mode':{0: 'Rover', 1: 'Survey-In', 2: 'Fixed'}.get(mode[2], 'Unknown'),
-                             'coordinate_type':'LLA' if mode[3] & 1 else 'ECEF',
-                             'accuracy_m':struct.unpack_from('<I', mode, 20)[0] * 0.0001}
-                if mode[2] == 2:
-                    position = _base_ubx_position(mode, ready=True)
-                    if mode[3] & 1:
-                        units = [struct.unpack_from('<i', mode, 4 + i * 4)[0] * 100
-                                 + struct.unpack_from('<b', mode, 16 + i)[0] for i in range(3)]
-                        position.update(lat=f'{units[0] / 1e9:.9f}', lon=f'{units[1] / 1e9:.9f}', alt=f'{units[2] / 1e4:.4f}')
-                    state.update(self_position=position)
-                return state
-            details['fixed'] = {'actual':describe(actual), 'expected':describe(expected)}
+            details['fixed'] = {
+                'actual': _ublox_describe_tmode(actual),
+                'expected': _ublox_describe_tmode(expected),
+            }
     except Exception as error:
         groups['fixed']['unread'] = 1
         result['mode_error'] = str(error)[:200]
 
+
+async def _read_ublox_valget(reader, chunk):
+    try:
+        poll = b'\0\0\0\0' + b''.join(
+            struct.pack('<I', key) for key, _ in chunk
+        )
+        reply = await reader.query_base(_ubx_packet(6, 0x8b, poll), (6, 0x8b))
+        body = reply[6:-2]
+        if (len(reply) != len(body) + 8 or reply != _ubx_packet(6, 0x8b, body)
+                or len(body) != 4 + len(chunk) * 5 or body[:4] != b'\x01\0\0\0'):
+            raise ValueError('Invalid CFG-VALGET response')
+        received = [struct.unpack_from('<IB', body, index) for index in range(4, len(body), 5)]
+        values = dict(received)
+        if len(values) != len(chunk) or set(values) != {key for key, _ in chunk}:
+            raise ValueError('Missing or duplicate CFG-VALGET keys')
+        return values, None
+    except Exception as error:
+        return None, str(error)[:200]
+
+
+async def _read_ublox_port_baud(reader, port_name, payload):
+    try:
+        port_id = int(port_name[-1])
+        if payload.get('tmode_valget') is True:
+            key = 0x40520001 if port_id == 1 else 0x40530001
+            command = _ubx_packet(6, 0x8b, bytes(4) + struct.pack('<I', key))
+            reply = await reader.query_base(command, (6, 0x8b))
+            if reply != _ubx_packet(6, 0x8b, reply[6:-2]):
+                raise ValueError('Invalid baud VALGET response')
+            baud_values = _ubx_cfg_values(reply[6:-2])
+            if set(baud_values) != {key}:
+                raise ValueError('Invalid baud key')
+            return int.from_bytes(baud_values[key], 'little')
+        reply = await reader.query_base(_ubx_packet(6, 0, bytes([port_id])), (6, 0))
+        body = reply[6:-2]
+        if len(body) != 20 or reply != _ubx_packet(6, 0, body) or body[0] != port_id:
+            raise ValueError('Invalid CFG-PRT response')
+        return struct.unpack_from('<I', body, 8)[0]
+    except Exception:
+        return None
+
+
+def _ublox_readback_port(port_name, chunk, values, details, result):
+    port = {
+        'name': port_name,
+        'state': 'ok' if values is not None else 'unread',
+        'values': [values[key] for key, _ in chunk] if values is not None else None,
+    }
+    if values is not None and 'PORT_ENABLED' in details['fields']:
+        port['enabled'] = port['values'][details['fields'].index('PORT_ENABLED')]
+    if values is None:
+        port['error'] = result.get('output_error', 'Readback unavailable')
+    return port
+
+
+def _update_ublox_verification_groups(groups, desired, values, chunk):
+    for key, _ in chunk:
+        if key not in desired:
+            continue
+        name = 'protocols' if key >> 28 == 1 else 'rtcm' if key >= 0x209102bd else 'diagnostics'
+        group = groups[name]
+        group['checked' if values is not None else 'unread'] += 1
+        if values is not None and values[key] != desired[key]:
+            group['mismatched'] += 1
+
+
+async def _collect_ublox_output_readback(reader, jobs, payload, details, desired, groups, result):
     for port_name, chunk in jobs:
-        values = None
-        try:
-            poll = b'\0\0\0\0' + b''.join(struct.pack('<I', key) for key, _ in chunk)
-            reply = await reader.query_base(_ubx_packet(6, 0x8b, poll), (6, 0x8b))
-            body = reply[6:-2]
-            if (len(reply) != len(body) + 8 or reply != _ubx_packet(6, 0x8b, body)
-                    or len(body) != 4 + len(chunk) * 5 or body[:4] != b'\x01\0\0\0'):
-                raise ValueError('Invalid CFG-VALGET response')
-            received = [struct.unpack_from('<IB', body, i) for i in range(4, len(body), 5)]
-            values = dict(received)
-            if len(values) != len(chunk) or set(values) != {key for key, _ in chunk}:
-                raise ValueError('Missing or duplicate CFG-VALGET keys')
-        except Exception as error:
-            values = None
-            result['output_error'] = str(error)[:200]
+        values, error = await _read_ublox_valget(reader, chunk)
+        if error is not None:
+            result['output_error'] = error
         if details is not None:
-            port = {'name':port_name, 'state':'ok' if values is not None else 'unread',
-                        'values':[values[key] for key, _ in chunk] if values is not None else None}
-            if values is not None and 'PORT_ENABLED' in details['fields']:
-                port['enabled'] = port['values'][details['fields'].index('PORT_ENABLED')]
-            if values is None:
-                port['error'] = result.get('output_error', 'Readback unavailable')
+            port = _ublox_readback_port(port_name, chunk, values, details, result)
             if port_name in ('UART1', 'UART2'):
-                try:
-                    port_id = int(port_name[-1])
-                    if payload.get('tmode_valget') is True:
-                        key = 0x40520001 if port_id == 1 else 0x40530001
-                        reply = await reader.query_base(_ubx_packet(6,0x8b,bytes(4)+struct.pack('<I',key)),(6,0x8b))
-                        if reply != _ubx_packet(6,0x8b,reply[6:-2]):
-                            raise ValueError('Invalid baud VALGET response')
-                        baud_values = _ubx_cfg_values(reply[6:-2])
-                        if set(baud_values) != {key}:
-                            raise ValueError('Invalid baud key')
-                        port['baud'] = int.from_bytes(baud_values[key],'little')
-                    else:
-                        reply = await reader.query_base(_ubx_packet(6, 0, bytes([port_id])), (6, 0))
-                        body = reply[6:-2]
-                        if len(body) != 20 or reply != _ubx_packet(6, 0, body) or body[0] != port_id:
-                            raise ValueError('Invalid CFG-PRT response')
-                        port['baud'] = struct.unpack_from('<I', body, 8)[0]
-                except Exception:
-                    port['baud'] = None
+                port['baud'] = await _read_ublox_port_baud(reader, port_name, payload)
             details['ports'].append(port)
-        for key, _ in chunk:
-            if key not in desired:
-                continue
-            wanted = desired[key]
-            name = 'protocols' if key >> 28 == 1 else 'rtcm' if key >= 0x209102bd else 'diagnostics'
-            group = groups[name]
-            group['checked' if values is not None else 'unread'] += 1
-            if values is not None and values[key] != wanted:
-                group['mismatched'] += 1
-    result['state'] = ('unread' if any(group['unread'] or not group['checked'] for group in groups.values())
-                       else 'mismatch' if any(group['mismatched'] for group in groups.values()) else 'match')
+        _update_ublox_verification_groups(groups, desired, values, chunk)
+
+
+def _ublox_desired_values(records, jobs, details):
+    desired = dict(records)
+    if details is None:
+        return desired
+    compare_keys = {0x10510003, 0x10520005, 0x10530005, 0x10650001, 0x10640006}
+    for port_name, chunk in jobs:
+        if port_name in details['compare_ports']:
+            for key, _ in chunk:
+                if key in compare_keys:
+                    desired[key] = 1
+    return desired
+
+
+def _finalize_gnss_verification(agent, result, groups):
+    unread = any(group['unread'] or not group['checked'] for group in groups.values())
+    mismatch = any(group['mismatched'] for group in groups.values())
+    result['state'] = 'unread' if unread else 'mismatch' if mismatch else 'match'
     agent.gnss_verification = result
     agent.gnss_verification_at = time.monotonic()
     return result
+
+
+async def _verify_ublox_configuration(agent, reader, payload, command_id):
+    expected, records = _gnss_verification_expected(payload)
+    groups = {name: {'checked': 0, 'mismatched': 0, 'unread': 0}
+              for name in ('fixed', 'protocols', 'diagnostics', 'rtcm')}
+    result = {'command_id': command_id, 'groups': groups}
+    jobs, details = _ublox_readback_jobs(payload, records, result)
+    desired = _ublox_desired_values(records, jobs, details)
+    await _verify_ublox_fixed_mode(reader, expected, payload, groups, result, details)
+    await _collect_ublox_output_readback(
+        reader, jobs, payload, details, desired, groups, result
+    )
+    return _finalize_gnss_verification(agent, result, groups)
+
+
+async def verify_receiver_configuration(agent, reader, payload, command_id):
+    """Read the live receiver through its owning UART thread; never write config."""
+    agent.gnss_verification = None
+    chip_type = agent.detected_chip.get('type')
+    if chip_type not in ('Ublox', 'Unicorecomm') or reader is None:
+        raise RuntimeError('Configuration verification requires a supported GNSS reader')
+    if chip_type == 'Unicorecomm':
+        return await _verify_unicore_configuration(agent, reader, payload, command_id)
+    return await _verify_ublox_configuration(agent, reader, payload, command_id)
 
 
 def receiver_base_system_info(agent):
