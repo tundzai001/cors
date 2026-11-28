@@ -41,120 +41,143 @@ class AlertsMixin:
         lines.extend(("", "━━━━━━━━━━━━━━━━━━━━━━", f"📊 {online} online | {offline} offline"))
         return "\n".join(lines)
 
+    def _status_transitions(self, devices, current_statuses):
+        newly_offline = []
+        newly_online = []
+        if not self._status_snapshot_ready:
+            return newly_offline, newly_online
+        for serial, status in current_statuses.items():
+            previous_status = self.prev_statuses.get(serial)
+            if not previous_status or previous_status == status:
+                continue
+            device = next((item for item in devices if item.get("serial") == serial), {})
+            if status == "offline":
+                newly_offline.append(device)
+            elif previous_status == "offline" and status != "offline":
+                newly_online.append(device)
+        return newly_offline, newly_online
+
+    def _new_alerts(self, alerts):
+        current_alerts = {alert.get("id"): alert for alert in alerts}
+        current_ids = set(current_alerts)
+        if not self._alert_snapshot_ready:
+            return current_ids, []
+        new_alerts = [current_alerts[alert_id] for alert_id in current_ids - self.prev_alerts]
+        return current_ids, new_alerts
+
+    async def _collect_alert_changes(self):
+        if not self._get_devices_cb or not self._get_alerts_cb:
+            return None
+        devices = await self._get_devices_cb()
+        alerts = await self._get_alerts_cb()
+        current_statuses = {device.get("serial"): device.get("status", "unknown") for device in devices}
+        newly_offline, newly_online = self._status_transitions(devices, current_statuses)
+        current_alert_ids, new_alerts = self._new_alerts(alerts)
+        self.prev_statuses = current_statuses
+        self.prev_alerts = current_alert_ids
+        self._status_snapshot_ready = True
+        self._alert_snapshot_ready = True
+        return devices, newly_offline, newly_online, new_alerts
+
+    @staticmethod
+    def _notification_details(newly_offline, newly_online, new_alerts):
+        severities = {str(alert.get("severity") or "warning").lower() for alert in new_alerts}
+        critical_alert = bool(severities.intersection({"critical", "fatal", "error", "high", "severe"}))
+        severity = "critical" if newly_offline or critical_alert else "warning" if new_alerts else "info"
+        subjects = set()
+        for device in newly_offline + newly_online:
+            subjects.update(filter(None, (device.get("name"), device.get("serial"))))
+        for alert in new_alerts:
+            subjects.update(filter(None, (
+                alert.get("rover_username"), alert.get("device_name"), alert.get("device_serial")
+            )))
+        event_key = payload_fingerprint({
+            "window": int(time.time() // 120),
+            "offline": sorted(str(item.get("serial")) for item in newly_offline),
+            "online": sorted(str(item.get("serial")) for item in newly_online),
+            "alerts": sorted(str(item.get("id")) for item in new_alerts),
+        })
+        return severity, subjects, event_key
+
+    @staticmethod
+    def _device_in_scope(device, scope_values):
+        return (
+            str(device.get("serial") or "").casefold() in scope_values
+            or str(device.get("name") or "").casefold() in scope_values
+        )
+
+    @staticmethod
+    def _alert_in_scope(alert, scope_values):
+        keys = ("rover_username", "device_name", "device_serial")
+        return any(str(alert.get(key) or "").casefold() in scope_values for key in keys)
+
+    def _filter_target_changes(self, target, changes):
+        devices, newly_offline, newly_online, new_alerts = changes
+        if target.get("scope_mode") != "selected":
+            return devices, newly_offline, newly_online, new_alerts
+        scope_values = {
+            str(value).strip().casefold() for value in target.get("scope_values") or []
+        }
+        target_devices = [device for device in devices if self._device_in_scope(device, scope_values)]
+        target_offline = [device for device in newly_offline if device in target_devices]
+        target_online = [device for device in newly_online if device in target_devices]
+        target_alerts = [alert for alert in new_alerts if self._alert_in_scope(alert, scope_values)]
+        return target_devices, target_offline, target_online, target_alerts
+
+    async def _send_notification(self, target, text):
+        chat_id = target["chat_id"]
+        try:
+            await self.app.bot.send_message(chat_id=chat_id, text=text)
+        except Exception as error:
+            logger.exception(f"Failed to send alert to {chat_id}: {error}")
+            try:
+                await zalo_repository.finish_delivery(target["delivery_id"], False, str(error))
+            except Exception as log_error:
+                logger.exception(
+                    "Failed to record Zalo delivery failure id=%s: %s",
+                    target["delivery_id"], log_error,
+                )
+        else:
+            try:
+                await zalo_repository.finish_delivery(target["delivery_id"], True)
+            except Exception as log_error:
+                logger.exception(
+                    "Zalo alert sent but delivery log update failed id=%s: %s",
+                    target["delivery_id"], log_error,
+                )
+
+    async def _dispatch_notifications(self, changes):
+        devices, newly_offline, newly_online, new_alerts = changes
+        severity, subjects, event_key = self._notification_details(
+            newly_offline, newly_online, new_alerts
+        )
+        binding_scopes = (
+            await self._get_binding_scopes_cb() if self._get_binding_scopes_cb else None
+        )
+        targets = await zalo_repository.reserve_notification_targets(
+            event_key, severity, subjects, binding_scopes=binding_scopes,
+            bot_key=self.bot_key,
+        )
+        for target in targets:
+            target_devices, target_offline, target_online, target_alerts = self._filter_target_changes(
+                target, changes
+            )
+            if not (target_offline or target_online or target_alerts):
+                continue
+            text = self._format_system_alert(
+                target_offline, target_online, target_alerts, target_devices
+            )
+            await self._send_notification(target, text)
+
+    async def _run_error_check_cycle(self):
+        changes = await self._collect_alert_changes()
+        if changes and any(changes[1:]):
+            await self._dispatch_notifications(changes)
+
     async def _error_check_loop(self):
         while True:
             try:
-                if not self._get_devices_cb or not self._get_alerts_cb:
-                    await asyncio.sleep(120)
-                    continue
-
-                devices = await self._get_devices_cb()
-                alerts = await self._get_alerts_cb()
-
-                # Detect changes
-                newly_offline = []
-                newly_online = []
-                new_alerts = []
-
-                current_statuses = {d.get("serial"): d.get("status", "unknown") for d in devices}
-                current_alerts_map = {a.get("id"): a for a in alerts}
-                current_alerts_ids = set(current_alerts_map.keys())
-
-                if self._status_snapshot_ready:
-                    for serial, status in current_statuses.items():
-                        prev_status = self.prev_statuses.get(serial)
-                        if prev_status and prev_status != status:
-                            if status == "offline":
-                                newly_offline.append(next((d for d in devices if d.get("serial") == serial), {}))
-                            elif prev_status == "offline" and status != "offline":
-                                newly_online.append(next((d for d in devices if d.get("serial") == serial), {}))
-
-                if self._alert_snapshot_ready:
-                    new_alert_ids = current_alerts_ids - self.prev_alerts
-                    for aid in new_alert_ids:
-                        new_alerts.append(current_alerts_map[aid])
-
-                self.prev_statuses = current_statuses
-                self.prev_alerts = current_alerts_ids
-                self._status_snapshot_ready = True
-                self._alert_snapshot_ready = True
-
-                if newly_offline or newly_online or new_alerts:
-                    alert_severities = {
-                        str(alert.get("severity") or "warning").lower() for alert in new_alerts
-                    }
-                    critical_alert = bool(alert_severities.intersection({
-                        "critical", "fatal", "error", "high", "severe",
-                    }))
-                    severity = (
-                        "critical" if newly_offline or critical_alert
-                        else "warning" if new_alerts else "info"
-                    )
-                    subjects = set()
-                    for device in newly_offline + newly_online:
-                        subjects.update(filter(None, (device.get("name"), device.get("serial"))))
-                    for alert in new_alerts:
-                        subjects.update(filter(None, (
-                            alert.get("rover_username"), alert.get("device_name"), alert.get("device_serial")
-                        )))
-                    event_key = payload_fingerprint({
-                        "window": int(time.time() // 120),
-                        "offline": sorted(str(item.get("serial")) for item in newly_offline),
-                        "online": sorted(str(item.get("serial")) for item in newly_online),
-                        "alerts": sorted(str(item.get("id")) for item in new_alerts),
-                    })
-                    binding_scopes = (
-                        await self._get_binding_scopes_cb() if self._get_binding_scopes_cb else None
-                    )
-                    targets = await zalo_repository.reserve_notification_targets(
-                        event_key, severity, subjects, binding_scopes=binding_scopes,
-                        bot_key=self.bot_key,
-                    )
-                    for target in targets:
-                        chat_id = target["chat_id"]
-                        scope_values = {
-                            str(value).strip().casefold() for value in target.get("scope_values") or []
-                        }
-                        if target.get("scope_mode") == "selected":
-                            target_devices = [
-                                item for item in devices
-                                if str(item.get("serial") or "").casefold() in scope_values
-                                or str(item.get("name") or "").casefold() in scope_values
-                            ]
-                            target_offline = [item for item in newly_offline if item in target_devices]
-                            target_online = [item for item in newly_online if item in target_devices]
-                            target_alerts = [
-                                item for item in new_alerts
-                                if any(
-                                    str(item.get(key) or "").casefold() in scope_values
-                                    for key in ("rover_username", "device_name", "device_serial")
-                                )
-                            ]
-                        else:
-                            target_devices = devices
-                            target_offline = newly_offline
-                            target_online = newly_online
-                            target_alerts = new_alerts
-                        if not (target_offline or target_online or target_alerts):
-                            continue
-                        text = self._format_system_alert(
-                            target_offline, target_online, target_alerts, target_devices
-                        )
-                        try:
-                            await self.app.bot.send_message(chat_id=chat_id, text=text)
-                        except Exception as e:
-                            logger.exception(f"Failed to send alert to {chat_id}: {e}")
-                            try:
-                                await zalo_repository.finish_delivery(target["delivery_id"], False, str(e))
-                            except Exception as log_exc:
-                                logger.exception("Failed to record Zalo delivery failure id=%s: %s", target["delivery_id"], log_exc)
-                        else:
-                            try:
-                                await zalo_repository.finish_delivery(target["delivery_id"], True)
-                            except Exception as log_exc:
-                                logger.exception("Zalo alert sent but delivery log update failed id=%s: %s", target["delivery_id"], log_exc)
-
-            except Exception as e:
-                logger.exception(f"Error in Zalo error_check_loop: {e}")
-
+                await self._run_error_check_cycle()
+            except Exception as error:
+                logger.exception(f"Error in Zalo error_check_loop: {error}")
             await asyncio.sleep(120)
