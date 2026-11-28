@@ -585,11 +585,8 @@ class ZaloAssistantRepository:
             "allowed_bases": list(binding.allowed_bases or []),
         }
 
-    async def update_binding_admin(
-        self, binding_id: int, changes: dict[str, Any],
-        actor_user_id: Optional[int] = None, is_admin: bool = False,
-    ) -> dict[str, Any]:
-        now = _now()
+    @staticmethod
+    def _validate_binding_admin_changes(changes: dict[str, Any]) -> None:
         if "delivery_mode" in changes and changes["delivery_mode"] not in {"standard", "cors_only"}:
             raise ValueError("Chế độ gửi tin không hợp lệ.")
         if "min_severity" in changes and str(changes["min_severity"]) not in SEVERITY_ORDER:
@@ -599,106 +596,145 @@ class ZaloAssistantRepository:
         if (quiet_start is None) != (quiet_end is None):
             raise ValueError("Giờ im lặng phải có đủ thời gian bắt đầu và kết thúc.")
         for value in (quiet_start, quiet_end):
-            if value is not None:
-                try:
-                    hour, minute = map(int, str(value).split(":", 1))
-                    if not (0 <= hour <= 23 and 0 <= minute <= 59):
-                        raise ValueError
-                except (TypeError, ValueError):
-                    raise ValueError("Giờ im lặng phải đúng định dạng HH:MM.")
+            if value is None:
+                continue
+            try:
+                hour, minute = map(int, str(value).split(":", 1))
+                if not (0 <= hour <= 23 and 0 <= minute <= 59):
+                    raise ValueError
+            except (TypeError, ValueError):
+                raise ValueError("Giờ im lặng phải đúng định dạng HH:MM.")
+
+    @staticmethod
+    def _authorize_binding_admin_update(binding, changes, actor_user_id, is_admin):
+        if is_admin:
+            return
+        if binding.binding_type != "private" or int(binding.user_id or 0) != int(actor_user_id or 0):
+            raise ValueError("Bạn không có quyền sửa liên kết Zalo này.")
+        allowed_self_service = {
+            "display_name", "notifications_enabled", "min_severity",
+            "quiet_start", "quiet_end", "critical_override",
+        }
+        forbidden = sorted(set(changes) - allowed_self_service)
+        if forbidden:
+            raise ValueError("Tài khoản cá nhân chỉ được sửa tên và cấu hình cảnh báo.")
+
+    @staticmethod
+    def _apply_binding_identity_changes(binding, changes):
+        if "display_name" in changes:
+            binding.display_name = str(changes.get("display_name") or "").strip()[:255] or None
+        if "binding_type" in changes:
+            binding_type = str(changes["binding_type"])
+            allowed_types = (
+                {"private", "cors_public"} if binding.chat_type == "private"
+                else {"group_admin", "group_public", "cors_public"}
+            )
+            if binding_type not in allowed_types:
+                raise ValueError("Loại liên kết không phù hợp với loại chat.")
+            binding.binding_type = binding_type
+            if binding_type == "group_admin":
+                binding.station_scope_mode = "all"
+                binding.allowed_bases = []
+        if "is_active" in changes:
+            binding.is_active = bool(changes["is_active"])
+
+    @staticmethod
+    def _apply_binding_scope_changes(binding, changes):
+        if "station_scope_mode" in changes:
+            mode = str(changes["station_scope_mode"])
+            if mode not in {"all", "selected", "none"}:
+                raise ValueError("Phạm vi trạm không hợp lệ.")
+            binding.station_scope_mode = mode
+        if "allowed_bases" in changes:
+            binding.allowed_bases = sorted({
+                str(value).strip() for value in (changes.get("allowed_bases") or []) if str(value).strip()
+            })
+        if binding.binding_type == "group_admin":
+            binding.station_scope_mode = "all"
+            binding.allowed_bases = []
+        if binding.binding_type == "cors_public":
+            binding.station_scope_mode = "none"
+            binding.allowed_bases = []
+            changes["notifications_enabled"] = False
+
+    @staticmethod
+    def _notification_change_values(changes):
+        notification_keys = {
+            "notifications_enabled": "enabled",
+            "min_severity": "min_severity",
+            "quiet_start": "quiet_start",
+            "quiet_end": "quiet_end",
+            "critical_override": "critical_override",
+        }
+        return {
+            target: changes[source]
+            for source, target in notification_keys.items()
+            if source in changes
+        }
+
+    async def _get_or_create_notification_preference(self, db, binding, now):
+        result = await db.execute(select(models.ZaloNotificationPreference).where(
+            models.ZaloNotificationPreference.binding_id == binding.id
+        ))
+        preference = result.scalars().first()
+        if preference is None:
+            preference = models.ZaloNotificationPreference(
+                binding_id=binding.id, enabled=True, min_severity="critical",
+                scopes={"mode": "all"}, timezone=DEFAULT_TIMEZONE,
+                critical_override=True, updated_at=now,
+            )
+            db.add(preference)
+        return preference
+
+    @staticmethod
+    def _apply_notification_policy_changes(binding, changes, scopes):
+        if "delivery_mode" in changes:
+            if binding.binding_type == "cors_public" and changes["delivery_mode"] == "standard":
+                raise ValueError("Chat public cần liên kết tài khoản trước khi dùng quyền dashboard.")
+            if changes["delivery_mode"] == "cors_only" and scopes.get("delivery_mode") != "cors_only":
+                scopes.pop("cors_last_status", None)
+            scopes["delivery_mode"] = changes["delivery_mode"]
+        if "cors_notify_changes" in changes:
+            if changes["cors_notify_changes"] and not scopes.get("cors_notify_changes"):
+                scopes.pop("cors_last_status", None)
+            scopes["cors_notify_changes"] = bool(changes["cors_notify_changes"])
+
+    async def _update_binding_notification_preference(self, db, binding, changes, now):
+        notification_changes = self._notification_change_values(changes)
+        scope_changed = "station_scope_mode" in changes or "allowed_bases" in changes
+        policy_changed = "delivery_mode" in changes or "cors_notify_changes" in changes
+        if not (notification_changes or scope_changed or policy_changed):
+            return
+        preference = await self._get_or_create_notification_preference(db, binding, now)
+        for key, value in notification_changes.items():
+            setattr(preference, key, value)
+        scopes = dict(preference.scopes or {})
+        if scope_changed:
+            scopes.update({
+                "mode": str(binding.station_scope_mode or "all"),
+                "values": list(binding.allowed_bases or []),
+            })
+        self._apply_notification_policy_changes(binding, changes, scopes)
+        preference.scopes = scopes
+        preference.updated_at = now
+
+    async def update_binding_admin(
+        self, binding_id: int, changes: dict[str, Any],
+        actor_user_id: Optional[int] = None, is_admin: bool = False,
+    ) -> dict[str, Any]:
+        now = _now()
+        self._validate_binding_admin_changes(changes)
         async with auth_session_scope() as db:
             binding = await db.get(models.ZaloChatBinding, int(binding_id))
             if not binding:
                 raise ValueError("Không tìm thấy liên kết Zalo.")
-            if not is_admin:
-                if binding.binding_type != "private" or int(binding.user_id or 0) != int(actor_user_id or 0):
-                    raise ValueError("Bạn không có quyền sửa liên kết Zalo này.")
-                allowed_self_service = {
-                    "display_name", "notifications_enabled", "min_severity",
-                    "quiet_start", "quiet_end", "critical_override",
-                }
-                forbidden = sorted(set(changes) - allowed_self_service)
-                if forbidden:
-                    raise ValueError("Tài khoản cá nhân chỉ được sửa tên và cấu hình cảnh báo.")
-
-            if "display_name" in changes:
-                binding.display_name = str(changes.get("display_name") or "").strip()[:255] or None
-            if "binding_type" in changes:
-                binding_type = str(changes["binding_type"])
-                allowed_types = {"private", "cors_public"} if binding.chat_type == "private" else {"group_admin", "group_public", "cors_public"}
-                if binding_type not in allowed_types:
-                    raise ValueError("Loại liên kết không phù hợp với loại chat.")
-                binding.binding_type = binding_type
-                if binding_type == "group_admin":
-                    binding.station_scope_mode = "all"
-                    binding.allowed_bases = []
-            if "is_active" in changes:
-                binding.is_active = bool(changes["is_active"])
-            if "station_scope_mode" in changes:
-                mode = str(changes["station_scope_mode"])
-                if mode not in {"all", "selected", "none"}:
-                    raise ValueError("Phạm vi trạm không hợp lệ.")
-                binding.station_scope_mode = mode
-            if "allowed_bases" in changes:
-                binding.allowed_bases = sorted({
-                    str(value).strip() for value in (changes.get("allowed_bases") or []) if str(value).strip()
-                })
-            if binding.binding_type == "group_admin":
-                binding.station_scope_mode = "all"
-                binding.allowed_bases = []
-
-            notification_keys = {
-                "notifications_enabled": "enabled",
-                "min_severity": "min_severity",
-                "quiet_start": "quiet_start",
-                "quiet_end": "quiet_end",
-                "critical_override": "critical_override",
-            }
-            if binding.binding_type == "cors_public":
-                binding.station_scope_mode = "none"
-                binding.allowed_bases = []
-                changes["notifications_enabled"] = False
-            notification_changes = {
-                target: changes[source] for source, target in notification_keys.items() if source in changes
-            }
-            scope_changed = "station_scope_mode" in changes or "allowed_bases" in changes
-            policy_changed = "delivery_mode" in changes or "cors_notify_changes" in changes
-            if notification_changes or scope_changed or policy_changed:
-                rs = await db.execute(select(models.ZaloNotificationPreference).where(
-                    models.ZaloNotificationPreference.binding_id == binding.id
-                ))
-                pref = rs.scalars().first()
-                if pref is None:
-                    pref = models.ZaloNotificationPreference(
-                        binding_id=binding.id, enabled=True, min_severity="critical",
-                        scopes={"mode": "all"}, timezone=DEFAULT_TIMEZONE,
-                        critical_override=True, updated_at=now,
-                    )
-                    db.add(pref)
-                for key, value in notification_changes.items():
-                    setattr(pref, key, value)
-                scopes = dict(pref.scopes or {})
-                if scope_changed:
-                    scopes.update({
-                        "mode": str(binding.station_scope_mode or "all"),
-                        "values": list(binding.allowed_bases or []),
-                    })
-                if "delivery_mode" in changes:
-                    if binding.binding_type == "cors_public" and changes["delivery_mode"] == "standard":
-                        raise ValueError("Chat public cần liên kết tài khoản trước khi dùng quyền dashboard.")
-                    if changes["delivery_mode"] == "cors_only" and scopes.get("delivery_mode") != "cors_only":
-                        scopes.pop("cors_last_status", None)
-                    scopes["delivery_mode"] = changes["delivery_mode"]
-                if "cors_notify_changes" in changes:
-                    if changes["cors_notify_changes"] and not scopes.get("cors_notify_changes"):
-                        scopes.pop("cors_last_status", None)
-                    scopes["cors_notify_changes"] = bool(changes["cors_notify_changes"])
-                pref.scopes = scopes
-                pref.updated_at = now
+            self._authorize_binding_admin_update(binding, changes, actor_user_id, is_admin)
+            self._apply_binding_identity_changes(binding, changes)
+            self._apply_binding_scope_changes(binding, changes)
+            await self._update_binding_notification_preference(db, binding, changes, now)
             await db.commit()
             await db.refresh(binding)
             return self.binding_dict(binding)
-
     async def save_workflow(
         self, chat_id: str, sender_id: str, flow: str, step: str,
         state: dict[str, Any], ttl_seconds: int = 600,
