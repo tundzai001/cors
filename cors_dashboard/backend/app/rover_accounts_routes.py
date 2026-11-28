@@ -118,20 +118,7 @@ async def get_all_rovers_global(
     return enriched_rovers
 
 
-@router.put("/api/rovers/sync/by-username/{username}", response_model=schemas.RoverAccountResponse, responses={400: {"description": "Bad Request"}, 403: {"description": "Forbidden"}, 502: {"description": "Bad Gateway"}})
-async def sync_rover_by_username(
-    username: str,
-    update_req: schemas.RoverUpdate,
-    db: AsyncSession = Depends(get_auth_db),
-    devices_db: AsyncSession = Depends(get_db),
-    current_user: models.User = Depends(auth.get_current_user)
-):
-    """
-    Thông minh: Đồng bộ rover bằng username. 
-    Nếu rover chưa có trong DB, nó sẽ tự động tạo mới (Link/Adopt).
-    Nếu đã có, nó cập nhật thông tin.
-    """
-    # 1. Kiểm tra Admin/Creator
+def _authorize_rover_sync(update_req, current_user):
     if not auth.can_edit_rovers(current_user):
         raise HTTPException(status_code=403, detail="Bạn không có quyền quản lý Rover.")
     if update_req.auto_save_sessions is not None and current_user.role != auth.Role.ADMIN:
@@ -139,15 +126,15 @@ async def sync_rover_by_username(
     if update_req.auto_save_fixed_points is not None and current_user.role != auth.Role.ADMIN:
         raise HTTPException(status_code=403, detail="Chỉ admin được cấu hình tự lưu điểm Fixed.")
 
-    # 2. Tìm trong DB
-    rover = await crud.get_rover_by_username(db, username)
+
+def _rover_sync_hosts(update_req, rover):
     configured_hosts, config = _read_caster_config_from_env()
-    requested_hosts = [str(h).strip() for h in (update_req.target_casters or []) if str(h).strip()]
+    requested_hosts = [str(host).strip() for host in (update_req.target_casters or []) if str(host).strip()]
     if not requested_hosts:
         requested_hosts = (
-            [h.strip() for h in (rover.target_casters or "").split(";") if h.strip()]
+            [host.strip() for host in (rover.target_casters or "").split(";") if host.strip()]
             if rover and rover.target_casters
-            else [h.strip() for h in configured_hosts if h.strip()]
+            else [host.strip() for host in configured_hosts if host.strip()]
         )
     if not requested_hosts:
         fallback_host = str(config.get("host") or settings.CASTER_HOST or "").strip()
@@ -156,6 +143,10 @@ async def sync_rover_by_username(
         target_hosts = validate_caster_hosts(requested_hosts)
     except ValueError as exc:
         raise HTTPException(status_code=403, detail=str(exc)) from None
+    return target_hosts, config
+
+
+async def _validate_rover_sync_scope(update_req, rover, current_user, devices_db, db):
     if current_user.role == auth.Role.VIEWER and not rover and not update_req.selected_serials:
         raise HTTPException(status_code=403, detail="Viewer phải chọn ít nhất một trạm trong Rover Access.")
     if update_req.selected_serials and current_user.role != auth.Role.ADMIN:
@@ -169,121 +160,149 @@ async def sync_rover_by_username(
             raise HTTPException(status_code=403, detail="Rover chỉ được gán vào trạm trong phạm vi của bạn.")
     if current_user.role != auth.Role.ADMIN and update_req.mountpoints is not None:
         serials_for_mps = update_req.selected_serials or ((rover.base_serial or "").split(",") if rover else [])
-        if not await crud.rover_mountpoints_within_scope(devices_db, current_user, serials_for_mps, update_req.mountpoints):
+        within_scope = await crud.rover_mountpoints_within_scope(
+            devices_db, current_user, serials_for_mps, update_req.mountpoints
+        )
+        if not within_scope:
             raise HTTPException(status_code=403, detail="Mountpoint không thuộc trạm được cấp cho bạn.")
-
     if rover:
         has_perm = await crud.check_rover_management_permission(rover, current_user, devices_db, db)
         if not has_perm:
             raise HTTPException(status_code=403, detail="Bạn không có quyền quản lý Rover này.")
 
-    # 3. TRƯỜNG HỢP: USER CHƯA CÓ TRONG DB (Unknown)
-    if not rover:
-        if not update_req.selected_serials and not update_req.mountpoints:
-            raise HTTPException(status_code=400, detail="Vui lòng chọn trạm hoặc nhập Allowed Mountpoints để đồng bộ tài khoản này vào hệ thống.")
-        if not update_req.password:
-            raise HTTPException(status_code=400, detail="Password is required to import a caster account")
 
-        # Tạo mới trong DB
-        combined_serials = ",".join(update_req.selected_serials) if update_req.selected_serials else ""
-        rover = await crud.create_rover_account(
-            db,
-            username=username,
-            password=update_req.password,
-            base_serial=combined_serials,
-            mountpoints=update_req.mountpoints,
-            creator_id=current_user.id,
-            max_connections=update_req.max_connections if update_req.max_connections is not None else 1,
-            show_position=update_req.show_position if update_req.show_position is not None else True,
-            rtcm_cycle_enabled=getattr(update_req, 'rtcm_cycle_enabled', False),
-            rtcm_disconnect_interval_seconds=getattr(update_req, 'rtcm_disconnect_interval_seconds', 300),
-            auto_save_sessions=update_req.auto_save_sessions if update_req.auto_save_sessions is not None else True,
-            auto_save_fixed_points=update_req.auto_save_fixed_points if update_req.auto_save_fixed_points is not None else False,
-            is_shared_with_managers=getattr(update_req, 'is_shared_with_managers', False)
-        )
-        logger.info("Adopted unknown rover into DB")
+async def _create_synced_rover(username, update_req, current_user, db):
+    if not update_req.selected_serials and not update_req.mountpoints:
+        raise HTTPException(status_code=400, detail="Vui lòng chọn trạm hoặc nhập Allowed Mountpoints để đồng bộ tài khoản này vào hệ thống.")
+    if not update_req.password:
+        raise HTTPException(status_code=400, detail="Password is required to import a caster account")
+    combined_serials = ",".join(update_req.selected_serials) if update_req.selected_serials else ""
+    rover = await crud.create_rover_account(
+        db,
+        username=username,
+        password=update_req.password,
+        base_serial=combined_serials,
+        mountpoints=update_req.mountpoints,
+        creator_id=current_user.id,
+        max_connections=update_req.max_connections if update_req.max_connections is not None else 1,
+        show_position=update_req.show_position if update_req.show_position is not None else True,
+        rtcm_cycle_enabled=getattr(update_req, 'rtcm_cycle_enabled', False),
+        rtcm_disconnect_interval_seconds=getattr(update_req, 'rtcm_disconnect_interval_seconds', 300),
+        auto_save_sessions=update_req.auto_save_sessions if update_req.auto_save_sessions is not None else True,
+        auto_save_fixed_points=update_req.auto_save_fixed_points if update_req.auto_save_fixed_points is not None else False,
+        is_shared_with_managers=getattr(update_req, 'is_shared_with_managers', False)
+    )
+    logger.info("Adopted unknown rover into DB")
+    return rover
 
-    # 4. TRƯỜNG HỢP: USER ĐÃ CÓ - CẬP NHẬT
+
+async def _update_synced_rover(rover, update_req, db):
+    update_data = {}
+    if update_req.password:
+        update_data["password"] = update_req.password
+    if update_req.mountpoints:
+        update_data["mountpoints"] = update_req.mountpoints
+    if update_req.max_connections is not None:
+        update_data["max_connections"] = update_req.max_connections
+    if update_req.show_position is not None:
+        update_data["show_position"] = update_req.show_position
+    if update_req.rtcm_cycle_enabled is not None:
+        update_data["rtcm_cycle_enabled"] = update_req.rtcm_cycle_enabled
+    if update_req.rtcm_disconnect_interval_seconds is not None:
+        update_data["rtcm_disconnect_interval_seconds"] = update_req.rtcm_disconnect_interval_seconds
+    if update_req.auto_save_sessions is not None:
+        update_data["auto_save_sessions"] = update_req.auto_save_sessions
+    if update_req.auto_save_fixed_points is not None:
+        update_data["auto_save_fixed_points"] = update_req.auto_save_fixed_points
+    if update_data:
+        if update_req.selected_serials:
+            update_data["base_serial"] = ",".join(update_req.selected_serials)
+        rover = await crud.update_rover_account(db, rover.id, update_data)
+    return rover
+
+
+async def _toggle_synced_rover_position(caster, username, update_req, current_user):
+    if update_req.show_position is None:
+        return
+    toggle_ids = []
+    for ident in (current_user.username, "admin", "id"):
+        ident_s = str(ident or "").strip()
+        if ident_s and ident_s not in toggle_ids:
+            toggle_ids.append(ident_s)
+    for ident in toggle_ids:
+        if await caster.toggle_show_pos(ident, username, update_req.show_position):
+            return
+    logger.warning("Sync-by-username could not confirm show_position toggle")
+
+
+async def _sync_rover_to_caster(host, port, username, update_req, rover, current_user):
+    from app.caster_client import CasterClient
+
+    caster = CasterClient(host, port)
+    if update_req.expiry_days is not None:
+        duration_seconds = update_req.expiry_days * 86400
     else:
-        # Cập nhật DB
-        update_data = {}
-        if update_req.password: update_data["password"] = update_req.password
-        if update_req.mountpoints: update_data["mountpoints"] = update_req.mountpoints
-        if update_req.max_connections is not None: update_data["max_connections"] = update_req.max_connections
-        if update_req.show_position is not None: update_data["show_position"] = update_req.show_position
-        if update_req.rtcm_cycle_enabled is not None: update_data["rtcm_cycle_enabled"] = update_req.rtcm_cycle_enabled
-        if update_req.rtcm_disconnect_interval_seconds is not None: update_data["rtcm_disconnect_interval_seconds"] = update_req.rtcm_disconnect_interval_seconds
-        if update_req.auto_save_sessions is not None: update_data["auto_save_sessions"] = update_req.auto_save_sessions
-        if update_req.auto_save_fixed_points is not None: update_data["auto_save_fixed_points"] = update_req.auto_save_fixed_points
+        duration_seconds = await caster.get_user_remaining_seconds(username)
+        if duration_seconds is None:
+            duration_seconds = saved_rover_duration(rover)
+    created_ok = await caster.create_user(
+        creator=current_user.username,
+        username=username,
+        password=update_req.password or rover.password,
+        mountpoints=update_req.mountpoints or rover.mountpoints,
+        expiry_seconds=duration_seconds,
+        max_users=update_req.max_connections if update_req.max_connections is not None else rover.max_connections,
+        show_position=update_req.show_position if update_req.show_position is not None else rover.show_position,
+        rtcm_cycle_enabled=bool(getattr(rover, "rtcm_cycle_enabled", False) if update_req.rtcm_cycle_enabled is None else update_req.rtcm_cycle_enabled),
+        rtcm_disconnect_interval_seconds=int((getattr(rover, "rtcm_disconnect_interval_seconds", None) or 300) if update_req.rtcm_disconnect_interval_seconds is None else update_req.rtcm_disconnect_interval_seconds),
+    )
+    if not created_ok:
+        raise RuntimeError("Caster did not confirm account restore/update")
+    await _toggle_synced_rover_position(caster, username, update_req, current_user)
 
-        if update_data:
-            # 🔥 FIX: Cập nhật base_serial nếu có gửi trạm đích
-            if update_req.selected_serials:
-                update_data["base_serial"] = ",".join(update_req.selected_serials)
 
-            rover = await crud.update_rover_account(db, rover.id, update_data)
-
-    # 5. ĐỒNG BỘ SANG CASTER (Đồng bộ trên toàn bộ Caster được cấu hình)
+async def _sync_rover_casters(username, update_req, rover, current_user, target_hosts, config, db):
     try:
         port = int(config.get("port") or settings.CASTER_PORT or 2101)
         failed_hosts = []
         for host in target_hosts:
             try:
-                from app.caster_client import CasterClient
-                caster = CasterClient(host, port)
-                if update_req.expiry_days is not None:
-                    duration_seconds = update_req.expiry_days * 86400
-                else:
-                    duration_seconds = await caster.get_user_remaining_seconds(username)
-                    if duration_seconds is None:
-                        duration_seconds = saved_rover_duration(rover)
-                created_ok = await caster.create_user(
-                    creator=current_user.username,
-                    username=username,
-                    password=update_req.password or rover.password,
-                    mountpoints=update_req.mountpoints or rover.mountpoints,
-                    expiry_seconds=duration_seconds,
-                    max_users=update_req.max_connections if update_req.max_connections is not None else rover.max_connections,
-                    show_position=update_req.show_position if update_req.show_position is not None else rover.show_position,
-                    rtcm_cycle_enabled=bool(getattr(rover, "rtcm_cycle_enabled", False) if update_req.rtcm_cycle_enabled is None else update_req.rtcm_cycle_enabled),
-                    rtcm_disconnect_interval_seconds=int((getattr(rover, "rtcm_disconnect_interval_seconds", None) or 300) if update_req.rtcm_disconnect_interval_seconds is None else update_req.rtcm_disconnect_interval_seconds),
-                )
-                if not created_ok:
-                    raise RuntimeError("Caster did not confirm account restore/update")
-
-                # Sync show_position again specifically to be safe
-                if update_req.show_position is not None:
-                    toggle_id_candidates = []
-                    for ident in (current_user.username, "admin", "id"):
-                        ident_s = str(ident or "").strip()
-                        if ident_s and ident_s not in toggle_id_candidates:
-                            toggle_id_candidates.append(ident_s)
-
-                    toggle_ok = False
-                    for ident in toggle_id_candidates:
-                        if await caster.toggle_show_pos(ident, username, update_req.show_position):
-                            toggle_ok = True
-                            break
-                    if not toggle_ok:
-                        logger.warning("Sync-by-username could not confirm show_position toggle")
+                await _sync_rover_to_caster(host, port, username, update_req, rover, current_user)
             except Exception as host_err:
                 logger.exception("Failed to sync rover to caster (%s)", type(host_err).__name__)
                 failed_hosts.append(host)
         if failed_hosts:
             raise HTTPException(status_code=502, detail=f"Caster chưa xác nhận lưu Rover: {', '.join(failed_hosts)}. Có thể thử lại.")
-
-        # Cập nhật target_casters trong DB
         if target_hosts:
             db_target_casters = ";".join(target_hosts)
             if db_target_casters != rover.target_casters:
                 rover = await crud.update_rover_account(db, rover.id, {"target_casters": db_target_casters})
     except HTTPException:
         raise
-    except Exception as e:
-        logger.exception("Sync Caster Error (%s)", type(e).__name__)
+    except Exception as exc:
+        logger.exception("Sync Caster Error (%s)", type(exc).__name__)
         raise HTTPException(status_code=502, detail="Chưa thể đồng bộ Rover sang caster; hãy thử lại.") from None
-
     return rover
+
+
+@router.put("/api/rovers/sync/by-username/{username}", response_model=schemas.RoverAccountResponse, responses={400: {"description": "Bad Request"}, 403: {"description": "Forbidden"}, 502: {"description": "Bad Gateway"}})
+async def sync_rover_by_username(
+    username: str,
+    update_req: schemas.RoverUpdate,
+    db: AsyncSession = Depends(get_auth_db),
+    devices_db: AsyncSession = Depends(get_db),
+    current_user: models.User = Depends(auth.get_current_user)
+):
+    """Import or update a rover account and synchronize it with configured casters."""
+    _authorize_rover_sync(update_req, current_user)
+    rover = await crud.get_rover_by_username(db, username)
+    target_hosts, config = _rover_sync_hosts(update_req, rover)
+    await _validate_rover_sync_scope(update_req, rover, current_user, devices_db, db)
+    if rover:
+        rover = await _update_synced_rover(rover, update_req, db)
+    else:
+        rover = await _create_synced_rover(username, update_req, current_user, db)
+    return await _sync_rover_casters(username, update_req, rover, current_user, target_hosts, config, db)
 
 
 @router.post("/api/rovers/create-multi", response_model=schemas.RoverAccountResponse, responses={400: {"description": "Bad Request"}, 403: {"description": "Forbidden"}, 502: {"description": "Bad Gateway"}})
