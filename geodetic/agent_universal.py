@@ -1401,6 +1401,15 @@ def _remember_baud_hint(port_device: str, baud: int) -> None:
     CHIP_DETECT_BAUD_HINTS[str(port_device).strip()] = int(baud)
 
 
+def _wait_after_empty_serial_read(seen_data: bool, idle_ticks_after_data: int) -> tuple[int, bool]:
+    if seen_data:
+        idle_ticks_after_data += 1
+        if idle_ticks_after_data >= 3:
+            return idle_ticks_after_data, True
+    time.sleep(0.05)
+    return idle_ticks_after_data, False
+
+
 def _wait_for_serial_response(ser, wait_seconds: float, max_bytes: int = 2048) -> bytes:
     deadline = time.time() + max(0.1, float(wait_seconds))
     chunks = []
@@ -1410,11 +1419,9 @@ def _wait_for_serial_response(ser, wait_seconds: float, max_bytes: int = 2048) -
     while time.time() < deadline:
         waiting = int(getattr(ser, 'in_waiting', 0) or 0)
         if waiting <= 0:
-            if seen_data:
-                idle_ticks_after_data += 1
-                if idle_ticks_after_data >= 3:
-                    break
-            time.sleep(0.05)
+            idle_ticks_after_data, should_stop = _wait_after_empty_serial_read(seen_data, idle_ticks_after_data)
+            if should_stop:
+                break
             continue
 
         chunk = ser.read(min(waiting, max_bytes))

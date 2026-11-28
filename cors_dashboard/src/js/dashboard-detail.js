@@ -1359,6 +1359,98 @@ function DetailsPanelFooter({device, canEdit, isAdmin, isDeviceLocked, onLock}) 
     </div>;
 }
 
+function getDetailsPanelAccess(device, currentUser) {
+    const isReadonly4g = window.CorsDashboardShared?.isReadonly4gBase?.(device) === true;
+    const authStatus = device?.system_info?.auth_status || {};
+    return {
+        isReadonly4g,
+        isAdmin: !isReadonly4g && currentUser?.role === 'admin',
+        tokenConfirmed: window.CorsDashboardShared?.isAccessTokenSynced?.(device) === true,
+        authStatus,
+        licenseBypass: isReadonly4g || authStatus.license_bypass === true || device?.system_info?.auth_license_bypass === true,
+        serverTokenPresent: Object.prototype.hasOwnProperty.call(authStatus, 'server_token_present')
+            ? authStatus.server_token_present : authStatus.token_required,
+        tokenCheckAvailable: authStatus.token_check_available !== false,
+        hasAuthTokenState: [
+            'server_token_present', 'token_required', 'token_synced', 'agent_token_present',
+            'needs_token_deploy', 'token_deployment_pending',
+        ].some(key => Object.prototype.hasOwnProperty.call(authStatus, key)),
+    };
+}
+
+function getDetailsPanelLifecycle(device, isReadonly4g, tokenConfirmed) {
+    const rawLifecycle = String(device?.status || 'offline').toLowerCase();
+    const reportedLifecycle = isReadonly4g && ['awaiting_license', 'unprovisioned', 'locked'].includes(rawLifecycle)
+        ? 'offline' : rawLifecycle;
+    const lifecycleStatus = tokenConfirmed && reportedLifecycle === 'awaiting_license'
+        ? (window.CorsDashboardShared?.getMapEffectiveStatus?.(device) || 'awaiting_agent')
+        : reportedLifecycle;
+    return {
+        lifecycleStatus,
+        isDeviceRebooting: !isReadonly4g && ['rebooting', 'rebooting_for_reset'].includes(lifecycleStatus),
+        isDeviceAwaitingLicense: lifecycleStatus === 'awaiting_license',
+        isDeviceUnprovisioned: lifecycleStatus === 'unprovisioned',
+        isRelayLikeStation: String(device?.serial || '').toUpperCase().startsWith('MONITOR_'),
+    };
+}
+
+function hasDetailsPanelAccessTokenGap(access, staleOffline) {
+    const { isReadonly4g, tokenConfirmed, authStatus, serverTokenPresent, tokenCheckAvailable } = access;
+    if (isReadonly4g || tokenConfirmed) return false;
+    if (authStatus.token_deployment_pending === true) return true;
+    if (staleOffline) return serverTokenPresent === false;
+    return authStatus.needs_token_deploy === true || serverTokenPresent === false
+        || (tokenCheckAvailable && authStatus.agent_token_present === false)
+        || (tokenCheckAvailable && authStatus.token_synced === false);
+}
+
+function getDetailsPanelConfig(device) {
+    const isGnssConfigured = !!(device?.base_config && typeof device.base_config === 'object' && Object.keys(device.base_config).length);
+    const isServiceConfigured = !!(device?.service_config && typeof device.service_config === 'object' && Object.keys(device.service_config).length);
+    const storedCoords = device?.base_config?.coords || device?.base_coords || {};
+    return {
+        isGnssConfigured,
+        isServiceConfigured,
+        baseConfigSignature: isGnssConfigured ? JSON.stringify(device.base_config) : '',
+        serviceConfigSignature: isServiceConfigured ? JSON.stringify(device.service_config) : '',
+        stationHasConfiguration: isGnssConfigured || isServiceConfigured || (
+            Number.isFinite(Number(storedCoords.lat)) && Number(storedCoords.lat) !== 0
+            && Number.isFinite(Number(storedCoords.lon)) && Number(storedCoords.lon) !== 0
+        ),
+    };
+}
+
+function getDetailsPanelVisibility({
+    isReadonly4g, licenseBypass, hasAuthTokenState, hasAccessTokenGap, isDeviceAwaitingLicense, isDeviceRebooting,
+    isDeviceUnprovisioned, isRelayLikeStation, stationHasConfiguration,
+}) {
+    const shouldShowLicenseTab = !licenseBypass && (hasAccessTokenGap || isDeviceAwaitingLicense);
+    const showLicenseTab = !isReadonly4g && (shouldShowLicenseTab
+        || (licenseBypass && hasAuthTokenState && hasAccessTokenGap));
+    const showConfigTabs = !isReadonly4g && !isDeviceRebooting
+        && (!isDeviceAwaitingLicense || licenseBypass || stationHasConfiguration);
+    const showServiceAndDashboardTabs = showConfigTabs && (!isDeviceUnprovisioned || isRelayLikeStation);
+    return {
+        shouldShowLicenseTab,
+        showLicenseTab,
+        showConfigTabs,
+        showServiceAndDashboardTabs,
+        showOverviewTab: isReadonly4g || showServiceAndDashboardTabs,
+    };
+}
+
+function getDetailsPanelDisplayStatus(device, lifecycleStatus, staleOffline, hasAccessTokenGap) {
+    const rawStatusKey = staleOffline ? 'offline' : lifecycleStatus;
+    const operationalStatus = ['online', 'sleep', 'streaming', 'starting'].includes(rawStatusKey)
+        ? (window.CorsDashboardShared?.getMapEffectiveStatus?.({ ...device, status: rawStatusKey }) || rawStatusKey)
+        : rawStatusKey;
+    return {
+        rawStatusKey,
+        displayStatusKey: rawStatusKey !== 'offline' && (hasAccessTokenGap || rawStatusKey === 'awaiting_license')
+            ? 'awaiting_license' : operationalStatus,
+    };
+}
+
 const DetailsPanel = memo(function DetailsPanel({
     device,
     currentUser,
@@ -1373,18 +1465,10 @@ const DetailsPanel = memo(function DetailsPanel({
     onLock,
     onUnlock
 }) {
-    const isReadonly4g = window.CorsDashboardShared?.isReadonly4gBase?.(device) === true;
-    const isAdmin = !isReadonly4g && currentUser?.role === 'admin';
-    const tokenConfirmed = window.CorsDashboardShared?.isAccessTokenSynced?.(device) === true;
-    const rawLifecycle = String(device?.status || 'offline').toLowerCase();
-    const reportedLifecycle = isReadonly4g && ['awaiting_license', 'unprovisioned', 'locked'].includes(rawLifecycle) ? 'offline' : rawLifecycle;
-    const lifecycleStatus = tokenConfirmed && reportedLifecycle === 'awaiting_license'
-        ? (window.CorsDashboardShared?.getMapEffectiveStatus?.(device) || 'awaiting_agent')
-        : reportedLifecycle;
-    const isDeviceRebooting = !isReadonly4g && ['rebooting', 'rebooting_for_reset'].includes(lifecycleStatus);
-    const isDeviceAwaitingLicense = lifecycleStatus === 'awaiting_license';
-    const isDeviceUnprovisioned = lifecycleStatus === 'unprovisioned';
-    const isRelayLikeStation = String(device?.serial || '').toUpperCase().startsWith('MONITOR_');
+    const access = getDetailsPanelAccess(device, currentUser);
+    const { isReadonly4g, isAdmin, tokenConfirmed, licenseBypass, hasAuthTokenState } = access;
+    const { lifecycleStatus, isDeviceRebooting, isDeviceAwaitingLicense, isDeviceUnprovisioned, isRelayLikeStation } =
+        getDetailsPanelLifecycle(device, isReadonly4g, tokenConfirmed);
     const [activeTab, setActiveTab] = useState('');
     const [offlineClockNow, setOfflineClockNow] = useState(Date.now());
 
@@ -1400,65 +1484,25 @@ const DetailsPanel = memo(function DetailsPanel({
     const lastSerialRef = useRef(null);
     const lastGnssConfiguredRef = useRef(false);
 
-    const hasConfig = (config) => !!(config && typeof config === 'object' && Object.keys(config).length > 0);
-    const isGnssConfigured = hasConfig(device?.base_config);
-    const isServiceConfigured = hasConfig(device?.service_config);
-    const baseConfigSignature = isGnssConfigured ? JSON.stringify(device.base_config) : '';
-    const serviceConfigSignature = isServiceConfigured ? JSON.stringify(device.service_config) : '';
-    const authStatus = device?.system_info?.auth_status || {};
+    const { isGnssConfigured, isServiceConfigured, baseConfigSignature, serviceConfigSignature, stationHasConfiguration } =
+        getDetailsPanelConfig(device);
     const staleOffline = isDeviceStaleOffline(device, offlineClockNow);
     const offlineInfo = window.CorsDashboardShared?.getOfflineInfo?.(device, offlineClockNow) || null;
-    const licenseBypass = isReadonly4g || authStatus.license_bypass === true || device?.system_info?.auth_license_bypass === true;
-    const serverTokenPresent = Object.prototype.hasOwnProperty.call(authStatus, 'server_token_present')
-        ? authStatus.server_token_present
-        : authStatus.token_required;
-    const tokenCheckAvailable = authStatus.token_check_available !== false;
-    const hasAuthTokenState = [
-        'server_token_present',
-        'token_required',
-        'token_synced',
-        'agent_token_present',
-        'needs_token_deploy',
-        'token_deployment_pending'
-    ].some(key => Object.prototype.hasOwnProperty.call(authStatus, key));
-    const hasAccessTokenGap = !isReadonly4g && (
-        tokenConfirmed ? false : authStatus.token_deployment_pending === true
-            ? true
-            : staleOffline
-            ? serverTokenPresent === false
-            : (
-                authStatus.needs_token_deploy === true ||
-                serverTokenPresent === false ||
-                (tokenCheckAvailable && authStatus.agent_token_present === false) ||
-                (tokenCheckAvailable && authStatus.token_synced === false)
-            ));
+    const hasAccessTokenGap = hasDetailsPanelAccessTokenGap(access, staleOffline);
 
     useEffect(() => {
         if (!device?.serial) return undefined;
         const interval = setInterval(() => setOfflineClockNow(Date.now()), 30000);
         return () => clearInterval(interval);
     }, [device?.serial]);
-    const rawStatusKey = staleOffline ? 'offline' : lifecycleStatus;
-    const operationalStatus = ['online', 'sleep', 'streaming', 'starting'].includes(rawStatusKey)
-        ? (window.CorsDashboardShared?.getMapEffectiveStatus?.({ ...device, status: rawStatusKey }) || rawStatusKey)
-        : rawStatusKey;
-    const displayStatusKey = rawStatusKey !== 'offline' && (hasAccessTokenGap || rawStatusKey === 'awaiting_license')
-        ? 'awaiting_license'
-        : operationalStatus;
-    const storedCoords = device?.base_config?.coords || device?.base_coords || {};
-    const stationHasConfiguration = isGnssConfigured || isServiceConfigured || (
-        Number.isFinite(Number(storedCoords.lat)) && Number(storedCoords.lat) !== 0 &&
-        Number.isFinite(Number(storedCoords.lon)) && Number(storedCoords.lon) !== 0
-    );
-    const shouldShowLicenseTab =
-        !licenseBypass && (
-            hasAccessTokenGap ||
-            isDeviceAwaitingLicense
-        );
-    const showLicenseTab = !isReadonly4g && (shouldShowLicenseTab || (licenseBypass && hasAuthTokenState && hasAccessTokenGap));
-    const showConfigTabs = !isReadonly4g && !isDeviceRebooting && (!isDeviceAwaitingLicense || licenseBypass || stationHasConfiguration);
-    const showServiceAndDashboardTabs = showConfigTabs && (!isDeviceUnprovisioned || isRelayLikeStation);
-    const showOverviewTab = isReadonly4g || showServiceAndDashboardTabs;
+    const { rawStatusKey, displayStatusKey } = getDetailsPanelDisplayStatus(
+        device, lifecycleStatus, staleOffline, hasAccessTokenGap);
+    const {
+        shouldShowLicenseTab, showLicenseTab, showConfigTabs, showServiceAndDashboardTabs, showOverviewTab,
+    } = getDetailsPanelVisibility({
+        isReadonly4g, licenseBypass, hasAuthTokenState, hasAccessTokenGap, isDeviceAwaitingLicense, isDeviceRebooting,
+        isDeviceUnprovisioned, isRelayLikeStation, stationHasConfiguration,
+    });
 
     useEffect(() => {
         if (!device) return;
