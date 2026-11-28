@@ -564,28 +564,24 @@ class ZaloBotService(
                 raise RuntimeError(f"Zalo Bot failed to start: {e}") from e
             return False
 
-    async def process_webhook_payload(self, payload: Dict[str, Any]) -> Dict[str, Any]:
-        trace_id = uuid.uuid4().hex[:12]
-        summary = self._summarize_payload(payload)
-        # Platform verification is not a user message and has no chat to reply to.
+    def _webhook_test_response(self, payload, trace_id):
         root = payload.get("result", payload)
-        if isinstance(root, dict) and root.get("event_name") == "webhook.test":
-            self._debug_events.append({
-                "trace_id": trace_id,
-                "received_at": datetime.now().astimezone().isoformat(),
-                "status": "webhook_test", "summary": {"event": "webhook.test"},
-                "outbound": [], "outbound_count": 0,
-            })
-            logger.info("[ZALO TRACE %s v=%s] webhook test acknowledged", trace_id, ZALO_TRACE_VERSION)
-            return {"trace_id": trace_id, "status": "webhook_test", "outbound_count": 0}
+        if not isinstance(root, dict) or root.get("event_name") != "webhook.test":
+            return None
+        self._debug_events.append({
+            "trace_id": trace_id,
+            "received_at": datetime.now().astimezone().isoformat(),
+            "status": "webhook_test", "summary": {"event": "webhook.test"},
+            "outbound": [], "outbound_count": 0,
+        })
+        logger.info("[ZALO TRACE %s v=%s] webhook test acknowledged", trace_id, ZALO_TRACE_VERSION)
+        return {"trace_id": trace_id, "status": "webhook_test", "outbound_count": 0}
+
+    async def _record_webhook_event(self, payload, trace_id, summary):
         try:
             stored_chat_id = scoped_chat_id(self.bot_key, str(summary["chat_id"])) if summary.get("chat_id") else None
-            await self._hydrate_conversation_state(
-                stored_chat_id, summary.get("sender_id")
-            )
-            sensitive_input = self._is_sensitive_conversation_input(
-                stored_chat_id, summary.get("sender_id")
-            )
+            await self._hydrate_conversation_state(stored_chat_id, summary.get("sender_id"))
+            sensitive_input = self._is_sensitive_conversation_input(stored_chat_id, summary.get("sender_id"))
         except Exception as exc:
             # If persistent state cannot be checked, fail closed for logging: an
             # ordinary message is less valuable than accidentally logging a secret.
@@ -605,8 +601,9 @@ class ZaloBotService(
             "outbound": [],
         }
         self._debug_events.append(event)
+        return event, sensitive_input
 
-        # --- Webhook deduplication ---
+    def _is_duplicate_webhook(self, payload, summary, event, trace_id):
         msg_id = str(
             summary.get("msg_id") or summary.get("message_id")
             or payload.get("msg_id") or payload.get("message_id") or ""
@@ -615,160 +612,175 @@ class ZaloBotService(
             dedup_src = f"{summary.get('chat_id')}:{summary.get('sender_id')}:{summary.get('text', '')}"
             msg_id = hashlib.sha256(dedup_src.encode("utf-8", errors="replace")).hexdigest()
         now = time.time()
-        self._processed_msg_ids = {
-            k: v for k, v in self._processed_msg_ids.items() if now - v < 60
-        }
+        self._processed_msg_ids = {key: stamp for key, stamp in self._processed_msg_ids.items() if now - stamp < 60}
         if msg_id in self._processed_msg_ids:
             event["status"] = "deduplicated"
             logger.info("[ZALO TRACE %s] duplicate msg_id=%s, skipping", trace_id, msg_id)
-            return {"trace_id": trace_id, "status": "deduplicated", "outbound_count": 0}
+            return True
         self._processed_msg_ids[msg_id] = now
+        return False
 
+    def _ensure_webhook_app(self):
+        if not ZALO_AVAILABLE:
+            raise RuntimeError("Zalo SDK is not installed")
+        if not settings.ENABLE_ZALO_BOT:
+            raise RuntimeError("Zalo Bot is disabled")
+        if self.app:
+            return
+        self._load_chats()
+        self._build_app()
+        if self._bot_mode() == "webhook":
+            self._ensure_dispatcher()
+
+    def _prepare_webhook_update(self, payload, event, trace_id, sensitive_input):
+        update_data = payload.get("result") if isinstance(payload, dict) else None
+        if update_data is None and isinstance(payload, dict):
+            update_data = payload
+        if not isinstance(update_data, dict):
+            raise ValueError("Invalid Zalo webhook payload: missing result object")
+        update_data, normalization = self._normalize_group_command(update_data)
+        if normalization:
+            event["group_command_normalization"] = normalization
+            chat_id = scoped_chat_id(self.bot_key, str(event["summary"].get("chat_id") or ""))
+            if chat_id and normalization.get("mention_prefix"):
+                self._chat_mention_prefixes[chat_id] = normalization["mention_prefix"]
+            logger.info(
+                "[ZALO TRACE %s] normalized group command %r -> %r",
+                trace_id, normalization["original_text"], normalization["normalized_text"],
+            )
+        update = Update.de_json(update_data, self.app.bot)
+        if update is None:
+            raise ValueError("Zalo SDK could not parse webhook payload")
+        event["parsed_update"] = REDACTED_VALUE if sensitive_input else self._safe_debug_value(
+            update.to_dict() if hasattr(update, "to_dict") else update
+        )
+        message = getattr(update, "message", None)
+        if not getattr(getattr(message, "chat", None), "id", None):
+            return update, None, True
+        parsed_text = getattr(message, "text", None)
+        safe_text = (
+            REDACTED_VALUE if sensitive_input
+            else self._redact_command_secret(parsed_text) if isinstance(parsed_text, str)
+            else parsed_text
+        )
+        event["dispatch_text"] = safe_text
+        logger.info("[ZALO TRACE %s] SDK dispatch text=%r", trace_id, safe_text)
+        event["status"] = "parsed"
+        return update, parsed_text, False
+
+    async def _webhook_public_routes(self, update, text, command):
+        public_cors = command == "/cors" or _is_cors_status_question(text) or self._is_cors_followup(update, text)
+        public_menu = False
+        principal = None
+        if self._get_chat_type(update) == "group":
+            principal = await zalo_repository.resolve_principal(
+                self._get_chat_id(update), self._get_sender_id(update), "group"
+            )
+            # New groups can call the bot by mention (for example '@Bot helo')
+            # or ask for help without acquiring any Base permissions.
+            public_menu = not principal.is_linked and command in {"/start", "/help", "/menu"}
+            if not principal.is_linked and text.startswith("@") and "/" not in text:
+                public_cors = True
+        return public_cors, public_menu, principal
+
+    async def _reject_unlinked_webhook_group(self, update, event, trace_id, command, text, routes):
+        public_cors, public_menu, principal = routes
+        if principal is None or principal.is_linked or public_cors or public_menu or command == "/register":
+            return None
+        event["status"] = "rejected_unlinked_group"
+        event["dispatch_method"] = None
+        guidance_token = self._allow_revoked_outbound.set(True)
+        try:
+            await update.message.reply_text(
+                "CORS Cục dùng công khai: nhắc tên bot kèm /cors, không cần đăng ký.\n"
+                "Lệnh Base này cần được cấp quyền. Admin vào Dashboard → Zalo Bot, "
+                "chọn quyền Base và tạo OTP, rồi gửi /register <OTP>."
+            )
+        finally:
+            self._allow_revoked_outbound.reset(guidance_token)
+        event["outbound_count"] = len(event["outbound"])
+        logger.info(
+            "[ZALO TRACE %s] rejected command from unlinked group chat_id=%s guidance_sent=true",
+            trace_id, self._get_chat_id(update),
+        )
+        return {"trace_id": trace_id, "status": event["status"], "outbound_count": event["outbound_count"]}
+
+    async def _dispatch_webhook_update(self, update, parsed_text, event, trace_id):
+        if await zalo_repository.is_chat_paused(self._get_chat_id(update)):
+            event["status"] = "paused_chat"
+            return {"trace_id": trace_id, "status": "paused_chat", "outbound_count": 0}
+        text = str(parsed_text or "").strip().lstrip("\u200b\u200c\u200d\ufeff").strip()
+        command = text.split(maxsplit=1)[0].lower() if text else ""
+        command = command.split("@", 1)[0].rstrip("\u200b\u200c\u200d\ufeff")
+        routes = await self._webhook_public_routes(update, text, command)
+        rejected = await self._reject_unlinked_webhook_group(update, event, trace_id, command, text, routes)
+        if rejected:
+            return rejected
+
+        public_cors, public_menu, principal = routes
+        revoked_token = None
+        if principal is not None and not principal.is_linked and command == "/register":
+            # Allow registration guidance/errors to be delivered. A successful OTP consumption establishes the new DB grant.
+            revoked_token = self._allow_revoked_outbound.set(True)
+        try:
+            dispatch_method = await self._dispatch_webhook_route(update, public_menu, public_cors)
+        finally:
+            if revoked_token is not None:
+                self._allow_revoked_outbound.reset(revoked_token)
+        event["status"] = "dispatched"
+        event["dispatch_method"] = dispatch_method
+        event["outbound_count"] = len(event["outbound"])
+        logger.info(
+            "[ZALO TRACE %s] dispatched via=%s outbound_count=%s",
+            trace_id, dispatch_method, event["outbound_count"],
+        )
+        return {"trace_id": trace_id, "status": event["status"], "outbound_count": event["outbound_count"]}
+
+    async def _dispatch_webhook_route(self, update, public_menu, public_cors):
+        if public_menu:
+            await self._public_menu_cmd(update, None)
+            return "public_menu"
+        if public_cors:
+            await self._cors_cmd(update, None)
+            return "public_cors"
+        if hasattr(self.app, "process_update"):
+            await self._maybe_await(self.app.process_update(update))
+            return "application.process_update"
+        dispatcher = self._ensure_dispatcher()
+        if dispatcher and hasattr(dispatcher, "process_update"):
+            await self._maybe_await(dispatcher.process_update(update))
+            return "dispatcher.process_update"
+        if hasattr(self.app, "update_queue"):
+            await self.app.update_queue.put(update)
+            return "application.update_queue"
+        raise RuntimeError("Zalo SDK does not expose a webhook update dispatcher")
+
+    async def process_webhook_payload(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        trace_id = uuid.uuid4().hex[:12]
+        summary = self._summarize_payload(payload)
+        test_response = self._webhook_test_response(payload, trace_id)
+        if test_response is not None:
+            return test_response
+        event, sensitive_input = await self._record_webhook_event(payload, trace_id, summary)
+        if self._is_duplicate_webhook(payload, summary, event, trace_id):
+            return {"trace_id": trace_id, "status": "deduplicated", "outbound_count": 0}
         logger.info(
             "[ZALO TRACE %s v=%s] inbound %s",
-            trace_id,
-            ZALO_TRACE_VERSION,
+            trace_id, ZALO_TRACE_VERSION,
             json.dumps(event["summary"], ensure_ascii=False, default=str),
         )
         context_token = self._active_trace_id.set(trace_id)
-        revoked_outbound_token = None
-
         try:
-            if not ZALO_AVAILABLE:
-                raise RuntimeError("Zalo SDK is not installed")
-            if not settings.ENABLE_ZALO_BOT:
-                raise RuntimeError("Zalo Bot is disabled")
-            if not self.app:
-                self._load_chats()
-                self._build_app()
-                if self._bot_mode() == "webhook":
-                    self._ensure_dispatcher()
-
-            update_data = payload.get("result") if isinstance(payload, dict) else None
-            if update_data is None and isinstance(payload, dict):
-                update_data = payload
-            if not isinstance(update_data, dict):
-                raise ValueError("Invalid Zalo webhook payload: missing result object")
-
-            update_data, normalization = self._normalize_group_command(update_data)
-            if normalization:
-                event["group_command_normalization"] = normalization
-                chat_id = scoped_chat_id(self.bot_key, str(event["summary"].get("chat_id") or ""))
-                if chat_id and normalization.get("mention_prefix"):
-                    self._chat_mention_prefixes[chat_id] = normalization["mention_prefix"]
-                logger.info(
-                    "[ZALO TRACE %s] normalized group command %r -> %r",
-                    trace_id,
-                    normalization["original_text"],
-                    normalization["normalized_text"],
-                )
-
-            update = Update.de_json(update_data, self.app.bot)
-            if update is None:
-                raise ValueError("Zalo SDK could not parse webhook payload")
-            event["parsed_update"] = (
-                REDACTED_VALUE if sensitive_input else self._safe_debug_value(
-                    update.to_dict() if hasattr(update, "to_dict") else update
-                )
+            self._ensure_webhook_app()
+            update, parsed_text, missing_chat = self._prepare_webhook_update(
+                payload, event, trace_id, sensitive_input
             )
-            message = getattr(update, "message", None)
-            if not getattr(getattr(message, "chat", None), "id", None):
+            if missing_chat:
                 event["status"] = "ignored_no_chat"
                 event["outbound_count"] = 0
                 logger.info("[ZALO TRACE %s] ignored update without a replyable chat", trace_id)
                 return {"trace_id": trace_id, "status": "ignored_no_chat", "outbound_count": 0}
-            parsed_text = getattr(getattr(update, "message", None), "text", None)
-            safe_parsed_text = (
-                REDACTED_VALUE if sensitive_input
-                else self._redact_command_secret(parsed_text) if isinstance(parsed_text, str)
-                else parsed_text
-            )
-            event["dispatch_text"] = safe_parsed_text
-            logger.info("[ZALO TRACE %s] SDK dispatch text=%r", trace_id, safe_parsed_text)
-            event["status"] = "parsed"
-
-            if await zalo_repository.is_chat_paused(self._get_chat_id(update)):
-                event["status"] = "paused_chat"
-                return {"trace_id": trace_id, "status": "paused_chat", "outbound_count": 0}
-
-            # Route public health before the SDK's exact command matching, which
-            # does not accept /cors@Bot or invisible Zalo mention separators.
-            text = str(parsed_text or "").strip().lstrip("\u200b\u200c\u200d\ufeff").strip()
-            command = text.split(maxsplit=1)[0].lower() if text else ""
-            command = command.split("@", 1)[0].rstrip("\u200b\u200c\u200d\ufeff")
-            public_cors = command == "/cors" or _is_cors_status_question(text) or self._is_cors_followup(update, text)
-            public_menu = False
-            if self._get_chat_type(update) == "group":
-                principal = await zalo_repository.resolve_principal(
-                    self._get_chat_id(update), self._get_sender_id(update), "group"
-                )
-                # New groups can call the bot by mention (for example '@Bot helo')
-                # or ask for help without acquiring any Base permissions.
-                public_menu = not principal.is_linked and command in {"/start", "/help", "/menu"}
-                if not principal.is_linked and text.startswith("@") and "/" not in text:
-                    public_cors = True
-                if not principal.is_linked and not (public_cors or public_menu) and command != "/register":
-                    event["status"] = "rejected_unlinked_group"
-                    event["dispatch_method"] = None
-                    guidance_token = self._allow_revoked_outbound.set(True)
-                    try:
-                        await update.message.reply_text(
-                            "CORS Cục dùng công khai: nhắc tên bot kèm /cors, không cần đăng ký.\n"
-                            "Lệnh Base này cần được cấp quyền. Admin vào Dashboard → Zalo Bot, "
-                            "chọn quyền Base và tạo OTP, rồi gửi /register <OTP>."
-                        )
-                    finally:
-                        self._allow_revoked_outbound.reset(guidance_token)
-                    event["outbound_count"] = len(event["outbound"])
-                    logger.info(
-                        "[ZALO TRACE %s] rejected command from unlinked group chat_id=%s guidance_sent=true",
-                        trace_id, self._get_chat_id(update),
-                    )
-                    return {
-                        "trace_id": trace_id,
-                        "status": event["status"],
-                        "outbound_count": event["outbound_count"],
-                    }
-                if not principal.is_linked and command == "/register":
-                    # Allow registration guidance/errors to be delivered. A
-                    # successful OTP consumption establishes the new DB grant.
-                    revoked_outbound_token = self._allow_revoked_outbound.set(True)
-
-            dispatch_method = None
-            if public_menu:
-                dispatch_method = "public_menu"
-                await self._public_menu_cmd(update, None)
-            elif public_cors:
-                dispatch_method = "public_cors"
-                await self._cors_cmd(update, None)
-            elif hasattr(self.app, "process_update"):
-                dispatch_method = "application.process_update"
-                await self._maybe_await(self.app.process_update(update))
-            else:
-                dispatcher = self._ensure_dispatcher()
-                if dispatcher and hasattr(dispatcher, "process_update"):
-                    dispatch_method = "dispatcher.process_update"
-                    await self._maybe_await(dispatcher.process_update(update))
-                elif hasattr(self.app, "update_queue"):
-                    dispatch_method = "application.update_queue"
-                    await self.app.update_queue.put(update)
-                else:
-                    raise RuntimeError("Zalo SDK does not expose a webhook update dispatcher")
-
-            event["status"] = "dispatched"
-            event["dispatch_method"] = dispatch_method
-            event["outbound_count"] = len(event["outbound"])
-            logger.info(
-                "[ZALO TRACE %s] dispatched via=%s outbound_count=%s",
-                trace_id,
-                dispatch_method,
-                event["outbound_count"],
-            )
-            return {
-                "trace_id": trace_id,
-                "status": event["status"],
-                "outbound_count": event["outbound_count"],
-            }
+            return await self._dispatch_webhook_update(update, parsed_text, event, trace_id)
         except Exception as exc:
             event["status"] = "error"
             safe_error = self._redact_command_secret(f"{type(exc).__name__}: {exc}")
@@ -776,8 +788,6 @@ class ZaloBotService(
             logger.error("[ZALO TRACE %s] processing failed: %s", trace_id, safe_error)
             raise
         finally:
-            if revoked_outbound_token is not None:
-                self._allow_revoked_outbound.reset(revoked_outbound_token)
             self._active_trace_id.reset(context_token)
 
     async def stop(self):
