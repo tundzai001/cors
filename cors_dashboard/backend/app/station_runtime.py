@@ -562,6 +562,54 @@ async def _authenticate_ui_websocket(websocket: WebSocket) -> Optional[dict]:
 
 ui_websocket_endpoint_router = APIRouter()
 
+
+async def _ui_websocket_station_allowed(websocket, context, mountpoint):
+    if context.get("role") == auth.Role.ADMIN:
+        return True
+    async with device_session_scope() as scope_db:
+        target_serial = await _resolve_station_serial_by_mountpoint(scope_db, str(mountpoint))
+    allowed_serials = context.get("allowed_serials") or set()
+    if target_serial and str(target_serial).strip().upper() in allowed_serials:
+        return True
+    await websocket.send_json({"status": "error", "error": "station is outside your scope"})
+    return False
+
+
+async def _handle_ui_websocket_message(websocket, context, data):
+    msg = json.loads(data)
+    action = msg.get("action")
+    if action not in ("start_rtcm", "stop_rtcm"):
+        return
+    mountpoint = msg.get("mountpoint")
+    client_id = msg.get("client_instance_id", msg.get("identifier", "ws-client"))
+    ttl_seconds = int(msg.get("ttl_seconds", 90))
+    if not mountpoint:
+        await websocket.send_json({"status": "error", "error": "mountpoint is required"})
+        return
+    if not await _ui_websocket_station_allowed(websocket, context, mountpoint):
+        return
+    if action == "start_rtcm":
+        response = await _do_ntrip_wake(mountpoint, client_id, ttl_seconds)
+        await websocket.send_json({
+            "status": "ok", "action": "start_rtcm", "mountpoint": mountpoint,
+            "response": getattr(response, "body", b"").decode("utf-8"),
+        })
+        return
+    force = bool(msg.get("force", False))
+    if force and context.get("role") != auth.Role.ADMIN:
+        await websocket.send_json({"status": "error", "error": "force stop requires admin"})
+        return
+    address = (
+        msg.get("caster_address") or msg.get("address") or msg.get("host")
+        or msg.get("ip") or msg.get("caster_host")
+    )
+    response = await _do_ntrip_stop(mountpoint, client_id, force=force, requested_address=address)
+    await websocket.send_json({
+        "status": "ok", "action": "stop_rtcm", "mountpoint": mountpoint,
+        "response": getattr(response, "body", b"").decode("utf-8"),
+    })
+
+
 @ui_websocket_endpoint_router.websocket("/ws/updates")
 async def ui_websocket_endpoint(websocket: WebSocket):
     context = await _authenticate_ui_websocket(websocket)
@@ -575,46 +623,7 @@ async def ui_websocket_endpoint(websocket: WebSocket):
             # Nhận tin nhắn từ client và xử lý lệnh start_rtcm/stop_rtcm
             data = await websocket.receive_text()
             try:
-                msg = json.loads(data)
-                action = msg.get("action")
-                if action in ("start_rtcm", "stop_rtcm"):
-                    mountpoint = msg.get("mountpoint")
-                    client_id = msg.get("client_instance_id", msg.get("identifier", "ws-client"))
-                    ttl_seconds = int(msg.get("ttl_seconds", 90))
-
-                    if not mountpoint:
-                        await websocket.send_json({"status": "error", "error": "mountpoint is required"})
-                        continue
-
-                    if context.get("role") != auth.Role.ADMIN:
-                        async with device_session_scope() as scope_db:
-                            target_serial = await _resolve_station_serial_by_mountpoint(scope_db, str(mountpoint))
-                        allowed_serials = context.get("allowed_serials") or set()
-                        if not target_serial or str(target_serial).strip().upper() not in allowed_serials:
-                            await websocket.send_json({"status": "error", "error": "station is outside your scope"})
-                            continue
-
-                    if action == "start_rtcm":
-                        resp = await _do_ntrip_wake(mountpoint, client_id, ttl_seconds)
-                        await websocket.send_json({
-                            "status": "ok",
-                            "action": "start_rtcm",
-                            "mountpoint": mountpoint,
-                            "response": getattr(resp, "body", b"").decode("utf-8")
-                        })
-                    elif action == "stop_rtcm":
-                        force = bool(msg.get("force", False))
-                        if force and context.get("role") != auth.Role.ADMIN:
-                            await websocket.send_json({"status": "error", "error": "force stop requires admin"})
-                            continue
-                        address = msg.get("caster_address") or msg.get("address") or msg.get("host") or msg.get("ip") or msg.get("caster_host")
-                        resp = await _do_ntrip_stop(mountpoint, client_id, force=force, requested_address=address)
-                        await websocket.send_json({
-                            "status": "ok",
-                            "action": "stop_rtcm",
-                            "mountpoint": mountpoint,
-                            "response": getattr(resp, "body", b"").decode("utf-8")
-                        })
+                await _handle_ui_websocket_message(websocket, context, data)
             except Exception:
                 pass
     except (WebSocketDisconnect, Exception):

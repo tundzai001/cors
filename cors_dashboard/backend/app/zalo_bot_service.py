@@ -49,6 +49,35 @@ from .zalo_bot.cors import CorsMixin
 from .zalo_bot.alerts import AlertsMixin
 
 
+def _chat_display_name(chat):
+    for attribute in ("title", "name", "full_name", "display_name"):
+        value = str(getattr(chat, attribute, "") or "").strip() if chat else ""
+        if value:
+            return value
+    return None
+
+
+def _sender_display_name(sender):
+    if not sender:
+        return None
+    first_last = " ".join(
+        part for part in (
+            str(getattr(sender, "first_name", "") or "").strip(),
+            str(getattr(sender, "last_name", "") or "").strip(),
+        ) if part
+    )
+    for candidate in (
+        getattr(sender, "full_name", None),
+        first_last,
+        getattr(sender, "username", None),
+        getattr(sender, "name", None),
+    ):
+        value = str(candidate or "").strip()
+        if value:
+            return value
+    return None
+
+
 class ZaloBotService(
     AdministrationMixin, EditorMixin, ConversationMixin, CommandsMixin, CorsMixin, AlertsMixin
 ):
@@ -876,32 +905,11 @@ class ZaloBotService(
             getattr(chat, "type", None) or getattr(chat, "chat_type", None) or ""
         ).lower()
         if "group" in raw_chat_type:
-            for attr in ("title", "name", "full_name", "display_name"):
-                value = str(getattr(chat, attr, "") or "").strip() if chat else ""
-                if value:
-                    return value
+            name = _chat_display_name(chat)
+            if name:
+                return name
         sender = getattr(message, "from_user", None) if message else None
-        if sender:
-            values = [
-                getattr(sender, "full_name", None),
-                " ".join(
-                    part for part in (
-                        str(getattr(sender, "first_name", "") or "").strip(),
-                        str(getattr(sender, "last_name", "") or "").strip(),
-                    ) if part
-                ),
-                getattr(sender, "username", None),
-                getattr(sender, "name", None),
-            ]
-            for value in values:
-                value = str(value or "").strip()
-                if value:
-                    return value
-        for attr in ("title", "name", "full_name", "display_name"):
-            value = str(getattr(chat, attr, "") or "").strip() if chat else ""
-            if value:
-                return value
-        return None
+        return _sender_display_name(sender) or _chat_display_name(chat)
 
     def _get_chat_type(self, update: Update) -> str:
         """Return ``private`` or ``group`` across Zalo SDK payload variants."""

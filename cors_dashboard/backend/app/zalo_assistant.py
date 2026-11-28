@@ -166,20 +166,7 @@ class ZaloAssistantRepository:
             return bool(binding and binding.is_active)
 
     @staticmethod
-    def _notification_allowed(
-        pref: models.ZaloNotificationPreference,
-        severity: str,
-        subjects: set[str],
-        scope_override: Optional[dict[str, Any]] = None,
-    ) -> bool:
-        severity = str(severity or "info").lower()
-        minimum = str(pref.min_severity or "critical").lower()
-        if not pref.enabled or SEVERITY_ORDER.get(severity, 0) < SEVERITY_ORDER.get(minimum, 2):
-            return False
-
-        scopes = scope_override if isinstance(scope_override, dict) else (
-            pref.scopes if isinstance(pref.scopes, dict) else {}
-        )
+    def _notification_scope_allowed(scopes, subjects):
         mode = str(scopes.get("mode") or "all").lower()
         if mode == "none":
             return False
@@ -191,26 +178,46 @@ class ZaloAssistantRepository:
             }
             if not selected.intersection(subjects):
                 return False
+        return True
 
-        if pref.quiet_start and pref.quiet_end:
-            try:
-                timezone = ZoneInfo(str(pref.timezone or DEFAULT_TIMEZONE))
-            except ZoneInfoNotFoundError:
-                # Windows Python installations may not ship an IANA tzdata
-                # database. Vietnam has used UTC+7 without DST since 1975.
-                timezone = datetime_timezone(timedelta(hours=7))
-            now = datetime.now(timezone)
-            try:
-                start_hour, start_minute = map(int, str(pref.quiet_start).split(":", 1))
-                end_hour, end_minute = map(int, str(pref.quiet_end).split(":", 1))
-                current = now.hour * 60 + now.minute
-                start = start_hour * 60 + start_minute
-                end = end_hour * 60 + end_minute
-                in_quiet_hours = start <= current < end if start < end else current >= start or current < end
-            except (TypeError, ValueError):
-                in_quiet_hours = False
-            if in_quiet_hours and not (severity == "critical" and pref.critical_override):
-                return False
+    @staticmethod
+    def _inside_notification_quiet_hours(pref, severity):
+        try:
+            timezone = ZoneInfo(str(pref.timezone or DEFAULT_TIMEZONE))
+        except ZoneInfoNotFoundError:
+            # Windows Python installations may not ship an IANA tzdata
+            # database. Vietnam has used UTC+7 without DST since 1975.
+            timezone = datetime_timezone(timedelta(hours=7))
+        now = datetime.now(timezone)
+        try:
+            start_hour, start_minute = map(int, str(pref.quiet_start).split(":", 1))
+            end_hour, end_minute = map(int, str(pref.quiet_end).split(":", 1))
+            current = now.hour * 60 + now.minute
+            start = start_hour * 60 + start_minute
+            end = end_hour * 60 + end_minute
+            in_quiet_hours = start <= current < end if start < end else current >= start or current < end
+        except (TypeError, ValueError):
+            in_quiet_hours = False
+        return in_quiet_hours and not (severity == "critical" and pref.critical_override)
+
+    @staticmethod
+    def _notification_allowed(
+        pref: models.ZaloNotificationPreference,
+        severity: str,
+        subjects: set[str],
+        scope_override: Optional[dict[str, Any]] = None,
+    ) -> bool:
+        severity = str(severity or "info").lower()
+        minimum = str(pref.min_severity or "critical").lower()
+        if not pref.enabled or SEVERITY_ORDER.get(severity, 0) < SEVERITY_ORDER.get(minimum, 2):
+            return False
+        scopes = scope_override if isinstance(scope_override, dict) else (
+            pref.scopes if isinstance(pref.scopes, dict) else {}
+        )
+        if not ZaloAssistantRepository._notification_scope_allowed(scopes, subjects):
+            return False
+        if pref.quiet_start and pref.quiet_end and ZaloAssistantRepository._inside_notification_quiet_hours(pref, severity):
+            return False
         return True
 
     async def create_link_code(

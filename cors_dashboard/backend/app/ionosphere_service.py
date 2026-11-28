@@ -49,30 +49,40 @@ class IonosphereService:
         self._geojson_cache_file = os.path.join(self._data_dir, "glotec_geojson_cache.json")
         self._load_disk_cache()
 
+    def _load_compact_cache(self) -> None:
+        if not os.path.isfile(self._compact_cache_file):
+            return
+        with open(self._compact_cache_file, "r", encoding="utf-8") as cache_file:
+            data = json.load(cache_file)
+        if not isinstance(data, dict) or not data.get("tec_grid"):
+            return
+        self._cached_compact = data
+        self._last_known_timetag = data.get("time_tag")
+        self._last_known_url = data.get("source_url")
+        time_tag = data.get("time_tag") or ""
+        if time_tag:
+            is_stale = self._check_is_stale(time_tag)
+            data["is_stale"] = is_stale
+            data["status"] = "STALE" if is_stale else "ACTIVE"
+
+    def _load_geojson_cache(self) -> None:
+        if not os.path.isfile(self._geojson_cache_file):
+            return
+        with open(self._geojson_cache_file, "r", encoding="utf-8") as cache_file:
+            data = json.load(cache_file)
+        if not isinstance(data, dict) or not data.get("features"):
+            return
+        self._cached_geojson = data
+        time_tag = data.get("metadata", {}).get("time_tag") or ""
+        if time_tag and "metadata" in self._cached_geojson:
+            is_stale = self._check_is_stale(time_tag)
+            self._cached_geojson["metadata"]["is_stale"] = is_stale
+            self._cached_geojson["metadata"]["status"] = "STALE" if is_stale else "ACTIVE"
+
     def _load_disk_cache(self) -> None:
         try:
-            if os.path.isfile(self._compact_cache_file):
-                with open(self._compact_cache_file, "r", encoding="utf-8") as f:
-                    data = json.load(f)
-                    if isinstance(data, dict) and data.get("tec_grid"):
-                        self._cached_compact = data
-                        self._last_known_timetag = data.get("time_tag")
-                        self._last_known_url = data.get("source_url")
-                        time_tag = data.get("time_tag") or ""
-                        if time_tag:
-                            is_stale = self._check_is_stale(time_tag)
-                            self._cached_compact["is_stale"] = is_stale
-                            self._cached_compact["status"] = "STALE" if is_stale else "ACTIVE"
-            if os.path.isfile(self._geojson_cache_file):
-                with open(self._geojson_cache_file, "r", encoding="utf-8") as f:
-                    data = json.load(f)
-                    if isinstance(data, dict) and data.get("features"):
-                        self._cached_geojson = data
-                        time_tag = data.get("metadata", {}).get("time_tag") or ""
-                        if time_tag and "metadata" in self._cached_geojson:
-                            is_stale = self._check_is_stale(time_tag)
-                            self._cached_geojson["metadata"]["is_stale"] = is_stale
-                            self._cached_geojson["metadata"]["status"] = "STALE" if is_stale else "ACTIVE"
+            self._load_compact_cache()
+            self._load_geojson_cache()
         except Exception as exc:
             logger.debug("Could not load GloTEC disk cache: %s", exc)
 

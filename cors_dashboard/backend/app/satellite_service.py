@@ -243,19 +243,19 @@ class SatelliteService:
         except Exception as exc:
             logger.warning("Cabinet Office status unavailable, retaining dated snapshot: %s", exc)
 
-    def _extract_satellite_code(self, constellation: str, name: str, line1: str) -> str:
-        prefix = CONSTELLATIONS_CONFIG.get(constellation, {}).get("prefix", "S")
-        assignments = self._identifiers.get(line1[2:7].strip().lstrip("0"))
-        if assignments:
-            now = datetime.now(timezone.utc)
-            epoch = now.strftime(TLE_EPOCH_FORMAT) + f"{now.hour * 3600 + now.minute * 60 + now.second:05d}"
-            for start, end, code in reversed(assignments):
-                if start <= epoch and (end == "0000:000:00000" or epoch < end):
-                    if code.startswith(prefix):
-                        if constellation == "qzss" and int(code[1:]) < 100:
-                            return f"J{int(code[1:]) + 192:03d}"
-                        return code
-            return f"{prefix}?"
+    @staticmethod
+    def _assigned_satellite_code(assignments, prefix, constellation):
+        now = datetime.now(timezone.utc)
+        epoch = now.strftime(TLE_EPOCH_FORMAT) + f"{now.hour * 3600 + now.minute * 60 + now.second:05d}"
+        for start, end, code in reversed(assignments):
+            if start <= epoch and (end == "0000:000:00000" or epoch < end) and code.startswith(prefix):
+                if constellation == "qzss" and int(code[1:]) < 100:
+                    return f"J{int(code[1:]) + 192:03d}"
+                return code
+        return None
+
+    @staticmethod
+    def _fallback_satellite_code(constellation, name, prefix):
         if constellation == "gps":
             m = re.search(r"PRN\s*(\d+)", name, re.IGNORECASE)
             if m:
@@ -271,6 +271,14 @@ class SatelliteService:
 
         # Unknown identity must never accidentally match a live RTCM PRN.
         return f"{prefix}?"
+
+    def _extract_satellite_code(self, constellation: str, name: str, line1: str) -> str:
+        prefix = CONSTELLATIONS_CONFIG.get(constellation, {}).get("prefix", "S")
+        assignments = self._identifiers.get(line1[2:7].strip().lstrip("0"))
+        if assignments:
+            code = self._assigned_satellite_code(assignments, prefix, constellation)
+            return code if code is not None else f"{prefix}?"
+        return self._fallback_satellite_code(constellation, name, prefix)
 
     def _parse_tle_text(self, text: str, constellation: str) -> list[dict[str, Any]]:
         lines = [line.strip() for line in text.strip().split("\n") if line.strip()]

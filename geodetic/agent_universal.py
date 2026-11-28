@@ -6778,6 +6778,68 @@ async def _process_command(source: str, data: dict, agent: AgentManager, gnss_re
         if is_long_running:
             remove_lock_file()
 
+
+def _mqtt_connect_callback(loop, command_topics, control_ack_topic):
+    def on_connect(client, userdata, flags, rc, properties=None):
+        if rc == 0:
+            _set_transport_state("mqtt", True)
+            logging.info("Connected to MQTT Broker.")
+            for topic in command_topics:
+                result, mid = client.subscribe(topic, qos=1)
+                logging.info(f"MQTT subscribe topic='{topic}' result={result} mid={mid}")
+            result, mid = client.subscribe(control_ack_topic, qos=1)
+            logging.info(f"MQTT control ACK subscription result={result} mid={mid}")
+            asyncio.run_coroutine_threadsafe(send_status(userdata["agent"], client), loop)
+        else:
+            _telemetry_inc("reconnect", "mqtt")
+            _set_transport_state("mqtt", False)
+            logging.error(f"!!! MQTT connection failed, code: {rc}")
+    return on_connect
+
+
+def _mqtt_on_disconnect(client, userdata, *args):
+    rc = args[-2] if len(args) >= 2 else (args[0] if args else 0)
+    _set_transport_state("mqtt", False)
+    if rc != 0:
+        _telemetry_inc("reconnect", "mqtt")
+        logging.warning(f"MQTT disconnected unexpectedly (rc={rc}).")
+
+
+def _mqtt_on_subscribe(client, userdata, mid, granted_qos, properties=None):
+    logging.info(f"MQTT subscribe acknowledged mid={mid} qos={granted_qos}")
+
+
+def _mqtt_command_done(future):
+    try:
+        future.result()
+    except Exception as error:
+        logging.exception(f"Process command failed: {error}", exc_info=True)
+
+
+def _mqtt_message_callback(loop, command_topics, control_ack_topic):
+    def on_message(client, userdata, message):
+        try:
+            data = json.loads(message.payload.decode())
+            if message.topic == control_ack_topic and data.get("type") == "control_plane_ack":
+                userdata["agent"].control_plane_failover.record_ack(
+                    "mqtt",
+                    data,
+                    retained=bool(getattr(message, "retain", False)),
+                )
+                return
+            if message.topic not in command_topics or bool(getattr(message, "retain", False)):
+                return
+            logging.info(f"MQTT command received topic='{message.topic}' bytes={len(message.payload)}")
+            future = asyncio.run_coroutine_threadsafe(
+                process_command('mqtt', data, userdata["agent"], userdata["gnss_reader"], client),
+                loop
+            )
+            future.add_done_callback(_mqtt_command_done)
+        except Exception as error:
+            logging.exception(f"Error processing MQTT message: {error}")
+    return on_message
+
+
 def setup_mqtt_client(loop: asyncio.AbstractEventLoop, agent: AgentManager, gnss_reader: GNSSReader):
     mqtt_cfg = _get_mqtt_runtime_config(agent)
     if hasattr(mqtt, 'CallbackAPIVersion'):
@@ -6792,62 +6854,10 @@ def setup_mqtt_client(loop: asyncio.AbstractEventLoop, agent: AgentManager, gnss
         f"pi/device/{MACHINE_SERIAL}/command",
     ]
     control_ack_topic = f"pi/devices/{MACHINE_SERIAL}/control_ack"
-
-    def on_connect(c, userdata, flags, rc, properties=None):
-        if rc == 0:
-            _set_transport_state("mqtt", True)
-            logging.info("Connected to MQTT Broker.")
-            for topic in command_topics:
-                result, mid = c.subscribe(topic, qos=1)
-                logging.info(f"MQTT subscribe topic='{topic}' result={result} mid={mid}")
-            result, mid = c.subscribe(control_ack_topic, qos=1)
-            logging.info(f"MQTT control ACK subscription result={result} mid={mid}")
-            asyncio.run_coroutine_threadsafe(send_status(userdata["agent"], c), loop)
-        else:
-            _telemetry_inc("reconnect", "mqtt")
-            _set_transport_state("mqtt", False)
-            logging.error(f"!!! MQTT connection failed, code: {rc}")
-
-    def on_disconnect(c, userdata, *args):
-        rc = args[-2] if len(args) >= 2 else (args[0] if args else 0)
-        _set_transport_state("mqtt", False)
-        if rc != 0:
-            _telemetry_inc("reconnect", "mqtt")
-            logging.warning(f"MQTT disconnected unexpectedly (rc={rc}).")
-
-    def on_subscribe(c, userdata, mid, granted_qos, properties=None):
-        logging.info(f"MQTT subscribe acknowledged mid={mid} qos={granted_qos}")
-    
-    def on_message(c, userdata, msg):
-        try:
-            data = json.loads(msg.payload.decode())
-            if msg.topic == control_ack_topic and data.get("type") == "control_plane_ack":
-                userdata["agent"].control_plane_failover.record_ack(
-                    "mqtt",
-                    data,
-                    retained=bool(getattr(msg, "retain", False)),
-                )
-                return
-            if msg.topic not in command_topics or bool(getattr(msg, "retain", False)):
-                return
-            logging.info(f"MQTT command received topic='{msg.topic}' bytes={len(msg.payload)}")
-            future = asyncio.run_coroutine_threadsafe(
-                process_command('mqtt', data, userdata["agent"], userdata["gnss_reader"], c),
-                loop
-            )
-            def on_done(f):
-                try: 
-                    f.result()
-                except Exception as e:
-                    logging.exception(f"Process command failed: {e}", exc_info=True)
-            future.add_done_callback(on_done)
-        except Exception as e:
-            logging.exception(f"Error processing MQTT message: {e}")
-    
-    client.on_connect = on_connect
-    client.on_disconnect = on_disconnect
-    client.on_subscribe = on_subscribe
-    client.on_message = on_message
+    client.on_connect = _mqtt_connect_callback(loop, command_topics, control_ack_topic)
+    client.on_disconnect = _mqtt_on_disconnect
+    client.on_subscribe = _mqtt_on_subscribe
+    client.on_message = _mqtt_message_callback(loop, command_topics, control_ack_topic)
     client.reconnect_delay_set(min_delay=5, max_delay=120)
 
     if mqtt_cfg.get("username") and mqtt_cfg.get("password"):
@@ -6870,17 +6880,17 @@ def setup_mqtt_client(loop: asyncio.AbstractEventLoop, agent: AgentManager, gnss
     client.loop_start()
     return client
 
-async def websocket_task(agent: AgentManager, gnss_reader: GNSSReader, mqtt_client: mqtt.Client):
-    global active_websocket_connection
-    
-    # Read Token from license.key
+async def _websocket_auth_token():
     auth_token = ""
     if os.path.exists(LICENSE_PATH):
         try:
             auth_token = (await asyncio.to_thread(Path(LICENSE_PATH).read_text, encoding="utf-8")).strip()
         except Exception as e:
             logging.exception(f"Error reading license key: {e}")
-            
+    return auth_token
+
+
+def _websocket_urls(auth_token):
     if BACKEND_WS_SCHEME not in {"ws", "wss"}:
         raise ValueError("BACKEND_WS_SCHEME must be ws or wss")
     if BACKEND_WS_SCHEME == "ws" and not ALLOW_INSECURE_AGENT_WS:
@@ -6890,57 +6900,77 @@ async def websocket_task(agent: AgentManager, gnss_reader: GNSSReader, mqtt_clie
         f"/ws/pi/{urllib.parse.quote(MACHINE_SERIAL, safe='')}"
     )
     ws_uri = f"{safe_uri}?token={urllib.parse.quote(auth_token, safe='')}" if auth_token else safe_uri
-    
+    return safe_uri, ws_uri
+
+
+async def _handle_websocket_message(message, agent, gnss_reader, mqtt_client):
+    data = json.loads(message)
+    if data.get("type") == "control_plane_ack":
+        agent.control_plane_failover.record_ack("websocket", data)
+        return
+    await process_command('websocket', data, agent, gnss_reader, mqtt_client)
+
+
+async def _run_secondary_websocket(safe_uri, ws_uri, agent, gnss_reader, mqtt_client):
+    global active_websocket_connection
+    async with websockets.connect(
+        ws_uri,
+        ping_interval=30,
+        ping_timeout=60,
+        close_timeout=10,
+        open_timeout=30
+    ) as websocket:
+        logging.info(f"Secondary channel (WebSocket) connected: {safe_uri}")
+        active_websocket_connection = websocket
+        _set_transport_state("websocket", True)
+        await send_status(agent, mqtt_client)
+        async for message in websocket:
+            await _handle_websocket_message(message, agent, gnss_reader, mqtt_client)
+
+
+def _log_websocket_failure(error, mqtt_client):
+    _telemetry_inc("reconnect", "websocket")
+    if type(error).__name__ == "SSLCertVerificationError":
+        logging.warning(
+            "WebSocket certificate verification failed: host=%s code=%s reason=%s",
+            globals().get('BACKEND_WS_HOST', BACKEND_HOST), getattr(error, 'verify_code', None),
+            str(getattr(error, 'verify_message', 'unknown')).encode('ascii', 'backslashreplace').decode('ascii'),
+        )
+    if mqtt_client and mqtt_client.is_connected():
+        logging.info("Secondary WebSocket failed (%s). Main MQTT OK; retrying in 10s.", type(error).__name__)
+    else:
+        logging.warning("Both MQTT and WebSocket failed (%s); retrying in 10s.", type(error).__name__)
+
+
+async def _reset_websocket_connection():
+    global active_websocket_connection
+    active_websocket_connection = None
+    _set_transport_state("websocket", False)
+    try:
+        await asyncio.sleep(10)
+    except asyncio.CancelledError:
+        raise
+
+
+async def websocket_task(agent: AgentManager, gnss_reader: GNSSReader, mqtt_client: mqtt.Client):
+    auth_token = await _websocket_auth_token()
+    safe_uri, ws_uri = _websocket_urls(auth_token)
     while True:
         try:
-            async with websockets.connect(
-                ws_uri,
-                ping_interval=30,
-                ping_timeout=60,
-                close_timeout=10,
-                open_timeout=30  
-            ) as websocket:
-                logging.info(f"Secondary channel (WebSocket) connected: {safe_uri}")
-                active_websocket_connection = websocket
-                _set_transport_state("websocket", True)
-                
-                await send_status(agent, mqtt_client)
-                
-                async for message in websocket:
-                    data = json.loads(message)
-                    if data.get("type") == "control_plane_ack":
-                        agent.control_plane_failover.record_ack("websocket", data)
-                        continue
-                    await process_command('websocket', data, agent, gnss_reader, mqtt_client)
-
+            await _run_secondary_websocket(safe_uri, ws_uri, agent, gnss_reader, mqtt_client)
         except asyncio.CancelledError:
             logging.info("websocket_task cancelled")
             raise
         except asyncio.TimeoutError:
             _telemetry_inc("reconnect", "websocket")
             logging.warning("WebSocket connection timeout. Retrying in 10s...")
-        except websockets.exceptions.WebSocketException as e:
+        except websockets.exceptions.WebSocketException as error:
             _telemetry_inc("reconnect", "websocket")
-            logging.warning("WebSocket error (%s). Retrying in 10s...", type(e).__name__)
-        except Exception as e:
-            _telemetry_inc("reconnect", "websocket")
-            if type(e).__name__ == "SSLCertVerificationError":
-                logging.warning(
-                    "WebSocket certificate verification failed: host=%s code=%s reason=%s",
-                    globals().get('BACKEND_WS_HOST', BACKEND_HOST), getattr(e, 'verify_code', None),
-                    str(getattr(e, 'verify_message', 'unknown')).encode('ascii', 'backslashreplace').decode('ascii'),
-                )
-            if mqtt_client and mqtt_client.is_connected():
-                logging.info("Secondary WebSocket failed (%s). Main MQTT OK; retrying in 10s.", type(e).__name__)
-            else:
-                logging.warning("Both MQTT and WebSocket failed (%s); retrying in 10s.", type(e).__name__)
+            logging.warning("WebSocket error (%s). Retrying in 10s...", type(error).__name__)
+        except Exception as error:
+            _log_websocket_failure(error, mqtt_client)
         finally:
-            active_websocket_connection = None
-            _set_transport_state("websocket", False)
-            try:
-                await asyncio.sleep(10)
-            except asyncio.CancelledError:
-                raise
+            await _reset_websocket_connection()
 
 async def memory_guard_task():
     """Background task to periodically clean up and monitor RAM usage."""
@@ -7041,6 +7071,34 @@ def _ubx_packet(msg_class, msg_id, payload=b''):
     return b'\xb5\x62' + body + bytes([ck_a, ck_b])
 
 
+def _next_ubx_readback(buffer, msg_class, msg_id):
+    if len(buffer) < 8:
+        return "wait", None
+    start = buffer.find(b'\xb5\x62')
+    if start < 0:
+        del buffer[:-1]
+        return "wait", None
+    del buffer[:start]
+    if len(buffer) < 8:
+        return "wait", None
+    length = int.from_bytes(buffer[4:6], 'little')
+    if length > 8192:
+        del buffer[0]
+        return "next", None
+    packet_length = length + 8
+    if len(buffer) < packet_length:
+        return "wait", None
+    packet = bytes(buffer[:packet_length])
+    del buffer[:packet_length]
+    if packet != _ubx_packet(packet[2], packet[3], packet[6:-2]):
+        return "next", None
+    if packet[2:4] == b'\x05\0' and packet[6:-2] == bytes([msg_class, msg_id]):
+        raise RuntimeError('Receiver rejected UBX readback')
+    if packet[2:4] == bytes([msg_class, msg_id]):
+        return "found", packet[6:-2]
+    return "next", None
+
+
 def _query_ubx_serial(ser, msg_class, msg_id, payload=b'', timeout=4.0):
     previous_timeout = ser.timeout
     ser.timeout = 0.2
@@ -7053,27 +7111,11 @@ def _query_ubx_serial(ser, msg_class, msg_id, payload=b'', timeout=4.0):
         while time.monotonic() < deadline:
             buffer.extend(ser.read(min(ser.in_waiting or 1,4096)))
             while len(buffer) >= 8:
-                start = buffer.find(b'\xb5\x62')
-                if start < 0:
-                    del buffer[:-1]
+                outcome, response = _next_ubx_readback(buffer, msg_class, msg_id)
+                if outcome == "wait":
                     break
-                del buffer[:start]
-                if len(buffer) < 8:
-                    break
-                length = int.from_bytes(buffer[4:6],'little')
-                if length > 8192:
-                    del buffer[0]
-                    continue
-                if len(buffer) < length+8:
-                    break
-                packet = bytes(buffer[:length+8])
-                del buffer[:length+8]
-                if packet != _ubx_packet(packet[2],packet[3],packet[6:-2]):
-                    continue
-                if packet[2:4] == b'\x05\0' and packet[6:-2] == bytes([msg_class,msg_id]):
-                    raise RuntimeError('Receiver rejected UBX readback')
-                if packet[2:4] == bytes([msg_class,msg_id]):
-                    return packet[6:-2]
+                if outcome == "found":
+                    return response
         raise TimeoutError('Receiver configuration readback timeout')
     finally:
         ser.timeout = previous_timeout
