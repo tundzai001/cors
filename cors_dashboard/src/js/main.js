@@ -597,6 +597,191 @@ document.addEventListener('click', (e) => {
     }
 });
 
+function hasDeviceData(value) {
+    return Boolean(value && typeof value === 'object' && Object.keys(value).length > 0);
+}
+
+function hasOwnDeviceField(device, field) {
+    return Object.prototype.hasOwnProperty.call(device || {}, field);
+}
+
+function normalizeDeviceOfflineSince(device, existingDevice) {
+    if (!hasOwnDeviceField(device, 'status') || hasOwnDeviceField(device, 'offline_since')) return;
+    const nextStatus = String(device.status || '').toLowerCase();
+    const previousStatus = String(existingDevice.status || '').toLowerCase();
+    if (nextStatus !== 'offline') {
+        device.offline_since = null;
+        return;
+    }
+    device.offline_since = previousStatus === 'offline'
+        ? (existingDevice.offline_since ?? null)
+        : (Number(device.server_received_at || device.timestamp || 0) || Math.floor(Date.now() / 1000));
+}
+
+function preserveExistingDeviceConfiguration(device, existingDevice) {
+    if (!existingDevice) return;
+    if ((!device.detected_chip_type || device.detected_chip_type === 'UNKNOWN')
+        && existingDevice.detected_chip_type && existingDevice.detected_chip_type !== 'UNKNOWN') {
+        device.detected_chip_type = existingDevice.detected_chip_type;
+    }
+    if (!device.name && existingDevice.name) device.name = existingDevice.name;
+    if ((!hasOwnDeviceField(device, 'base_config') || !hasDeviceData(device.base_config))
+        && hasDeviceData(existingDevice.base_config)) {
+        device.base_config = existingDevice.base_config;
+    }
+
+    const unsyncedAgentConfig = device.status_revision > 0 && device.is_synced === false;
+    const missingServiceConfig = !hasOwnDeviceField(device, 'service_config') || !hasDeviceData(device.service_config);
+    if ((unsyncedAgentConfig || missingServiceConfig) && hasDeviceData(existingDevice.service_config)) {
+        // Keep the backend's desired configuration available for repair.
+        // An out-of-sync agent may report only a truncated deployment.
+        device.service_config = existingDevice.service_config;
+    } else if (hasDeviceData(existingDevice.service_config) && hasDeviceData(device.service_config)) {
+        device.service_config = { ...existingDevice.service_config, ...device.service_config };
+    }
+    if (typeof device.is_provisioned === 'undefined' && typeof existingDevice.is_provisioned !== 'undefined') {
+        device.is_provisioned = existingDevice.is_provisioned;
+    }
+}
+
+function normalizeDeviceResetConfig(device) {
+    if (!['rebooting_for_reset', 'unprovisioned'].includes(device.status)) return;
+    if (!hasOwnDeviceField(device, 'base_config') || !device.base_config || typeof device.base_config !== 'object') {
+        device.base_config = {};
+    }
+    if (!hasOwnDeviceField(device, 'service_config') || !device.service_config || typeof device.service_config !== 'object') {
+        device.service_config = {};
+    }
+}
+
+function getNormalizedNtripServer(key, stats, rawStatus, streamState) {
+    const rawServer = rawStatus[key];
+    const serverStatus = rawServer && typeof rawServer === 'object' ? rawServer : {};
+    const hasStatsBps = hasOwnDeviceField(stats, `${key}_bps`) && stats[`${key}_bps`] != null;
+    const hasStatusBps = hasOwnDeviceField(serverStatus, 'bps') || hasOwnDeviceField(rawStatus, `${key}_bps`);
+    const hasConnection = typeof rawServer === 'boolean' || typeof serverStatus.connected === 'boolean';
+    if (!hasStatsBps && !hasStatusBps && !hasConnection) return null;
+
+    const rawBps = hasStatsBps ? stats[`${key}_bps`] : (serverStatus.bps ?? rawStatus[`${key}_bps`] ?? 0);
+    const parsedBps = Number(rawBps);
+    const bps = Number.isFinite(parsedBps) ? Math.max(0, parsedBps) : 0;
+    const reportedConnected = typeof rawServer === 'boolean' ? rawServer : serverStatus.connected;
+    const connected = reportedConnected === true || bps > 0;
+    const normalizedServer = { ...serverStatus, connected, bps };
+    const liveStream = streamState[key];
+    if (liveStream && typeof liveStream === 'object') {
+        for (const stateKey of ['enabled', 'on_demand', 'active', 'can_push', 'sleep', 'mountpoint']) {
+            if (hasOwnDeviceField(liveStream, stateKey)) normalizedServer[stateKey] = liveStream[stateKey];
+        }
+    }
+    return { normalizedServer, hasBps: hasStatsBps || hasStatusBps, bps, connected };
+}
+
+function normalizeNtripStats(device) {
+    const stats = device.ntrip_stats && typeof device.ntrip_stats === 'object' ? device.ntrip_stats : {};
+    const rawStatus = device.ntrip_status && typeof device.ntrip_status === 'object' ? device.ntrip_status : {};
+    const streamState = device.ntrip_stream_state && typeof device.ntrip_stream_state === 'object' ? device.ntrip_stream_state : {};
+    const normalizedStatus = { ...rawStatus };
+    let hasServerBps = false;
+    let totalBps = 0;
+    let anyServerConnected = false;
+
+    for (const serverNumber of [1, 2]) {
+        const key = `server${serverNumber}`;
+        const normalized = getNormalizedNtripServer(key, stats, rawStatus, streamState);
+        if (!normalized) continue;
+        normalizedStatus[key] = normalized.normalizedServer;
+        hasServerBps ||= normalized.hasBps;
+        totalBps += normalized.bps;
+        anyServerConnected ||= normalized.connected;
+    }
+
+    if (Object.keys(normalizedStatus).length) device.ntrip_status = normalizedStatus;
+    const inputBps = Number(stats.rtcm_input_bps ?? stats.rtcm_in_bps ?? 0);
+    device.rtcm_input_bps = Number.isFinite(inputBps) ? Math.max(0, inputBps) : 0;
+    if (hasServerBps) device.bps = totalBps;
+    if (typeof device.ntrip_connected !== 'boolean' && (hasServerBps || anyServerConnected)) {
+        device.ntrip_connected = anyServerConnected;
+    }
+}
+
+function normalizeDeviceNtripStatus(device, existingDevice) {
+    if (device.status === 'offline') {
+        device.bps = 0;
+        device.ntrip_connected = false;
+        device.ntrip_status = {
+            server1: { connected: false, bps: 0 },
+            server2: { connected: false, bps: 0 },
+        };
+        return;
+    }
+    if (device.ntrip_stats) {
+        normalizeNtripStats(device);
+        return;
+    }
+    if (existingDevice?.ntrip_status && existingDevice.bps > 0) {
+        device.ntrip_stats = existingDevice.ntrip_stats;
+        device.ntrip_status = existingDevice.ntrip_status;
+        device.bps = existingDevice.bps;
+        if (typeof device.ntrip_connected !== 'boolean') device.ntrip_connected = existingDevice.ntrip_connected;
+        return;
+    }
+    if (device.ntrip_status) return;
+    device.ntrip_status = {
+        server1: { connected: false, bps: 0 },
+        server2: { connected: false, bps: 0 },
+    };
+    device.bps = 0;
+    if (typeof device.ntrip_connected !== 'boolean') device.ntrip_connected = false;
+}
+
+function normalizeRealtimeDevice(device, existingDevice) {
+    if (existingDevice) {
+        normalizeDeviceOfflineSince(device, existingDevice);
+        preserveExistingDeviceConfiguration(device, existingDevice);
+    }
+    normalizeDeviceResetConfig(device);
+    normalizeDeviceNtripStatus(device, existingDevice);
+    if (typeof device.is_synced === 'undefined') device.is_synced = true;
+}
+
+function mergeRealtimeDevice(device, existingDevice, deviceMap) {
+    if (!existingDevice) {
+        deviceMap.set(device.serial, { ...device, last_update_local: Date.now() });
+        return { hasChanges: true, hasStatusChanges: false, hasStructuralChanges: true };
+    }
+
+    let hasChanges = false;
+    let hasStatusChanges = false;
+    for (const key in device) {
+        const nextValue = device[key];
+        const previousValue = existingDevice[key];
+        if (nextValue && typeof nextValue === 'object') {
+            if (JSON.stringify(nextValue) === JSON.stringify(previousValue)) continue;
+            hasChanges = true;
+            break;
+        }
+        if (nextValue === previousValue) continue;
+        hasChanges = true;
+        hasStatusChanges = key === 'status' || key === 'name';
+        break;
+    }
+    if (hasChanges) {
+        deviceMap.set(device.serial, { ...existingDevice, ...device, last_update_local: Date.now() });
+    }
+    return { hasChanges, hasStatusChanges, hasStructuralChanges: false };
+}
+
+function publishRealtimeDeviceChanges(deviceMap, changes) {
+    if (!changes.hasChanges) return;
+    globalState.devices = Array.from(deviceMap.values());
+    globalState.stateVersion++; // Trigger cache refresh in getFilteredDevices.
+    if (changes.hasStructuralChanges || changes.hasStatusChanges) lastSearchTerm = null;
+    deviceListNeedsUpdate = true;
+    mapNeedsUpdate = true;
+    scheduleRender(globalState.currentView === 'dashboard' ? 'high' : 'low');
+}
+
 function updateGlobalDevices(newDeviceData, replace = false) {
     const devicesToAddOrUpdate = (Array.isArray(newDeviceData) ? newDeviceData : [newDeviceData])
         .filter(device => device && !/^PI_/i.test(String(device.serial || '').trim()));
@@ -606,215 +791,19 @@ function updateGlobalDevices(newDeviceData, replace = false) {
             removeDeviceFromList(device.serial);
         }
     }
-    const deviceMap = new Map(globalState.devices.map(d => [d.serial, d]));
-    const hasData = (obj) => !!(obj && typeof obj === 'object' && Object.keys(obj).length > 0);
-    const hasOwn = (obj, key) => Object.prototype.hasOwnProperty.call(obj || {}, key);
 
-    let hasChanges = false;
-    let hasStatusChanges = false;
-    let hasStructuralChanges = false;
-
-    devicesToAddOrUpdate.forEach(newDevice => {
-        if (!newDevice || !newDevice.serial) return;
-
-        const existingDevice = deviceMap.get(newDevice.serial);
-
-        // Giữ chip/config đã biết khi bản tin realtime chỉ là partial update (đặc biệt lúc offline).
-        if (existingDevice) {
-            if (hasOwn(newDevice, 'status') && !hasOwn(newDevice, 'offline_since')) {
-                const nextStatus = String(newDevice.status || '').toLowerCase();
-                const previousStatus = String(existingDevice.status || '').toLowerCase();
-                if (nextStatus === 'offline') {
-                    newDevice.offline_since = previousStatus === 'offline'
-                        ? (existingDevice.offline_since ?? null)
-                        : (Number(newDevice.server_received_at || newDevice.timestamp || 0) || Math.floor(Date.now() / 1000));
-                } else {
-                    newDevice.offline_since = null;
-                }
-            }
-
-            // Chip Type
-            if (!newDevice.detected_chip_type || newDevice.detected_chip_type === 'UNKNOWN') {
-                if (existingDevice.detected_chip_type && existingDevice.detected_chip_type !== 'UNKNOWN') {
-                    newDevice.detected_chip_type = existingDevice.detected_chip_type;
-                }
-            }
-
-            // Name
-            if (!newDevice.name && existingDevice.name) {
-                newDevice.name = existingDevice.name;
-            }
-
-            // Configs: Fallback if key is missing OR if value is null/empty
-            if ((!hasOwn(newDevice, 'base_config') || !hasData(newDevice.base_config)) && hasData(existingDevice.base_config)) {
-                newDevice.base_config = existingDevice.base_config;
-            }
-            const unsyncedAgentConfig = newDevice.status_revision > 0 && newDevice.is_synced === false;
-            if ((unsyncedAgentConfig || !hasOwn(newDevice, 'service_config') || !hasData(newDevice.service_config)) && hasData(existingDevice.service_config)) {
-                // Keep the backend's desired configuration available for repair.
-                // An out-of-sync agent may report only a truncated deployment.
-                newDevice.service_config = existingDevice.service_config;
-            } else if (hasData(existingDevice.service_config) && hasData(newDevice.service_config)) {
-                newDevice.service_config = { ...existingDevice.service_config, ...newDevice.service_config };
-            }
-
-            // Provisioned status
-            if (typeof newDevice.is_provisioned === 'undefined' && typeof existingDevice.is_provisioned !== 'undefined') {
-                newDevice.is_provisioned = existingDevice.is_provisioned;
-            }
-        }
-
-        // Reset/provisioning states must clear stale configs on UI.
-        if (newDevice.status === 'rebooting_for_reset' || newDevice.status === 'unprovisioned') {
-            if (!hasOwn(newDevice, 'base_config') || !newDevice.base_config || typeof newDevice.base_config !== 'object') {
-                newDevice.base_config = {};
-            }
-            if (!hasOwn(newDevice, 'service_config') || !newDevice.service_config || typeof newDevice.service_config !== 'object') {
-                newDevice.service_config = {};
-            }
-        }
-
-        // Xử lý offline state
-        if (newDevice.status === 'offline') {
-            newDevice.bps = 0;
-            newDevice.ntrip_connected = false;
-            newDevice.ntrip_status = {
-                server1: { connected: false, bps: 0 },
-                server2: { connected: false, bps: 0 }
-            };
-        }
-        else {
-            if (newDevice.ntrip_stats) {
-                const stats = newDevice.ntrip_stats && typeof newDevice.ntrip_stats === 'object' ? newDevice.ntrip_stats : {};
-                const rawStatus = newDevice.ntrip_status && typeof newDevice.ntrip_status === 'object' ? newDevice.ntrip_status : {};
-                const streamState = newDevice.ntrip_stream_state && typeof newDevice.ntrip_stream_state === 'object' ? newDevice.ntrip_stream_state : {};
-                const hasOwn = (obj, key) => Object.prototype.hasOwnProperty.call(obj || {}, key);
-                const normalizedStatus = { ...rawStatus };
-                let hasServerBps = false;
-                let totalBps = 0;
-                let anyServerConnected = false;
-
-                [1, 2].forEach((sid) => {
-                    const key = `server${sid}`;
-                    const rawServer = rawStatus[key];
-                    const serverStatus = rawServer && typeof rawServer === 'object' ? rawServer : {};
-                    const hasStatsBps = hasOwn(stats, `${key}_bps`) && stats[`${key}_bps`] != null;
-                    const hasStatusBps = hasOwn(serverStatus, 'bps') || hasOwn(rawStatus, `${key}_bps`);
-                    const hasConnection = typeof rawServer === 'boolean' || typeof serverStatus.connected === 'boolean';
-                    const rawBps = hasStatsBps ? stats[`${key}_bps`] : (serverStatus.bps ?? rawStatus[`${key}_bps`] ?? 0);
-                    const parsedBps = Number(rawBps);
-                    const bps = Number.isFinite(parsedBps) ? Math.max(0, parsedBps) : 0;
-
-                    if (hasStatsBps || hasStatusBps || hasConnection) {
-                        hasServerBps = hasServerBps || hasStatsBps || hasStatusBps;
-                        const reportedConnected = typeof rawServer === 'boolean' ? rawServer : serverStatus.connected;
-                        const connected = reportedConnected === true || bps > 0;
-                        const normalizedServer = { ...serverStatus, connected, bps };
-                        const liveStream = streamState[key];
-                        if (liveStream && typeof liveStream === 'object') {
-                            for (const stateKey of ['enabled', 'on_demand', 'active', 'can_push', 'sleep', 'mountpoint']) {
-                                if (hasOwn(liveStream, stateKey)) normalizedServer[stateKey] = liveStream[stateKey];
-                            }
-                        }
-                        normalizedStatus[key] = normalizedServer;
-                        totalBps += bps;
-                        anyServerConnected = anyServerConnected || connected;
-                    }
-                });
-
-                if (Object.keys(normalizedStatus).length) newDevice.ntrip_status = normalizedStatus;
-                const inputBps = Number(stats.rtcm_input_bps ?? stats.rtcm_in_bps ?? 0);
-                newDevice.rtcm_input_bps = Number.isFinite(inputBps) ? Math.max(0, inputBps) : 0;
-                if (hasServerBps) newDevice.bps = totalBps;
-                if (typeof newDevice.ntrip_connected !== 'boolean' && (hasServerBps || anyServerConnected)) {
-                    newDevice.ntrip_connected = anyServerConnected;
-                }
-            }
-            else if (existingDevice && existingDevice.ntrip_status && existingDevice.bps > 0) {
-                newDevice.ntrip_stats = existingDevice.ntrip_stats;
-                newDevice.ntrip_status = existingDevice.ntrip_status;
-                newDevice.bps = existingDevice.bps;
-                if (typeof newDevice.ntrip_connected !== 'boolean') {
-                    newDevice.ntrip_connected = existingDevice.ntrip_connected;
-                }
-            }
-            else if (!newDevice.ntrip_status) {
-                newDevice.ntrip_status = {
-                    server1: { connected: false, bps: 0 },
-                    server2: { connected: false, bps: 0 }
-                };
-                newDevice.bps = 0;
-                if (typeof newDevice.ntrip_connected !== 'boolean') {
-                    newDevice.ntrip_connected = false;
-                }
-            }
-        }
-
-        // ✅ XỬ LÝ is_synced: Mặc định là true nếu backend không gửi
-        if (typeof newDevice.is_synced === 'undefined') {
-            newDevice.is_synced = true;
-        }
-
-        if (existingDevice) {
-            // Check if we actually need to create a new object reference.
-            // BPS changes are frequent, but many other things are static.
-            // For now, let's check if the new device data is actually different.
-            let isDifferent = false;
-
-            // Simple heuristic: if any top-level property of newDevice is different from existingDevice
-            for (let key in newDevice) {
-                if (typeof newDevice[key] === 'object' && newDevice[key] !== null) {
-                    // Quick check for nested objects (ntrip_status, etc)
-                    if (JSON.stringify(newDevice[key]) !== JSON.stringify(existingDevice[key])) {
-                        isDifferent = true;
-                        break;
-                    }
-                } else if (newDevice[key] !== existingDevice[key]) {
-                    isDifferent = true;
-                    if (key === 'status' || key === 'name') hasStatusChanges = true;
-                    break;
-                }
-            }
-
-            if (isDifferent) {
-                const mergedDevice = {
-                    ...existingDevice,
-                    ...newDevice,
-                    last_update_local: Date.now()
-                };
-                deviceMap.set(newDevice.serial, mergedDevice);
-                hasChanges = true;
-            }
-        } else {
-            // New device found
-            deviceMap.set(newDevice.serial, {
-                ...newDevice,
-                last_update_local: Date.now()
-            });
-            hasChanges = true;
-            hasStructuralChanges = true;
-        }
-    });
-
-    if (hasChanges) {
-        globalState.devices = Array.from(deviceMap.values());
-        globalState.stateVersion++; // Trigger cache refresh in getFilteredDevices
-
-        if (hasStructuralChanges || hasStatusChanges) {
-            //console.log(`[STATE] Structural/Status change version: ${globalState.stateVersion}`);
-            lastSearchTerm = null; // Forces re-sort
-        }
-
-        // Trigger updates
-        deviceListNeedsUpdate = true;
-        mapNeedsUpdate = true;
-
-        if (globalState.currentView === 'dashboard') {
-            scheduleRender('high');
-        } else {
-            scheduleRender('low');
-        }
+    const deviceMap = new Map(globalState.devices.map(device => [device.serial, device]));
+    const changes = { hasChanges: false, hasStatusChanges: false, hasStructuralChanges: false };
+    for (const device of devicesToAddOrUpdate) {
+        if (!device?.serial) continue;
+        const existingDevice = deviceMap.get(device.serial);
+        normalizeRealtimeDevice(device, existingDevice);
+        const result = mergeRealtimeDevice(device, existingDevice, deviceMap);
+        changes.hasChanges ||= result.hasChanges;
+        changes.hasStatusChanges ||= result.hasStatusChanges;
+        changes.hasStructuralChanges ||= result.hasStructuralChanges;
     }
+    publishRealtimeDeviceChanges(deviceMap, changes);
 }
 
 function handleSelectDevice(serial) {
@@ -1291,212 +1280,178 @@ window.addEventListener('cors:session-expired', () => {
 
 let lastSatelliteGcTs = 0;
 
-function handleWebSocketMessage(message) {
-    const { type, data, serial, count } = message;
+function pruneStaleSatelliteEntries(now) {
+    if (now - lastSatelliteGcTs <= 10000) return;
+    lastSatelliteGcTs = now;
+    const satellites = currentNmeaData.satellites;
+    if (!satellites) return;
 
-    const now = Date.now();
-    if (now - lastSatelliteGcTs > 10000) {
-        lastSatelliteGcTs = now;
-        if (currentNmeaData.satellites) {
-            let changed = false;
-            Object.keys(currentNmeaData.satellites).forEach(key => {
-                if (now - currentNmeaData.satellites[key].lastSeen > 30000) {
-                    delete currentNmeaData.satellites[key];
-                    changed = true;
-                }
-            });
-            if (changed && detailsPanelNeedsUpdate === false) {
-                requestDetailsPanelUpdate('low');
-            }
-        }
-    }
+    let changed = false;
+    Object.keys(satellites).forEach(key => {
+        if (now - satellites[key].lastSeen <= 30000) return;
+        delete satellites[key];
+        changed = true;
+    });
+    if (changed && detailsPanelNeedsUpdate === false) requestDetailsPanelUpdate('low');
+}
 
-    if (type === 'status_update') {
-        const incomingSerial = serial || data?.serial;
-        const knownDevice = globalState.devices.find(d =>
-            String(d.serial || '').trim().toUpperCase() === String(incomingSerial || '').trim().toUpperCase()
-        );
-        const statusSerial = knownDevice?.serial || incomingSerial;
-        if (data && statusSerial) data.serial = statusSerial;
-        // The backend scopes station updates by the user's visible serials.
-        const userRole = String(globalState.currentUser?.role || '').toLowerCase();
-        if (userRole === 'coordinator') {
-            if (!knownDevice) return;
-        } else if (userRole === 'viewer') {
-            // The backend already enforces the viewer's allowed serial scope.
-            // Keep this client-side guard for defense in depth, but ignore owner user_id.
-            if (!knownDevice) return;
-        }
-
-        if (data && data.timestamp) {
-            const agentTimestamp = Number(data.agent_timestamp);
-            const serverReceivedAt = Number(data.server_received_at);
-            data.measured_latency = Number.isFinite(agentTimestamp) && agentTimestamp > 0 &&
-                Number.isFinite(serverReceivedAt) && serverReceivedAt > 0
-                ? Math.max(0, serverReceivedAt - agentTimestamp)
-                : Math.max(0, (Date.now() / 1000) - Number(data.timestamp));
-        }
-        enqueueStatusUpdate(data);
-
-        const statusValue = String(data?.status || '').toLowerCase();
-        if (statusSerial === globalState.selectedDeviceSerial && ['offline', 'awaiting_license'].includes(statusValue)) {
-            const savedBaseCoords = currentNmeaData.base_coords;
-            currentNmeaData = { gga: null, gsa: null, satellites: {} };
-            if (savedBaseCoords) currentNmeaData.base_coords = savedBaseCoords;
-            requestDetailsPanelUpdate('high');
-        }
-
-        if (statusSerial === globalState.selectedDeviceSerial && data.base_coords) {
-            currentNmeaData.base_coords = data.base_coords;
-            requestDetailsPanelUpdate('high');
-        }
-        if (statusSerial === globalState.selectedDeviceSerial && data.nmea_data && !['offline', 'awaiting_license'].includes(statusValue)) {
-            const nmea = data.nmea_data || {};
-            if (nmea.gga) currentNmeaData.gga = nmea.gga;
-            if (nmea.gsa) currentNmeaData.gsa = nmea.gsa;
-            if (nmea.base_coords) currentNmeaData.base_coords = nmea.base_coords;
-            const statusSatellites = nmea.satellites || {};
-            Object.values(statusSatellites).forEach(sat => {
-                const satKey = sat.id || `${sat.talker || sat.system || 'GN'}:${sat.prn}`;
-                const existingSat = currentNmeaData.satellites[satKey];
-                const newSnr = Number(sat.snr) || 0;
-                const oldSnr = existingSat ? (Number(existingSat.snr) || 0) : 0;
-                
-                currentNmeaData.satellites[satKey] = {
-                    ...existingSat,
-                    ...sat,
-                    telemetry_source: sat.telemetry_source || (/^RTCM(?::|$)/i.test(String(sat.id || sat.talker || '')) ? 'rtcm' : 'nmea'),
-                    lastSeen: Date.now()
-                };
-            });
-            requestDetailsPanelUpdate('high');
-        }
-    }
-
-    if (type === 'user_assignment_updated') {
-        if (data.user_id === globalState.currentUser?.id) {
-            // Reopen the WebSocket with the newly committed station permissions.
-            window.location.reload();
-        }
-    }
-
-    if (type === 'device_deleted') {
-        const existed = globalState.devices.some(device => device.serial === serial);
-        removeDeviceFromList(serial);
-        if (existed) {
-            showSuccess('Một trạm đã được xóa khỏi danh sách.');
-        }
-    }
-
-    if (type === 'visitor_update') {
-        const visitorEl = document.getElementById('live-visitors-count');
-        if (visitorEl) {
-            if (lastVisitorCount === count) return;
-            lastVisitorCount = count;
-            visitorEl.textContent = count;
-            visitorEl.style.color = '#ffffff';
-            visitorEl.style.textShadow = '0 0 15px #ffffff';
-            if (visitorPulseTimerId) {
-                clearTimeout(visitorPulseTimerId);
-            }
-            visitorPulseTimerId = setTimeout(() => {
-                visitorEl.style.color = '#ff00ff';
-                visitorEl.style.textShadow = 'none';
-                visitorPulseTimerId = null;
-            }, 300);
-        }
+function storeSatelliteTelemetry(satellite, key, source, preservePosition = false) {
+    const existing = currentNmeaData.satellites[key];
+    const next = { ...existing, ...satellite, telemetry_source: source, lastSeen: Date.now() };
+    if (!preservePosition || !existing) {
+        currentNmeaData.satellites[key] = next;
         return;
     }
 
-    if (type === 'nmea_update' && serial === globalState.selectedDeviceSerial) {
-        const nmeaType = data.type;
+    const newAzimuth = Number(satellite.azimuth) || 0;
+    const newElevation = Number(satellite.elevation) || 0;
+    const hasNewPosition = newAzimuth !== 0 || newElevation !== 0;
+    const hasOldPosition = existing && (Number(existing.azimuth) !== 0 || Number(existing.elevation) !== 0);
+    if (!hasNewPosition && hasOldPosition) {
+        next.azimuth = existing.azimuth;
+        next.elevation = existing.elevation;
+    }
+    currentNmeaData.satellites[key] = next;
+}
 
-        if (nmeaType === 'GSA') {
-            currentNmeaData.gsa = {...data, received_at: Date.now() / 1000};
-            if (data.active_sats && currentNmeaData.satellites) {
-                Object.values(currentNmeaData.satellites).forEach(sat => {
-                    sat.isTracking = data.active_sats.includes(sat.prn);
-                });
-            }
-            requestDetailsPanelUpdate('high');
-        }
-        else if (nmeaType === 'GSV' && data.satellites) {
-            data.satellites.forEach(sat => {
-                const satKey = sat.id || `${sat.talker || sat.system || 'GN'}:${sat.prn}`;
-                const existingSat = currentNmeaData.satellites[satKey];
-                const newSnr = Number(sat.snr) || 0;
-                const oldSnr = existingSat ? (Number(existingSat.snr) || 0) : 0;
-                
-                currentNmeaData.satellites[satKey] = {
-                    ...existingSat,
-                    ...sat,
-                    telemetry_source: 'nmea',
-                    lastSeen: Date.now()
-                };
-            });
-            requestDetailsPanelUpdate('high');
-        }
-        else if (nmeaType === 'GGA') {
-            currentNmeaData.gga = {...data, received_at: Date.now() / 1000};
-            requestDetailsPanelUpdate('high');
-        }
-        else if (nmeaType === 'GST') {
-            currentNmeaData.gst = {...data, received_at: Date.now() / 1000};
-            requestDetailsPanelUpdate('high');
-        }
+function mergeStatusSatelliteData(satellites) {
+    Object.values(satellites || {}).forEach(satellite => {
+        const key = satellite.id || `${satellite.talker || satellite.system || 'GN'}:${satellite.prn}`;
+        const source = satellite.telemetry_source
+            || (/^RTCM(?::|$)/i.test(String(satellite.id || satellite.talker || '')) ? 'rtcm' : 'nmea');
+        storeSatelliteTelemetry(satellite, key, source);
+    });
+}
+
+function updateSelectedStationStatus(statusSerial, data) {
+    const isSelected = statusSerial === globalState.selectedDeviceSerial;
+    const status = String(data?.status || '').toLowerCase();
+    const stationIsUnavailable = ['offline', 'awaiting_license'].includes(status);
+    if (isSelected && stationIsUnavailable) {
+        const savedBaseCoords = currentNmeaData.base_coords;
+        currentNmeaData = { gga: null, gsa: null, satellites: {} };
+        if (savedBaseCoords) currentNmeaData.base_coords = savedBaseCoords;
+        requestDetailsPanelUpdate('high');
+    }
+    if (isSelected && data.base_coords) {
+        currentNmeaData.base_coords = data.base_coords;
+        requestDetailsPanelUpdate('high');
+    }
+    if (!isSelected || !data.nmea_data || stationIsUnavailable) return;
+
+    const nmea = data.nmea_data;
+    if (nmea.gga) currentNmeaData.gga = nmea.gga;
+    if (nmea.gsa) currentNmeaData.gsa = nmea.gsa;
+    if (nmea.base_coords) currentNmeaData.base_coords = nmea.base_coords;
+    mergeStatusSatelliteData(nmea.satellites);
+    requestDetailsPanelUpdate('high');
+}
+
+function handleStatusUpdateMessage(serial, data) {
+    const incomingSerial = serial || data?.serial;
+    const normalizedSerial = String(incomingSerial || '').trim().toUpperCase();
+    const knownDevice = globalState.devices.find(device =>
+        String(device.serial || '').trim().toUpperCase() === normalizedSerial
+    );
+    const statusSerial = knownDevice?.serial || incomingSerial;
+    if (data && statusSerial) data.serial = statusSerial;
+
+    // The backend scopes station updates by the user's visible serials.
+    const userRole = String(globalState.currentUser?.role || '').toLowerCase();
+    if (['coordinator', 'viewer'].includes(userRole) && !knownDevice) return;
+    if (data?.timestamp) {
+        const agentTimestamp = Number(data.agent_timestamp);
+        const serverReceivedAt = Number(data.server_received_at);
+        data.measured_latency = Number.isFinite(agentTimestamp) && agentTimestamp > 0
+            && Number.isFinite(serverReceivedAt) && serverReceivedAt > 0
+            ? Math.max(0, serverReceivedAt - agentTimestamp)
+            : Math.max(0, (Date.now() / 1000) - Number(data.timestamp));
+    }
+    enqueueStatusUpdate(data);
+    updateSelectedStationStatus(statusSerial, data);
+}
+
+function handleVisitorUpdate(count) {
+    const visitorEl = document.getElementById('live-visitors-count');
+    if (!visitorEl || lastVisitorCount === count) return;
+    lastVisitorCount = count;
+    visitorEl.textContent = count;
+    visitorEl.style.color = '#ffffff';
+    visitorEl.style.textShadow = '0 0 15px #ffffff';
+    if (visitorPulseTimerId) clearTimeout(visitorPulseTimerId);
+    visitorPulseTimerId = setTimeout(() => {
+        visitorEl.style.color = '#ff00ff';
+        visitorEl.style.textShadow = 'none';
+        visitorPulseTimerId = null;
+    }, 300);
+}
+
+function updateTrackedSatellites(activeSats) {
+    if (!activeSats || !currentNmeaData.satellites) return;
+    Object.values(currentNmeaData.satellites).forEach(satellite => {
+        satellite.isTracking = activeSats.includes(satellite.prn);
+    });
+}
+
+function handleNmeaUpdateMessage(data) {
+    if (data.type === 'GSA') {
+        currentNmeaData.gsa = { ...data, received_at: Date.now() / 1000 };
+        updateTrackedSatellites(data.active_sats);
+    } else if (data.type === 'GSV' && data.satellites) {
+        data.satellites.forEach(satellite => {
+            const key = satellite.id || `${satellite.talker || satellite.system || 'GN'}:${satellite.prn}`;
+            storeSatelliteTelemetry(satellite, key, 'nmea');
+        });
+    } else if (data.type === 'GGA') {
+        currentNmeaData.gga = { ...data, received_at: Date.now() / 1000 };
+    } else if (data.type === 'GST') {
+        currentNmeaData.gst = { ...data, received_at: Date.now() / 1000 };
+    } else {
+        return;
+    }
+    requestDetailsPanelUpdate('high');
+}
+
+function handleRtcmSignalUpdate(serial, incomingData) {
+    const data = incomingData || {};
+    const satellites = Array.isArray(data.satellites) ? data.satellites : [];
+    const device = globalState.devices.find(item => item.serial === serial);
+    if (device && data.packets && !Array.isArray(data.packets)) device.rtcm_stats = data.packets;
+    if (data.base_coords) currentNmeaData.base_coords = data.base_coords;
+    currentNmeaData.rtcm = {
+        packets: data.packets || {}, errors: data.errors || 0,
+        bufferedBytes: data.bufferedBytes || 0, lastSeen: Date.now(),
+    };
+    requestDetailsPanelUpdate('high');
+    satellites.forEach(satellite => {
+        const key = satellite.id || `RTCM:${satellite.system || 'un'}:${satellite.prn}`;
+        storeSatelliteTelemetry(satellite, key, 'rtcm', true);
+    });
+}
+
+function handleWebSocketMessage(message) {
+    const { type, data, serial, count } = message;
+    pruneStaleSatelliteEntries(Date.now());
+
+    if (type === 'status_update') return handleStatusUpdateMessage(serial, data);
+    if (type === 'user_assignment_updated') {
+        if (data.user_id === globalState.currentUser?.id) window.location.reload();
+        return;
+    }
+    if (type === 'device_deleted') {
+        const existed = globalState.devices.some(device => device.serial === serial);
+        removeDeviceFromList(serial);
+        if (existed) showSuccess('Một trạm đã được xóa khỏi danh sách.');
+        return;
+    }
+    if (type === 'visitor_update') return handleVisitorUpdate(count);
+    if (type === 'nmea_update' && serial === globalState.selectedDeviceSerial) {
+        return handleNmeaUpdateMessage(data);
     }
     if (type === 'rtcm_signal_update' && serial === globalState.selectedDeviceSerial) {
-        const data = message.data || {};
-        const satellites = Array.isArray(data?.satellites) ? data.satellites : [];
-        
-        const device = globalState.devices.find(item => item.serial === serial);
-        if (device && data.packets && !Array.isArray(data.packets)) device.rtcm_stats = data.packets;
-        if (data.base_coords) currentNmeaData.base_coords = data.base_coords;
-        currentNmeaData.rtcm = {
-            packets: data.packets || {},
-            errors: data.errors || 0,
-            bufferedBytes: data.bufferedBytes || 0,
-            lastSeen: Date.now()
-        };
-        requestDetailsPanelUpdate('high');
-
-        // Keep Agent → Server latency from status_update; RTCM timestamps use the agent's clock.
-        
-        if (satellites.length) {
-            satellites.forEach(sat => {
-                const satKey = sat.id || `RTCM:${sat.system || 'un'}:${sat.prn}`;
-                const existingSat = currentNmeaData.satellites[satKey];
-                const newSnr = Number(sat.snr) || 0;
-                const oldSnr = existingSat ? (Number(existingSat.snr) || 0) : 0;
-                const newAz = Number(sat.azimuth) || 0;
-                const newEl = Number(sat.elevation) || 0;
-                const hasNewPosition = (newAz !== 0 || newEl !== 0);
-                const hasOldPosition = existingSat && (Number(existingSat.azimuth) !== 0 || Number(existingSat.elevation) !== 0);
-
-                if (existingSat && !hasNewPosition && hasOldPosition) {
-                    // Az/El mới = 0 nhưng cũ đã có vị trí → giữ az/el cũ để vệ tinh không nhảy về trung tâm
-                    currentNmeaData.satellites[satKey] = {
-                        ...existingSat,
-                        ...sat,
-                        telemetry_source: 'rtcm',
-                        azimuth: existingSat.azimuth,
-                        elevation: existingSat.elevation,
-                        lastSeen: Date.now()
-                    };
-                } else {
-                    currentNmeaData.satellites[satKey] = {
-                        ...existingSat,
-                        ...sat,
-                        telemetry_source: 'rtcm',
-                        lastSeen: Date.now()
-                    };
-                }
-            });
-        }
+        return handleRtcmSignalUpdate(serial, data);
     }
-    if (type === 'activity_log_event') {
-        window.logActivity(data.type, data.message, data.icon);
-    }
+    if (type === 'activity_log_event') window.logActivity(data.type, data.message, data.icon);
 }
 
 // ===============================================================================
