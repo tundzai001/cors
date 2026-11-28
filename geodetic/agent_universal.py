@@ -4182,281 +4182,267 @@ class GNSSReader(threading.Thread):
             )
         )
     
+    def _parse_rtcm3_buffer(self, buffer):
+        self.rtcm_preamble_seen += 1
+        if len(buffer) < 3:
+            self.rtcm_incomplete_waits += 1
+            return None
+        payload_length = ((buffer[1] & 0x03) << 8) | buffer[2]
+        packet_length = payload_length + 6
+        if packet_length > 2048:
+            self.log("WARNING", f"Invalid RTCM3 length: {packet_length}, discarding byte")
+            buffer.pop(0)
+            self.parse_errors += 1
+            self.rtcm_invalid_length += 1
+            return buffer
+        if len(buffer) < packet_length:
+            self.rtcm_incomplete_waits += 1
+            return None
+        packet = bytes(buffer[:packet_length])
+        if not is_valid_rtcm3_packet(packet):
+            # Drop one byte so a false preamble cannot hide a valid packet behind it.
+            self.parse_errors += 1
+            self.rtcm_invalid_crc += 1
+            buffer.pop(0)
+            return buffer
+        dispatch_rtcm_data(packet)
+        self.rtcm_packets_sent += 1
+        self.rtcm_valid_packets += 1
+        self.bytes_read += len(packet)
+        self.last_data_time = time.time()
+        return buffer[packet_length:]
+
+    def _handle_ubx_security_packet(self, packet, ubx_id):
+        try:
+            key = 'LAST_UBX_SECURITY' if ubx_id == 9 else 'LAST_UBX_SECURITY_LOG'
+            globals()[key] = _ubx_security_payload(packet[6:-2], ubx_id)
+            globals()[key + '_TS'] = time.time()
+        except ValueError:
+            self.parse_errors += 1
+
+    def _handle_ubx_high_precision_position(self, packet, payload_length):
+        if payload_length != 36 or packet[9] & 1:
+            return
+        try:
+            payload = packet[6:6 + payload_length]
+            lon = struct.unpack_from('<i', payload, 8)[0] * 1e-7
+            lat = struct.unpack_from('<i', payload, 12)[0] * 1e-7
+            h_mm = struct.unpack_from('<i', payload, 16)[0]
+            lon_hp = struct.unpack_from('<b', payload, 24)[0] * 1e-9
+            lat_hp = struct.unpack_from('<b', payload, 25)[0] * 1e-9
+            h_hp_m = struct.unpack_from('<b', payload, 26)[0] * 1e-4
+            lat_hpp = float(lat + lat_hp)
+            lon_hpp = float(lon + lon_hp)
+            h_ell = float(h_mm * 1e-3 + h_hp_m)
+            if -90.0 <= lat_hpp <= 90.0 and -180.0 <= lon_hpp <= 180.0:
+                globals()['LAST_HPPOSLLH_COORD'] = (lat_hpp, lon_hpp, h_ell)
+                globals()['LAST_HPPOSLLH_TS'] = time.time()
+        except Exception:
+            pass
+
+    def _handle_ubx_rf_packet(self, packet, ubx_id):
+        try:
+            key = 'LAST_UBX_RF' if ubx_id == 0x38 else 'LAST_UBX_SPECTRUM'
+            globals()[key] = _ubx_rf_payload(packet[6:-2], ubx_id)
+            globals()[key + '_TS'] = time.time()
+        except ValueError:
+            self.parse_errors += 1
+
+    def _handle_ubx_satellite_packet(self, packet):
+        try:
+            globals()['LAST_UBX_SATELLITES'] = _ubx_satellite_payload(packet[6:-2])
+            globals()['LAST_UBX_SATELLITES_TS'] = time.time()
+        except ValueError:
+            self.parse_errors += 1
+
+    def _handle_ubx_navigation_quality(self, packet, payload_length):
+        if payload_length != 92:
+            return
+        try:
+            payload = packet[6:6 + payload_length]
+            globals()['LAST_RECEIVER_QUALITY'] = _ubx_navigation_quality(payload)
+            globals()['LAST_RECEIVER_QUALITY_TS'] = time.time()
+            num_sv = int(payload[23])
+            if 0 <= num_sv <= 99:
+                globals()['LAST_UBX_NUMSV'] = num_sv
+                globals()['LAST_UBX_NUMSV_TS'] = time.time()
+        except Exception:
+            pass
+
+    def _process_ubx_packet(self, packet, payload_length):
+        ubx_class, ubx_id = packet[2], packet[3]
+        self._deliver_base_reply((ubx_class, ubx_id), packet)
+        if ubx_class == 0x27 and ubx_id in (9, 0x10):
+            self._handle_ubx_security_packet(packet, ubx_id)
+        if ubx_class == 0x01 and ubx_id == 0x14:
+            self._handle_ubx_high_precision_position(packet, payload_length)
+        if ubx_class == 0x0a and ubx_id in (0x38, 0x31):
+            self._handle_ubx_rf_packet(packet, ubx_id)
+        if ubx_class == 1 and ubx_id == 0x35:
+            self._handle_ubx_satellite_packet(packet)
+        if ubx_class == 1 and ubx_id == 4 and payload_length == 18:
+            globals()['LAST_UBX_DOP'] = _ubx_dop(packet[6:-2])
+            globals()['LAST_UBX_DOP_TS'] = time.time()
+        if ubx_class == 0x01 and ubx_id == 0x07:
+            self._handle_ubx_navigation_quality(packet, payload_length)
+        if ubx_class == 0x05:
+            self.log("DEBUG", f"UBX ACK/NAK: id=0x{ubx_id:02X}")
+
+    def _parse_ubx_buffer(self, buffer):
+        if len(buffer) < 8:
+            return None
+        if len(buffer) < 6:
+            return None
+        payload_length = buffer[4] | (buffer[5] << 8)
+        packet_length = 6 + payload_length + 2
+        if packet_length > 4096:
+            self.log("WARNING", f"Invalid UBX length: {packet_length}, discarding byte")
+            buffer.pop(0)
+            self.parse_errors += 1
+            return buffer
+        if len(buffer) < packet_length:
+            return None
+        packet = bytes(buffer[:packet_length])
+        checksum_a = checksum_b = 0
+        for value in packet[2:-2]:
+            checksum_a = (checksum_a + value) & 255
+            checksum_b = (checksum_b + checksum_a) & 255
+        if packet[-2:] != bytes((checksum_a, checksum_b)):
+            self.parse_errors += 1
+            return buffer[packet_length:]
+        self._process_ubx_packet(packet, payload_length)
+        self.bytes_read += len(packet)
+        self.last_data_time = time.time()
+        return buffer[packet_length:]
+
+    def _parse_unicore_log_list(self, buffer):
+        request = getattr(self, '_base_query', None)
+        if request and request['key'] == UNICORE_LOG_LIST_KEY and not request['cancelled']:
+            request['response_preview'] = bytes(buffer[:512])
+        trailer = re.search(rb'\*[0-9a-fA-F]{8}\r?\n|\r?\n\r?\n', buffer)
+        if trailer is None:
+            if len(buffer) <= 4096:
+                return None
+            buffer.pop(0)
+            self.parse_errors += 1
+            return buffer
+        packet = bytes(buffer[:trailer.end()])
+        self._deliver_base_reply(UNICORE_LOG_LIST_KEY, packet)
+        return buffer[trailer.end():]
+
+    def _parse_unicore_line(self, buffer):
+        line_end = buffer.find(b'\n')
+        if line_end < 0:
+            if len(buffer) <= 2048:
+                return None
+            buffer.pop(0)
+            self.parse_errors += 1
+            return buffer
+        packet = bytes(buffer[:line_end + 1]).strip()
+        key = packet.split(b',', 1)[0]
+        self._deliver_base_reply(key, packet)
+        return buffer[line_end + 1:]
+
+    def _parse_unicore_buffer(self, buffer):
+        if buffer.startswith(UNICORE_LOG_LIST_KEY + b','):
+            return self._parse_unicore_log_list(buffer)
+        return self._parse_unicore_line(buffer)
+
+    @staticmethod
+    def _is_important_nmea(sentence):
+        important_types = ('GGA', 'GSA', 'GSV', 'GST')
+        sentence_text = sentence.decode('ascii', errors='ignore')
+        return any(nmea_type in sentence_text[:10] for nmea_type in important_types)
+
+    def _parse_incomplete_nmea(self, buffer):
+        if len(buffer) >= 6:
+            try:
+                sentence_start = buffer[:6].decode('ascii', errors='ignore')
+                valid_prefixes = ('$GP', '$GN', '$GL', '$GA', '$GB', '$GQ', '$PU', '$BD', '$P')
+                is_valid_nmea = any(sentence_start.startswith(prefix) for prefix in valid_prefixes)
+                if is_valid_nmea:
+                    if len(buffer) > 512:
+                        next_dollar = buffer.find(b'$', 1)
+                        buffer = buffer[next_dollar:] if next_dollar > 0 else buffer[1:]
+                        self.parse_errors += 1
+                        return buffer
+                    self.nmea_incomplete_waits += 1
+                    return None
+                buffer.pop(0)
+                return buffer
+            except Exception:
+                buffer.pop(0)
+                self.parse_errors += 1
+                return buffer
+        if len(buffer) > 512:
+            buffer.pop(0)
+            return buffer
+        self.nmea_incomplete_waits += 1
+        return None
+
+    def _parse_nmea_sentence(self, buffer, sentence_end):
+        sentence = buffer[:sentence_end]
+        self.nmea_sentence_seen += 1
+        try:
+            if not self._is_important_nmea(sentence):
+                self.nmea_unimportant_skipped += 1
+                return buffer[sentence_end:]
+            if not (10 <= len(sentence) <= 200 and is_valid_nmea_checksum(sentence)):
+                buffer.pop(0)
+                self.parse_errors += 1
+                self.nmea_invalid_checksum += 1
+                return buffer
+            packet = bytes(sentence)
+            dispatch_nmea_data(packet)
+            self.nmea_packets_sent += 1
+            self.nmea_valid_packets += 1
+            self.bytes_read += len(packet)
+            self.last_data_time = time.time()
+            return buffer[sentence_end:]
+        except Exception as error:
+            self.log("DEBUG", f"NMEA filter error: {error}")
+            buffer.pop(0)
+            self.parse_errors += 1
+            return buffer
+
+    def _parse_nmea_buffer(self, buffer):
+        line_end = buffer.find(b'\n')
+        if line_end >= 0:
+            sentence_end = line_end + 1
+        else:
+            line_end = buffer.find(b'\r')
+            sentence_end = line_end + 1 if line_end >= 0 else -1
+        if sentence_end == -1:
+            return self._parse_incomplete_nmea(buffer)
+        return self._parse_nmea_sentence(buffer, sentence_end)
+
+    def _get_buffer_parser(self, buffer):
+        if len(buffer) > 1 and buffer[:2] == b'\xB5\x62':
+            return self._parse_ubx_buffer
+        first_byte = buffer[0]
+        if first_byte == 0xD3:
+            return self._parse_rtcm3_buffer
+        if first_byte == ord('#'):
+            return self._parse_unicore_buffer
+        if first_byte == ord('$'):
+            return self._parse_nmea_buffer
+        return None
+
     def _parse_buffer(self, buffer: bytearray) -> bytearray:
-        while len(buffer) > 0:
-            processed = False
+        while buffer:
             if len(buffer) == 1 and buffer[0] == 0xB5:
-                break  # UBX sync can straddle serial reads.
-            
-            # ==================== RTCM3 DETECTION ====================
-            if buffer[0] == 0xD3:
-                self.rtcm_preamble_seen += 1
-                if len(buffer) < 3:
-                    self.rtcm_incomplete_waits += 1
-                    break
-                
-                # RTCM3 format: 0xD3 | 6-bit reserved + 10-bit length | payload | CRC24
-                length = ((buffer[1] & 0x03) << 8) | buffer[2]
-                packet_len = length + 6  # header(3) + payload + CRC(3)
-                
-                # Sanity check
-                if packet_len > 2048:
-                    self.log("WARNING", f"Invalid RTCM3 length: {packet_len}, discarding byte")
-                    buffer.pop(0)
-                    self.parse_errors += 1
-                    self.rtcm_invalid_length += 1
-                    continue
-                
-                if len(buffer) < packet_len:
-                    self.rtcm_incomplete_waits += 1
-                    break  # Wait for more data
-                
-                # Extract and validate RTCM3 packet before dispatch
-                packet = bytes(buffer[:packet_len])
-                if is_valid_rtcm3_packet(packet):
-                    dispatch_rtcm_data(packet)
-                    self.rtcm_packets_sent += 1
-                    self.rtcm_valid_packets += 1
-                    self.bytes_read += len(packet)
-                    self.last_data_time = time.time()
-                    buffer = buffer[packet_len:]
-                    processed = True
-                    continue
-                else:
-                    # CRC failed: drop one byte to resync safely instead of skipping packet_len bytes.
-                    # This prevents discarding valid data when a false 0xD3 preamble is encountered.
-                    self.parse_errors += 1
-                    self.rtcm_invalid_crc += 1
-                    buffer.pop(0)
-                    continue
-            
-            # ==================== UBX PROTOCOL (U-BLOX) ====================
-            elif buffer[0] == 0xB5 and len(buffer) > 1 and buffer[1] == 0x62:
-                # UBX format: 0xB5 0x62 <class> <id> <length_low> <length_high> <payload> <CK_A> <CK_B>
-                if len(buffer) < 8:  # Minimum UBX packet size
-                    break
-                
-                if len(buffer) < 6:
-                    break
-                
-                # Extract payload length (little-endian)
-                payload_length = buffer[4] | (buffer[5] << 8)
-                packet_len = 6 + payload_length + 2  # header(6) + payload + checksum(2)
-                
-                # Sanity check
-                if packet_len > 4096:
-                    self.log("WARNING", f"Invalid UBX length: {packet_len}, discarding byte")
-                    buffer.pop(0)
-                    self.parse_errors += 1
-                    continue
-                
-                if len(buffer) < packet_len:
-                    break  # Wait for more data
-                
-                # Extract UBX packet (we don't dispatch it, just discard or log)
-                packet = bytes(buffer[:packet_len])
-                
-                a = b = 0
-                for value in packet[2:-2]:
-                    a = (a + value) & 255
-                    b = (b + a) & 255
-                if packet[-2:] != bytes((a, b)):
-                    buffer = buffer[packet_len:]
-                    self.parse_errors += 1
-                    continue
-                self._deliver_base_reply((packet[2], packet[3]), packet)
-                ubx_class = buffer[2]
-                ubx_id = buffer[3]
-
-                if ubx_class == 0x27 and ubx_id in (9, 0x10):
-                    try:
-                        key = 'LAST_UBX_SECURITY' if ubx_id == 9 else 'LAST_UBX_SECURITY_LOG'
-                        globals()[key] = _ubx_security_payload(packet[6:-2], ubx_id)
-                        globals()[key + '_TS'] = time.time()
-                    except ValueError:
-                        self.parse_errors += 1
-
-                # UBX-NAV-HPPOSLLH (class=0x01, id=0x14) payload length is typically 36 bytes.
-                if ubx_class == 0x01 and ubx_id == 0x14 and payload_length == 36 and not (packet[9] & 1):
-                    try:
-                        payload = packet[6:6 + payload_length]
-                        lon = struct.unpack_from('<i', payload, 8)[0] * 1e-7
-                        lat = struct.unpack_from('<i', payload, 12)[0] * 1e-7
-                        h_mm = struct.unpack_from('<i', payload, 16)[0]
-                        lon_hp = struct.unpack_from('<b', payload, 24)[0] * 1e-9
-                        lat_hp = struct.unpack_from('<b', payload, 25)[0] * 1e-9
-                        h_hp_m = struct.unpack_from('<b', payload, 26)[0] * 1e-4  # 0.1 mm -> m
-                        lat_hpp = float(lat + lat_hp)
-                        lon_hpp = float(lon + lon_hp)
-                        h_ell = float(h_mm * 1e-3 + h_hp_m)
-                        if -90.0 <= lat_hpp <= 90.0 and -180.0 <= lon_hpp <= 180.0:
-                            globals()['LAST_HPPOSLLH_COORD'] = (lat_hpp, lon_hpp, h_ell)
-                            globals()['LAST_HPPOSLLH_TS'] = time.time()
-                    except Exception:
-                        pass
-
-                if ubx_class == 0x0a and ubx_id in (0x38, 0x31):
-                    try:
-                        key = 'LAST_UBX_RF' if ubx_id == 0x38 else 'LAST_UBX_SPECTRUM'
-                        globals()[key] = _ubx_rf_payload(packet[6:-2], ubx_id)
-                        globals()[key + '_TS'] = time.time()
-                    except ValueError:
-                        self.parse_errors += 1
-
-                if ubx_class == 1 and ubx_id == 0x35:
-                    try:
-                        globals()['LAST_UBX_SATELLITES'] = _ubx_satellite_payload(packet[6:-2])
-                        globals()['LAST_UBX_SATELLITES_TS'] = time.time()
-                    except ValueError:
-                        self.parse_errors += 1
-
-                if ubx_class == 1 and ubx_id == 4 and payload_length == 18:
-                    globals()['LAST_UBX_DOP'] = _ubx_dop(packet[6:-2])
-                    globals()['LAST_UBX_DOP_TS'] = time.time()
-
-                # UBX-NAV-PVT (class=0x01, id=0x07): numSV at offset 23, hAcc at offset 40.
-                if ubx_class == 0x01 and ubx_id == 0x07 and payload_length == 92:
-                    try:
-                        payload = packet[6:6 + payload_length]
-                        globals()['LAST_RECEIVER_QUALITY'] = _ubx_navigation_quality(payload)
-                        globals()['LAST_RECEIVER_QUALITY_TS'] = time.time()
-                        num_sv = int(payload[23])
-                        if 0 <= num_sv <= 99:
-                            globals()['LAST_UBX_NUMSV'] = num_sv
-                            globals()['LAST_UBX_NUMSV_TS'] = time.time()
-                    except Exception:
-                        pass
-                
-                # Only log important UBX messages
-                if ubx_class == 0x05:  # ACK/NAK
-                    self.log("DEBUG", f"UBX ACK/NAK: id=0x{ubx_id:02X}")
-                
-                self.bytes_read += len(packet)
-                self.last_data_time = time.time()
-                
-                buffer = buffer[packet_len:]
-                processed = True
-                continue
-            
-            # Read-only Unicore replies share the RTCM stream, not the NMEA channel.
-            elif buffer[0] == ord('#'):
-                if buffer.startswith(UNICORE_LOG_LIST_KEY + b','):
-                    # Firmware may end the list with CRC32 or a blank line.
-                    request = getattr(self, '_base_query', None)
-                    if request and request['key'] == UNICORE_LOG_LIST_KEY and not request['cancelled']:
-                        request['response_preview'] = bytes(buffer[:512])
-                    trailer = re.search(rb'\*[0-9a-fA-F]{8}\r?\n|\r?\n\r?\n', buffer)
-                    if trailer is None:
-                        if len(buffer) <= 4096:
-                            break
-                        buffer.pop(0)
-                        self.parse_errors += 1
-                        continue
-                    packet = bytes(buffer[:trailer.end()])
-                    self._deliver_base_reply(UNICORE_LOG_LIST_KEY, packet)
-                    buffer = buffer[trailer.end():]
-                    continue
-                end = buffer.find(b'\n')
-                if end < 0:
-                    if len(buffer) <= 2048:
-                        break
-                    buffer.pop(0)
-                    self.parse_errors += 1
-                    continue
-                packet = bytes(buffer[:end + 1]).strip()
-                key = packet.split(b',', 1)[0]
-                self._deliver_base_reply(key, packet)
-                buffer = buffer[end + 1:]
-                continue
-
-            # ==================== NMEA DETECTION (IMPROVED) ====================
-            elif buffer[0] == ord('$'):
-                line_end = buffer.find(b'\n')
-                if line_end >= 0:
-                    sentence_end = line_end + 1
-                else:
-                    line_end = buffer.find(b'\r')
-                    sentence_end = line_end + 1 if line_end >= 0 else -1
-                
-                if sentence_end == -1:
-                    if len(buffer) >= 6:
-                        try:
-                            sentence_start = buffer[:6].decode('ascii', errors='ignore')
-                            valid_prefixes = ['$GP', '$GN', '$GL', '$GA', '$GB', '$GQ', '$PU', '$BD', '$P']
-                            is_valid_nmea = any(sentence_start.startswith(prefix) for prefix in valid_prefixes)
-                            
-                            if is_valid_nmea:
-                                if len(buffer) > 512:
-                                    next_dollar = buffer.find(b'$', 1)
-                                    if next_dollar > 0:
-                                        buffer = buffer[next_dollar:]
-                                    else:
-                                        buffer = buffer[1:]
-                                    self.parse_errors += 1
-                                    continue
-                                else:
-                                    self.nmea_incomplete_waits += 1
-                                    break
-                            else:
-                                buffer.pop(0)
-                                continue
-                        except Exception:
-                            buffer.pop(0)
-                            self.parse_errors += 1
-                            continue
-                    else:
-                        if len(buffer) > 512:
-                            buffer.pop(0)
-                            continue
-                        self.nmea_incomplete_waits += 1
-                        break
-                
-                sentence = buffer[:sentence_end]
-                self.nmea_sentence_seen += 1
-                
-                try:
-                    sentence_str = sentence.decode('ascii', errors='ignore')
-                    
-                    important_types = ['GGA', 'GSA', 'GSV', 'GST']
-                    is_important = any(nmea_type in sentence_str[:10] for nmea_type in important_types)
-                    
-                    if is_important:
-                        if 10 <= len(sentence) <= 200 and is_valid_nmea_checksum(sentence):
-                            packet = bytes(sentence)
-                            dispatch_nmea_data(packet)
-                            
-                            self.nmea_packets_sent += 1
-                            self.nmea_valid_packets += 1
-                            self.bytes_read += len(packet)
-                            self.last_data_time = time.time()
-                            
-                            buffer = buffer[sentence_end:]
-                            processed = True
-                            continue
-                        else:
-                            buffer.pop(0)
-                            self.parse_errors += 1
-                            self.nmea_invalid_checksum += 1
-                            continue
-                    else:
-                        self.nmea_unimportant_skipped += 1
-                        buffer = buffer[sentence_end:]
-                        processed = True
-                        continue
-                        
-                except Exception as e:
-                    self.log("DEBUG", f"NMEA filter error: {e}")
-                    buffer.pop(0)
-                    self.parse_errors += 1
-                    continue
-            
-            # ==================== UNKNOWN DATA ====================
-            if not processed:
+                break
+            parser = self._get_buffer_parser(buffer)
+            if parser is None:
                 self.unknown_bytes_dropped += 1
                 buffer.pop(0)
-        
+                continue
+            remaining = parser(buffer)
+            if remaining is None:
+                break
+            buffer = remaining
         return buffer
-    
+
     def run(self):
         if not self.port:
             self.log("ERROR", "GNSSReader: No serial port configured. Thread exiting.")
