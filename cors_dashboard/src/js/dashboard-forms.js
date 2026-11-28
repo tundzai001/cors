@@ -1444,6 +1444,328 @@ function AutoBaseReviewPanel(props) {
     </>;
 }
 
+function FixedLlaCoordinateFields(props) {
+    const {
+        device, coordinatePasteNotice, latitude, setLatitude, handleDecimalInputChange, activeChip,
+        handleCoordinatePaste, disabled, isSubmitting, altitude, setAltitude, altitudeReference,
+        setAltitudeReference, setCoordinatePasteNotice, fixedAccuracyM, setFixedAccuracyM,
+    } = props;
+    const pasteHelpId = `base-coordinate-paste-help-${device.serial}`;
+    const precisionHelp = activeChip === 'Ublox' ? ` base-ublox-precision-${device.serial}`
+        : activeChip === 'Unicorecomm' ? ` base-unicore-precision-${device.serial}` : '';
+    const coordinateDigits = activeChip === 'Ublox' ? 9 : 10;
+    return <div className="row g-3">
+        <div className="col-12 text-muted small fst-italic mb-2">* Chế độ này yêu cầu bạn đã có tọa độ chính xác (mốc địa chính).</div>
+        <div id={pasteHelpId} className="col-12 small text-info">
+            Dùng “Sao chép cho GNSS” trong <a href="/coordinates" target="_blank" rel="noopener">công cụ chuyển tọa độ</a>, rồi dán vào một trong ba ô bên dưới để tự điền đủ tọa độ.
+        </div>
+        {coordinatePasteNotice && <div className={`col-12 small ${coordinatePasteNotice.error ? 'text-danger' : 'text-success'}`} role="status" aria-live="polite">{coordinatePasteNotice.message}</div>}
+        <div className="col-md-6">
+            <label htmlFor={`base-latitude-${device.serial}`} className="form-label">Vĩ độ (WGS 84)</label>
+            <input id={`base-latitude-${device.serial}`} type="text" inputMode="decimal" className="form-control"
+                value={latitude} onChange={handleDecimalInputChange(setLatitude, coordinateDigits)}
+                onPaste={handleCoordinatePaste} aria-describedby={pasteHelpId + precisionHelp}
+                disabled={disabled || isSubmitting} required placeholder="Ví dụ: 21.028511" />
+        </div>
+        <div className="col-md-6">
+            <label htmlFor={`base-longitude-${device.serial}`} className="form-label">Kinh độ (WGS 84)</label>
+            <input id={`base-longitude-${device.serial}`} type="text" inputMode="decimal" className="form-control"
+                value={props.longitude} onChange={handleDecimalInputChange(props.setLongitude, coordinateDigits)}
+                onPaste={handleCoordinatePaste} aria-describedby={pasteHelpId + precisionHelp}
+                disabled={disabled || isSubmitting} required placeholder="Ví dụ: 105.854167" />
+        </div>
+        {activeChip === 'Ublox' && <div id={`base-ublox-precision-${device.serial}`} className="col-12 form-text mt-1">
+            Ublox: vĩ độ và kinh độ tối đa 9 chữ số sau dấu . hoặc , — không nhận chữ số thứ 10.
+        </div>}
+        {activeChip === 'Unicorecomm' && <div id={`base-unicore-precision-${device.serial}`} className="col-12 form-text mt-1">
+            Unicorecomm: vĩ độ và kinh độ gửi xuống chip có 10 chữ số thập phân; cắt phần dư, không làm tròn. Phép tính giữ đủ độ chính xác.
+        </div>}
+        <div className="col-md-6">
+            <label htmlFor={`base-altitude-${device.serial}`} className="form-label">
+                {activeChip === 'Ublox' || altitudeReference === 'ELLIPSOID' ? 'Độ cao h ellipsoid (mét)' : 'Độ cao theo cấu hình chip (mét)'}
+            </label>
+            <input id={`base-altitude-${device.serial}`} type="text" inputMode="decimal" className="form-control"
+                value={altitude} onChange={handleDecimalInputChange(setAltitude)} onPaste={handleCoordinatePaste}
+                aria-describedby={pasteHelpId} disabled={disabled || isSubmitting} required placeholder="Ví dụ: 15.5" />
+            {activeChip !== 'Ublox' && <>
+                <label htmlFor={`base-altitude-reference-${device.serial}`} className="form-label small mt-2">Cách chip hiểu độ cao</label>
+                <select id={`base-altitude-reference-${device.serial}`} className="form-select" value={altitudeReference}
+                    disabled={disabled || isSubmitting} aria-describedby={`base-altitude-reference-help-${device.serial}`}
+                    onChange={event => { setAltitudeReference(event.target.value); setCoordinatePasteNotice(null); }}>
+                    <option value="ELLIPSOID">h ellipsoid WGS 84</option>
+                    <option value="LEGACY">Giữ theo cấu hình geoid hiện tại của chip</option>
+                </select>
+                <div id={`base-altitude-reference-help-${device.serial}`} className="form-text">Dán từ công cụ sẽ chọn h ellipsoid. Cấu hình cũ giữ cách hiểu hiện tại của chip.</div>
+            </>}
+        </div>
+        <div className="col-md-6">
+            <label htmlFor={`base-accuracy-${device.serial}`} className="form-label fw-bold">Độ chính xác tọa độ Base (3D)</label>
+            <div className="input-group">
+                <input id={`base-accuracy-${device.serial}`} type="number" className="form-control" min="0.0001" max="10000" step="0.0001"
+                    aria-describedby={`base-accuracy-help-${device.serial}`} value={fixedAccuracyM}
+                    onChange={event => setFixedAccuracyM(event.target.value)} required placeholder="Ví dụ: 0.05" />
+                <span className="input-group-text">m</span>
+            </div>
+            <div id={`base-accuracy-help-${device.serial}`} className="form-text">Chỉ nhập số: 5 = 5 m. Sai số 3D khai báo của tọa độ gốc; không phải độ chính xác đo được từ RTCM.</div>
+        </div>
+    </div>;
+}
+
+function SurveyInFields({ activeChip, svinDuration, setSvinDuration, svinAccuracyM, setSvinAccuracyM }) {
+    return <div className="row g-3">
+        <div className="col-12 text-muted small fst-italic mb-2">* Chế độ này thiết bị sẽ tự đo trung bình cộng vị trí. Phù hợp thiết lập trạm tạm thời.</div>
+        <div className="col-md-6">
+            <label htmlFor="base-survey-duration" className="form-label">Thời gian khảo sát (giây)</label>
+            <input id="base-survey-duration" type="number" className="form-control" value={svinDuration}
+                onChange={event => setSvinDuration(event.target.value)} required />
+            <div className="form-text">Tối thiểu: 60s. Khuyên dùng: &gt; 300s.</div>
+        </div>
+        <div className="col-md-6">
+            {activeChip === 'Unicorecomm' ? <div className="form-text mt-4">UM tự lấy trung bình theo thời gian. Kết quả cần được kiểm tra trước khi dùng làm tọa độ cố định.</div> : <>
+                <label htmlFor="base-survey-accuracy" className="form-label fw-bold">Giới hạn sai số (m)</label>
+                <input id="base-survey-accuracy" type="number" step="0.01" className="form-control" value={svinAccuracyM}
+                    onChange={event => setSvinAccuracyM(event.target.value)} required placeholder="Ví dụ: 3.0" />
+                <div className="form-text text-danger">Đơn vị: MÉT (Ví dụ nhập 3.0 là 3 mét)</div>
+            </>}
+        </div>
+    </div>;
+}
+
+function BaseCoordinateMethodFields(props) {
+    if (props.method === 'FIXED_LLA') return <FixedLlaCoordinateFields {...props} />;
+    return <SurveyInFields {...props} />;
+}
+
+function CorsManualConnectionFields(props) {
+    const {
+        device, corsHost, setCorsHost, corsPort, setCorsPort, corsUsername, setCorsUsername,
+        corsPassword, setCorsPassword, handleCorsFieldChange, handleLoadCorsMountpoints,
+        isLoadingCorsSources, isSubmitting, corsLookupError, corsSources, selectedMountpoint,
+        setSelectedMountpoint,
+    } = props;
+    return <>
+        <div className="d-flex align-items-start gap-2 mb-3">
+            <i className="bi bi-broadcast-pin text-info fs-5" aria-hidden="true"></i>
+            <div>
+                <div className="fw-bold text-info">Thông tin Base liên kết</div>
+                <div className="form-text mt-1">Nhập đúng tài khoản Base tại đây. Các giá trị này chỉ dùng cho lần Auto Base này và được gửi trực tiếp xuống agent.</div>
+            </div>
+        </div>
+        <div className="row g-3">
+            <div className="col-md-8">
+                <label htmlFor={`cors-host-${device.serial}`} className="form-label small fw-bold">IP / Host Base</label>
+                <input id={`cors-host-${device.serial}`} type="text" className="form-control" value={corsHost}
+                    onChange={handleCorsFieldChange(setCorsHost)} placeholder="Ví dụ: 14.238.1.125" autoComplete="off" required />
+            </div>
+            <div className="col-md-4">
+                <label htmlFor={`cors-port-${device.serial}`} className="form-label small fw-bold">Port</label>
+                <input id={`cors-port-${device.serial}`} type="number" min="1" max="65535" className="form-control"
+                    value={corsPort} onChange={handleCorsFieldChange(setCorsPort)} placeholder="2101" required />
+            </div>
+            <div className="col-md-6">
+                <label htmlFor={`cors-user-${device.serial}`} className="form-label small fw-bold">Username Base</label>
+                <input id={`cors-user-${device.serial}`} type="text" className="form-control" value={corsUsername}
+                    onChange={handleCorsFieldChange(setCorsUsername)} placeholder="Tài khoản NTRIP" autoComplete="username" required />
+            </div>
+            <div className="col-md-6">
+                <label htmlFor={`cors-password-${device.serial}`} className="form-label small fw-bold">Password Base</label>
+                <input id={`cors-password-${device.serial}`} type="password" className="form-control" value={corsPassword}
+                    onChange={handleCorsFieldChange(setCorsPassword)} placeholder="Mật khẩu NTRIP" autoComplete="current-password" required />
+            </div>
+            <div className="col-12">
+                <button type="button" className="btn btn-outline-info w-100" onClick={handleLoadCorsMountpoints}
+                    disabled={isLoadingCorsSources || isSubmitting}>
+                    {isLoadingCorsSources
+                        ? <><span className="spinner-border spinner-border-sm me-2" role="status" aria-hidden="true"></span>Đang kết nối Base...</>
+                        : <><i className="bi bi-search me-2" aria-hidden="true"></i>Bước 1: Kết nối Base & Lấy danh sách Mountpoint</>}
+                </button>
+            </div>
+            {corsLookupError && <div className="col-12"><div className="alert alert-warning small mb-0" role="alert">
+                <i className="bi bi-exclamation-triangle-fill me-2" aria-hidden="true"></i>{corsLookupError}
+            </div></div>}
+            <div className="col-12">
+                <label htmlFor={`cors-mountpoint-${device.serial}`} className="form-label small fw-bold">Bước 2: Chọn Mountpoint</label>
+                <select id={`cors-mountpoint-${device.serial}`} className="form-select" value={selectedMountpoint}
+                    onChange={event => setSelectedMountpoint(event.target.value)} disabled={!corsSources.length || isSubmitting} required>
+                    <option value="">-- Chọn mountpoint từ Base --</option>
+                    {corsSources.map(source => <option key={source.mountpoint} value={source.mountpoint}>
+                        {source.mountpoint}{source.identifier ? ` · ${source.identifier}` : ''}
+                    </option>)}
+                </select>
+                <div className="form-text">{corsSources.length
+                    ? `${corsSources.length} mountpoint đã sẵn sàng. Chọn mountpoint, kiểm tra đầu ra rồi bấm Lấy tọa độ Auto Base bên dưới.`
+                    : 'Bấm nút Bước 1 để tải danh sách mountpoint.'}</div>
+            </div>
+            <div className="col-12 mt-2"><div className="form-text text-muted mt-2">
+                <i className="bi bi-info-circle me-1"></i>
+                Quy trình: Chuyển chip sang Rover &rarr; Gửi NMEA GGA lên Caster &rarr; Nhận RTCM &rarr; Đạt RTK Fix &rarr; Lấy tọa độ trung bình &rarr; Xem kết quả &rarr; Xác nhận áp dụng Fixed LLA.
+            </div></div>
+        </div>
+    </>;
+}
+
+function AutoCorsProjectionFields({ device, projectionMeridian, setProjectionMeridian, projectionScale, setProjectionScale, disabled, isAutoSetupStatus }) {
+    return <div className="col-12"><details className="mb-2">
+        <summary>Phép chiếu khi nguồn không gửi RTCM 1025</summary>
+        <div className="row g-3 mt-1">
+            <div className="col-sm-6">
+                <label className="form-label" htmlFor={`auto-l0-${device.serial}`}>Kinh tuyến trục L₀ (độ)</label>
+                <input id={`auto-l0-${device.serial}`} type="number" step="any" min="100" max="112" className="form-control"
+                    value={projectionMeridian} onChange={event => setProjectionMeridian(event.target.value)} disabled={disabled || isAutoSetupStatus} />
+            </div>
+            <div className="col-sm-6">
+                <label className="form-label" htmlFor={`auto-k0-${device.serial}`}>Hệ số k₀</label>
+                <select id={`auto-k0-${device.serial}`} className="form-select" value={projectionScale}
+                    onChange={event => setProjectionScale(event.target.value)} disabled={disabled || isAutoSetupStatus}>
+                    <option value="">Theo nguồn / tỉnh</option>
+                    <option value="0.9999">0.9999 — múi 3°</option>
+                    <option value="0.9996">0.9996 — múi 6°</option>
+                </select>
+            </div>
+            <div className="col-12 small text-muted">Có RTCM 1025 sẽ ưu tiên tham số của nguồn. Để trống cả hai để tra theo tỉnh khi thiếu bản tin này.</div>
+        </div>
+    </details></div>;
+}
+
+function AutoCorsConfigFields(props) {
+    const {
+        device, supportsAutoBaseReview, supportsAutoBaseNearest, corsSourceMode, setCorsSourceMode,
+        disabled, isAutoSetupActive, autoFixedResult, ...manualConnectionProps
+    } = props;
+    return <div className="row g-3 auto-cors-config">
+        {!supportsAutoBaseReview && <div className="col-12"><div className="alert alert-warning small mb-0" role="status">Cần cập nhật agent ESP32 để hỗ trợ đầy đủ luồng Auto Base.</div></div>}
+        {!supportsAutoBaseNearest && <div className="col-12"><div className="alert alert-warning small mb-0" role="status">Agent này chưa hỗ trợ tự chuyển Rover và chọn trạm CORS gần nhất.</div></div>}
+        <div className="col-12">
+            <label htmlFor={`cors-source-mode-${device.serial}`} className="form-label fw-bold">Nguồn cải chính</label>
+            <select id={`cors-source-mode-${device.serial}`} className="form-select" value={corsSourceMode}
+                disabled={disabled || isAutoSetupActive} onChange={event => setCorsSourceMode(event.target.value)}>
+                <option value="nearest">Tự chọn trạm CORS gần nhất trong danh sách của tôi</option>
+                <option value="manual">Tự nhập IP, tài khoản và mountpoint</option>
+            </select>
+        </div>
+        <div className="col-12"><div className="auto-cors-config__panel p-3 rounded border border-info-subtle bg-dark-subtle">
+            {corsSourceMode === 'manual' ? <CorsManualConnectionFields device={device} {...manualConnectionProps} /> : <div className="alert alert-info small mb-0" role="status">
+                <div className="fw-bold mb-1">ESP32 sẽ vào Rover trước</div>
+                <div>Thiết bị gửi vị trí GNSS lên backend. Backend chọn trạm CORS gần nhất trong danh sách base bạn có quyền dùng, rồi gửi kết nối cải chính xuống ESP32. Khi đủ RTK_FIXED và mẫu hợp lệ, thiết bị tự áp dụng tọa độ Base.</div>
+            </div>}
+        </div></div>
+        <AutoCorsProjectionFields device={device} projectionMeridian={props.projectionMeridian}
+            setProjectionMeridian={props.setProjectionMeridian} projectionScale={props.projectionScale}
+            setProjectionScale={props.setProjectionScale} disabled={disabled} isAutoSetupStatus={props.isAutoSetupStatus} />
+        <div className="col-12 small text-info" role="status">LLH trung bình → VN-2000 NEh → LLH địa phương. Dùng tham số RTCM 1021/1023 và phép chiếu RTCM 1025 hoặc theo tỉnh.</div>
+        <div className="col-12"><div className={`alert ${autoFixedResult ? 'alert-success' : 'alert-info'} small mb-2`}>
+            <i className="bi bi-robot me-2"></i><span>{getAutoBaseIntroText(corsSourceMode, autoFixedResult)}</span>
+        </div></div>
+    </div>;
+}
+
+function getGgaFixBadge(ggaFix) {
+    if (ggaFix === 'RTK_FIXED') return <span className="badge bg-success">🎯 RTK FIXED</span>;
+    if (ggaFix === 'RTK_FLOAT') return <span className="badge bg-warning text-dark">📍 RTK FLOAT</span>;
+    if (ggaFix === 'SINGLE' || ggaFix === 'GPS_FIX') return <span className="badge bg-primary">📡 SINGLE</span>;
+    return <span className="badge bg-secondary">⏳ {ggaFix}</span>;
+}
+
+function copyRawGga(rawGgaSentence) {
+    navigator.clipboard.writeText(rawGgaSentence).then(
+        () => window.showToast?.('Đã sao chép bản tin GGA!'),
+        () => window.showError?.('Không thể sao chép vào bộ nhớ tạm.')
+    );
+}
+
+function AutoBaseMonitorHeader({
+    device, isAutoSetupStatus, isAutoSetupActive, onStopAutoBase, disabled, isStoppingAutoBase,
+    stopAutoBase, ggaFix, ggaAge, autoProgressPercent,
+}) {
+    const statusText = STATUS_TEXT_MAP[device.status] || device.status || 'Giám sát Rover & Base';
+    const ggaAgeClass = ggaAge < 3 ? 'bg-success' : ggaAge < 10 ? 'bg-warning text-dark' : 'bg-danger';
+    return <div className="card-header bg-info bg-opacity-10 border-info d-flex flex-wrap justify-content-between align-items-center py-2 gap-2">
+        <div className="d-flex align-items-center gap-2">
+            {isAutoSetupStatus && <span className="spinner-grow spinner-grow-sm text-info" role="status"></span>}
+            <strong className="text-info small text-uppercase"><i className="bi bi-broadcast me-1"></i>{statusText}</strong>
+        </div>
+        <div className="d-flex align-items-center gap-2 flex-wrap">
+            {isAutoSetupActive && onStopAutoBase && <button type="button" className="btn btn-outline-danger btn-sm fw-bold"
+                style={{minHeight:44}} disabled={disabled || isStoppingAutoBase} onClick={stopAutoBase}>
+                {isStoppingAutoBase ? <span className="spinner-border spinner-border-sm me-1" aria-hidden="true" /> : <i className="bi bi-stop-circle-fill me-1" aria-hidden="true" />}
+                {isStoppingAutoBase ? 'Đang dừng…' : 'Dừng Auto Base'}
+            </button>}
+            {getGgaFixBadge(ggaFix)}
+            {ggaAge !== null && <span className={`badge ${ggaAgeClass}`}>GGA: {ggaAge}s</span>}
+            {autoProgressPercent !== null && <span className="badge bg-primary">{autoProgressPercent}%</span>}
+        </div>
+    </div>;
+}
+
+function AutoBaseSampleProgress({ autoSamplesTarget, autoSamplesCollected, autoProgressPercent }) {
+    if (autoSamplesTarget <= 0) return null;
+    return <div className="mb-3">
+        <div className="d-flex justify-content-between small text-muted mb-1">
+            <span>Tiến độ thu thập mẫu tọa độ</span>
+            <span>{autoSamplesCollected} / {autoSamplesTarget} mẫu</span>
+        </div>
+        <div className="progress" style={{height: '8px'}}>
+            <div className="progress-bar progress-bar-striped progress-bar-animated bg-info" style={{width: `${autoProgressPercent || 0}%`}}></div>
+        </div>
+    </div>;
+}
+
+function AutoBaseRawGga({ rawGgaSentence }) {
+    return <div className="mb-3">
+        <div className="d-flex justify-content-between align-items-center mb-1">
+            <span className="form-label small fw-bold mb-0 text-info"><i className="bi bi-terminal me-1"></i>Bản tin NMEA GGA trực tiếp từ Chip Rover:</span>
+            {rawGgaSentence && <button type="button" className="btn btn-outline-info btn-sm py-0 px-2" style={{fontSize: '0.75rem'}}
+                onClick={() => copyRawGga(rawGgaSentence)}>
+                <i className="bi bi-clipboard me-1"></i>Copy GGA
+            </button>}
+        </div>
+        <div className="p-2 rounded bg-black border border-info font-monospace text-success small text-break user-select-all shadow-inner"
+            style={{minHeight: '38px', lineHeight: '1.4', fontSize: '0.85rem'}}>
+            {rawGgaSentence || <span className="text-muted fst-italic">
+                <i className="bi bi-arrow-repeat me-1 spin"></i>Đang chờ bản tin GGA từ chip GNSS (Rover mode)...
+            </span>}
+        </div>
+    </div>;
+}
+
+function AutoBaseMonitorMetrics({ rtcmBytesReceived, rtcmPktsReceived, fixedStreak, fixedStreakReq, autoProgress, formatCoord10 }) {
+    const rtcmAmount = rtcmBytesReceived > 1024 ? `${(rtcmBytesReceived / 1024).toFixed(1)} KB` : `${rtcmBytesReceived} B`;
+    const roverCoordinate = autoProgress.current_coord?.lat
+        ? formatCoord10(autoProgress.current_coord.lat) : 'Đang đợi Fix';
+    return <div className="row g-2 text-center small">
+        <div className="col-4"><div className="p-2 rounded bg-dark border border-secondary-subtle">
+            <div className="text-muted" style={{fontSize: '0.75rem'}}>RTCM từ Caster</div>
+            <div className="fw-bold text-info">{rtcmAmount}<span className="text-muted ms-1" style={{fontSize: '0.7rem'}}>({rtcmPktsReceived} pkts)</span></div>
+        </div></div>
+        <div className="col-4"><div className="p-2 rounded bg-dark border border-secondary-subtle">
+            <div className="text-muted" style={{fontSize: '0.75rem'}}>Giữ RTK Fix</div>
+            <div className="fw-bold text-warning">{fixedStreak} / {fixedStreakReq}s</div>
+        </div></div>
+        <div className="col-4"><div className="p-2 rounded bg-dark border border-secondary-subtle">
+            <div className="text-muted" style={{fontSize: '0.75rem'}}>Tọa độ Rover</div>
+            <div className="fw-bold text-white text-truncate" title={`${autoProgress.current_coord?.lat || '--'}, ${autoProgress.current_coord?.lon || '--'}`}>{roverCoordinate}</div>
+        </div></div>
+    </div>;
+}
+
+function AutoBaseMonitor(props) {
+    const { device, isAutoSetupStatus, isAutoSetupActive, method, autoProgress, autoResultText,
+        autoFixedResult, autoSamplesTarget, autoSamplesCollected, rawGgaSentence, rtcmBytesReceived,
+        rtcmPktsReceived, fixedStreak, fixedStreakReq, formatCoord10, ...headerProps } = props;
+    const showMonitor = isAutoSetupActive || (method === 'AUTO_CORS' && ['failed', 'stopped'].includes(autoProgress.phase));
+    if (!showMonitor) return null;
+    return <div className="mb-3"><div className="card border-info bg-dark shadow-sm">
+        <AutoBaseMonitorHeader device={device} isAutoSetupStatus={isAutoSetupStatus} isAutoSetupActive={isAutoSetupActive} {...headerProps} />
+        <div className="card-body p-3">
+            {autoResultText && <div className={`alert ${autoFixedResult ? 'alert-success' : 'alert-warning'} py-2`} role="status" aria-atomic="true">{autoResultText}</div>}
+            <AutoBaseSampleProgress autoSamplesTarget={autoSamplesTarget} autoSamplesCollected={autoSamplesCollected} autoProgressPercent={props.autoProgressPercent} />
+            <AutoBaseRawGga rawGgaSentence={rawGgaSentence} />
+            <AutoBaseMonitorMetrics rtcmBytesReceived={rtcmBytesReceived} rtcmPktsReceived={rtcmPktsReceived}
+                fixedStreak={fixedStreak} fixedStreakReq={fixedStreakReq} autoProgress={autoProgress} formatCoord10={formatCoord10} />
+        </div>
+    </div></div>;
+}
+
 const BaseConfigForm = memo(function BaseConfigForm({ device, currentUser = {}, onConfigureChip, onStopAutoBase, onReadBaseStatus, disabled }) {
     const knownChips = ['Ublox', 'Unicorecomm'];
     const needsManualSelection = !knownChips.includes(device.detected_chip_type);
@@ -1941,146 +2263,30 @@ const BaseConfigForm = memo(function BaseConfigForm({ device, currentUser = {}, 
                 </div>
             )}
 
-            {/* Realtime NMEA GGA & Auto Base Monitor (Rover Mode) - Chỉ hiện khi method là AUTO_CORS hoặc khi trạm đang thực sự chạy Auto Base */}
-            {(isAutoSetupActive || (method === 'AUTO_CORS' && ['failed', 'stopped'].includes(autoProgress.phase))) && (
-                <div className="mb-3">
-                    <div className="card border-info bg-dark shadow-sm">
-                        <div className="card-header bg-info bg-opacity-10 border-info d-flex flex-wrap justify-content-between align-items-center py-2 gap-2">
-                            <div className="d-flex align-items-center gap-2">
-                                {isAutoSetupStatus && (
-                                    <span className="spinner-grow spinner-grow-sm text-info" role="status"></span>
-                                )}
-                                <strong className="text-info small text-uppercase">
-                                    <i className="bi bi-broadcast me-1"></i>
-                                    {STATUS_TEXT_MAP[device.status] || device.status || 'Giám sát Rover & Base'}
-                                </strong>
-                            </div>
-                            <div className="d-flex align-items-center gap-2 flex-wrap">
-                                {isAutoSetupActive && onStopAutoBase && (
-                                    <button
-                                        type="button"
-                                        className="btn btn-outline-danger btn-sm fw-bold"
-                                        style={{ minHeight:44 }} disabled={disabled || isStoppingAutoBase} onClick={stopAutoBase}
-                                    >
-                                        {isStoppingAutoBase ? <span className="spinner-border spinner-border-sm me-1" aria-hidden="true" /> : <i className="bi bi-stop-circle-fill me-1" aria-hidden="true" />}
-                                        {isStoppingAutoBase ? 'Đang dừng…' : 'Dừng Auto Base'}
-                                    </button>
-                                )}
-                                {/* Fix Quality Badge */}
-                                {ggaFix === 'RTK_FIXED' ? (
-                                    <span className="badge bg-success">🎯 RTK FIXED</span>
-                                ) : ggaFix === 'RTK_FLOAT' ? (
-                                    <span className="badge bg-warning text-dark">📍 RTK FLOAT</span>
-                                ) : ggaFix === 'SINGLE' || ggaFix === 'GPS_FIX' ? (
-                                    <span className="badge bg-primary">📡 SINGLE</span>
-                                ) : (
-                                    <span className="badge bg-secondary">⏳ {ggaFix}</span>
-                                )}
-                                {/* GGA Age Badge */}
-                                {ggaAge !== null && (
-                                    <span className={`badge ${ggaAge < 3 ? 'bg-success' : ggaAge < 10 ? 'bg-warning text-dark' : 'bg-danger'}`}>
-                                        GGA: {ggaAge}s
-                                    </span>
-                                )}
-                                {autoProgressPercent !== null && (
-                                    <span className="badge bg-primary">{autoProgressPercent}%</span>
-                                )}
-                            </div>
-                        </div>
-                        <div className="card-body p-3">
-                            {autoResultText && (
-                                <div className={`alert ${autoFixedResult ? 'alert-success' : 'alert-warning'} py-2`} role="status" aria-atomic="true">
-                                    {autoResultText}
-                                </div>
-                            )}
-                            {/* Sample Collection Progress Bar */}
-                            {autoSamplesTarget > 0 && (
-                                <div className="mb-3">
-                                    <div className="d-flex justify-content-between small text-muted mb-1">
-                                        <span>Tiến độ thu thập mẫu tọa độ</span>
-                                        <span>{autoSamplesCollected} / {autoSamplesTarget} mẫu</span>
-                                    </div>
-                                    <div className="progress" style={{ height: '8px' }}>
-                                        <div
-                                            className="progress-bar progress-bar-striped progress-bar-animated bg-info"
-                                            style={{ width: `${autoProgressPercent || 0}%` }}
-                                        ></div>
-                                    </div>
-                                </div>
-                            )}
-
-                            {/* Realtime Raw GGA Box */}
-                            <div className="mb-3">
-                                <div className="d-flex justify-content-between align-items-center mb-1">
-                                    <span className="form-label small fw-bold mb-0 text-info">
-                                        <i className="bi bi-terminal me-1"></i>
-                                        Bản tin NMEA GGA trực tiếp từ Chip Rover:
-                                    </span>
-                                    {rawGgaSentence && (
-                                        <button
-                                            type="button"
-                                            className="btn btn-outline-info btn-sm py-0 px-2"
-                                            style={{ fontSize: '0.75rem' }}
-                                            onClick={() => {
-                                                navigator.clipboard.writeText(rawGgaSentence).then(
-                                                    () => window.showToast?.('Đã sao chép bản tin GGA!'),
-                                                    () => window.showError?.("Không thể sao chép vào bộ nhớ tạm.")
-                                                );
-                                            }}
-                                        >
-                                            <i className="bi bi-clipboard me-1"></i>Copy GGA
-                                        </button>
-                                    )}
-                                </div>
-                                <div
-                                    className="p-2 rounded bg-black border border-info font-monospace text-success small text-break user-select-all shadow-inner"
-                                    style={{ minHeight: '38px', lineHeight: '1.4', fontSize: '0.85rem' }}
-                                >
-                                    {rawGgaSentence || (
-                                        <span className="text-muted fst-italic">
-                                            <i className="bi bi-arrow-repeat me-1 spin"></i>
-                                            Đang chờ bản tin GGA từ chip GNSS (Rover mode)...
-                                        </span>
-                                    )}
-                                </div>
-                            </div>
-
-                            {/* Metric Grid: RTCM stream & RTK streak & Coords */}
-                            <div className="row g-2 text-center small">
-                                <div className="col-4">
-                                    <div className="p-2 rounded bg-dark border border-secondary-subtle">
-                                        <div className="text-muted" style={{ fontSize: '0.75rem' }}>RTCM từ Caster</div>
-                                        <div className="fw-bold text-info">
-                                            {rtcmBytesReceived > 1024
-                                                ? `${(rtcmBytesReceived / 1024).toFixed(1)} KB`
-                                                : `${rtcmBytesReceived} B`}
-                                            <span className="text-muted ms-1" style={{ fontSize: '0.7rem' }}>({rtcmPktsReceived} pkts)</span>
-                                        </div>
-                                    </div>
-                                </div>
-                                <div className="col-4">
-                                    <div className="p-2 rounded bg-dark border border-secondary-subtle">
-                                        <div className="text-muted" style={{ fontSize: '0.75rem' }}>Giữ RTK Fix</div>
-                                        <div className="fw-bold text-warning">
-                                            {fixedStreak} / {fixedStreakReq}s
-                                        </div>
-                                    </div>
-                                </div>
-                                <div className="col-4">
-                                    <div className="p-2 rounded bg-dark border border-secondary-subtle">
-                                        <div className="text-muted" style={{ fontSize: '0.75rem' }}>Tọa độ Rover</div>
-                                        <div className="fw-bold text-white text-truncate" title={`${autoProgress.current_coord?.lat || '--'}, ${autoProgress.current_coord?.lon || '--'}`}>
-                                            {autoProgress.current_coord?.lat
-                                                ? `${formatCoord10(autoProgress.current_coord.lat)}`
-                                                : 'Đang đợi Fix'}
-                                        </div>
-                                    </div>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-            )}
+            <AutoBaseMonitor
+                device={device}
+                isAutoSetupStatus={isAutoSetupStatus}
+                isAutoSetupActive={isAutoSetupActive}
+                onStopAutoBase={onStopAutoBase}
+                isStoppingAutoBase={isStoppingAutoBase}
+                stopAutoBase={stopAutoBase}
+                disabled={disabled}
+                method={method}
+                autoProgress={autoProgress}
+                autoResultText={autoResultText}
+                autoFixedResult={autoFixedResult}
+                autoSamplesTarget={autoSamplesTarget}
+                autoSamplesCollected={autoSamplesCollected}
+                rawGgaSentence={rawGgaSentence}
+                rtcmBytesReceived={rtcmBytesReceived}
+                rtcmPktsReceived={rtcmPktsReceived}
+                fixedStreak={fixedStreak}
+                fixedStreakReq={fixedStreakReq}
+                autoProgressPercent={autoProgressPercent}
+                ggaFix={ggaFix}
+                ggaAge={ggaAge}
+                formatCoord10={formatCoord10}
+            />
 
             {method !== 'AUTO_CORS' && isAutoSetupActive && (
                 <div className="alert alert-warning small py-2 mb-3">
@@ -2167,285 +2373,63 @@ const BaseConfigForm = memo(function BaseConfigForm({ device, currentUser = {}, 
 
             <fieldset disabled={disabled}>
                 {method === 'AUTO_CORS' ? (
-                    <div className="row g-3 auto-cors-config">
-                        {!supportsAutoBaseReview && <div className="col-12"><div className="alert alert-warning small mb-0" role="status">
-                            Cần cập nhật agent ESP32 để hỗ trợ đầy đủ luồng Auto Base.
-                        </div></div>}
-                        {!supportsAutoBaseNearest && <div className="col-12"><div className="alert alert-warning small mb-0" role="status">
-                            Agent này chưa hỗ trợ tự chuyển Rover và chọn trạm CORS gần nhất.
-                        </div></div>}
-                        <div className="col-12">
-                            <label htmlFor={`cors-source-mode-${device.serial}`} className="form-label fw-bold">Nguồn cải chính</label>
-                            <select id={`cors-source-mode-${device.serial}`} className="form-select"
-                                value={corsSourceMode} disabled={disabled || isAutoSetupActive}
-                                onChange={event => setCorsSourceMode(event.target.value)}>
-                                <option value="nearest">Tự chọn trạm CORS gần nhất trong danh sách của tôi</option>
-                                <option value="manual">Tự nhập IP, tài khoản và mountpoint</option>
-                            </select>
-                        </div>
-                        <div className="col-12">
-                            <div className="auto-cors-config__panel p-3 rounded border border-info-subtle bg-dark-subtle">
-                                {corsSourceMode === 'manual' ? <>
-                                <div className="d-flex align-items-start gap-2 mb-3">
-                                    <i className="bi bi-broadcast-pin text-info fs-5" aria-hidden="true"></i>
-                                    <div>
-                                        <div className="fw-bold text-info">Thông tin Base liên kết</div>
-                                        <div className="form-text mt-1">
-                                            Nhập đúng tài khoản Base tại đây. Các giá trị này chỉ dùng cho lần Auto Base này và được gửi trực tiếp xuống agent.
-                                        </div>
-                                    </div>
-                                </div>
-                                <div className="row g-3">
-                                    <div className="col-md-8">
-                                        <label htmlFor={`cors-host-${device.serial}`} className="form-label small fw-bold">IP / Host Base</label>
-                                        <input
-                                            id={`cors-host-${device.serial}`}
-                                            type="text"
-                                            className="form-control"
-                                            value={corsHost}
-                                            onChange={handleCorsFieldChange(setCorsHost)}
-                                            placeholder="Ví dụ: 14.238.1.125"
-                                            autoComplete="off"
-                                            required
-                                        />
-                                    </div>
-                                    <div className="col-md-4">
-                                        <label htmlFor={`cors-port-${device.serial}`} className="form-label small fw-bold">Port</label>
-                                        <input
-                                            id={`cors-port-${device.serial}`}
-                                            type="number"
-                                            min="1"
-                                            max="65535"
-                                            className="form-control"
-                                            value={corsPort}
-                                            onChange={handleCorsFieldChange(setCorsPort)}
-                                            placeholder="2101"
-                                            required
-                                        />
-                                    </div>
-                                    <div className="col-md-6">
-                                        <label htmlFor={`cors-user-${device.serial}`} className="form-label small fw-bold">Username Base</label>
-                                        <input
-                                            id={`cors-user-${device.serial}`}
-                                            type="text"
-                                            className="form-control"
-                                            value={corsUsername}
-                                            onChange={handleCorsFieldChange(setCorsUsername)}
-                                            placeholder="Tài khoản NTRIP"
-                                            autoComplete="username"
-                                            required
-                                        />
-                                    </div>
-                                    <div className="col-md-6">
-                                        <label htmlFor={`cors-password-${device.serial}`} className="form-label small fw-bold">Password Base</label>
-                                        <input
-                                            id={`cors-password-${device.serial}`}
-                                            type="password"
-                                            className="form-control"
-                                            value={corsPassword}
-                                            onChange={handleCorsFieldChange(setCorsPassword)}
-                                            placeholder="Mật khẩu NTRIP"
-                                            autoComplete="current-password"
-                                            required
-                                        />
-                                    </div>
-                                    <div className="col-12">
-                                        <button
-                                            type="button"
-                                            className="btn btn-outline-info w-100"
-                                            onClick={handleLoadCorsMountpoints}
-                                            disabled={isLoadingCorsSources || isSubmitting}
-                                        >
-                                            {isLoadingCorsSources ? (
-                                                <>
-                                                    <span className="spinner-border spinner-border-sm me-2" role="status" aria-hidden="true"></span>
-                                                    Đang kết nối Base...
-                                                </>
-                                            ) : (
-                                                <>
-                                                    <i className="bi bi-search me-2" aria-hidden="true"></i>
-                                                    Bước 1: Kết nối Base & Lấy danh sách Mountpoint
-                                                </>
-                                            )}
-                                        </button>
-                                    </div>
-                                    {corsLookupError && (
-                                        <div className="col-12">
-                                            <div className="alert alert-warning small mb-0" role="alert">
-                                                <i className="bi bi-exclamation-triangle-fill me-2" aria-hidden="true"></i>
-                                                {corsLookupError}
-                                            </div>
-                                        </div>
-                                    )}
-                                    <div className="col-12">
-                                        <label htmlFor={`cors-mountpoint-${device.serial}`} className="form-label small fw-bold">Bước 2: Chọn Mountpoint</label>
-                                        <select
-                                            id={`cors-mountpoint-${device.serial}`}
-                                            className="form-select"
-                                            value={selectedMountpoint}
-                                            onChange={(e) => setSelectedMountpoint(e.target.value)}
-                                            disabled={!corsSources.length || isSubmitting}
-                                            required
-                                        >
-                                            <option value="">-- Chọn mountpoint từ Base --</option>
-                                            {corsSources.map((source) => (
-                                                <option key={source.mountpoint} value={source.mountpoint}>
-                                                    {source.mountpoint}{source.identifier ? ` · ${source.identifier}` : ''}
-                                                </option>
-                                            ))}
-                                        </select>
-                                        <div className="form-text">
-                                            {corsSources.length
-                                                ? `${corsSources.length} mountpoint đã sẵn sàng. Chọn mountpoint, kiểm tra đầu ra rồi bấm Lấy tọa độ Auto Base bên dưới.`
-                                                : 'Bấm nút Bước 1 để tải danh sách mountpoint.'}
-                                        </div>
-                                    </div>
-                                    <div className="col-12 mt-2">
-                                        <div className="form-text text-muted mt-2">
-                                            <i className="bi bi-info-circle me-1"></i>
-                                            Quy trình: Chuyển chip sang Rover &rarr; Gửi NMEA GGA lên Caster &rarr; Nhận RTCM &rarr; Đạt RTK Fix &rarr; Lấy tọa độ trung bình &rarr; Xem kết quả &rarr; Xác nhận áp dụng Fixed LLA.
-                                        </div>
-                                    </div>
-                                </div>
-                                </> : <div className="alert alert-info small mb-0" role="status">
-                                    <div className="fw-bold mb-1">ESP32 sẽ vào Rover trước</div>
-                                    <div>Thiết bị gửi vị trí GNSS lên backend. Backend chọn trạm CORS gần nhất trong danh sách base bạn có quyền dùng, rồi gửi kết nối cải chính xuống ESP32. Khi đủ RTK_FIXED và mẫu hợp lệ, thiết bị tự áp dụng tọa độ Base.</div>
-                                </div>}
-                            </div>
-                        </div>
-                        <div className="col-12">
-                            <details className="mb-2">
-                                <summary>Phép chiếu khi nguồn không gửi RTCM 1025</summary>
-                                <div className="row g-3 mt-1">
-                                    <div className="col-sm-6">
-                                        <label className="form-label" htmlFor={`auto-l0-${device.serial}`}>Kinh tuyến trục L₀ (độ)</label>
-                                        <input id={`auto-l0-${device.serial}`} type="number" step="any" min="100" max="112" className="form-control" value={projectionMeridian} onChange={e => setProjectionMeridian(e.target.value)} disabled={disabled || isAutoSetupStatus} />
-                                    </div>
-                                    <div className="col-sm-6">
-                                        <label className="form-label" htmlFor={`auto-k0-${device.serial}`}>Hệ số k₀</label>
-                                        <select id={`auto-k0-${device.serial}`} className="form-select" value={projectionScale} onChange={e => setProjectionScale(e.target.value)} disabled={disabled || isAutoSetupStatus}>
-                                            <option value="">Theo nguồn / tỉnh</option>
-                                            <option value="0.9999">0.9999 — múi 3°</option>
-                                            <option value="0.9996">0.9996 — múi 6°</option>
-                                        </select>
-                                    </div>
-                                    <div className="col-12 small text-muted">Có RTCM 1025 sẽ ưu tiên tham số của nguồn. Để trống cả hai để tra theo tỉnh khi thiếu bản tin này.</div>
-                                </div>
-                            </details>
-                        </div>
-                        <div className="col-12 small text-info" role="status">
-                            LLH trung bình → VN-2000 NEh → LLH địa phương. Dùng tham số RTCM 1021/1023 và phép chiếu RTCM 1025 hoặc theo tỉnh.
-                        </div>
-                        <div className="col-12">
-                                <div className={`alert ${autoFixedResult ? 'alert-success' : 'alert-info'} small mb-2`}>
-                                <i className="bi bi-robot me-2"></i>
-                                <span>{getAutoBaseIntroText(corsSourceMode, autoFixedResult)}</span>
-                            </div>
-                        </div>
-
-                    </div>
-                ) : method === 'FIXED_LLA' ? (
-                    <div className="row g-3">
-                        <div className="col-12 text-muted small fst-italic mb-2">
-                            * Chế độ này yêu cầu bạn đã có tọa độ chính xác (mốc địa chính).
-                        </div>
-                        <div id={`base-coordinate-paste-help-${device.serial}`} className="col-12 small text-info">
-                            Dùng “Sao chép cho GNSS” trong <a href="/coordinates" target="_blank" rel="noopener">công cụ chuyển tọa độ</a>, rồi dán vào một trong ba ô bên dưới để tự điền đủ tọa độ.
-                        </div>
-                        {coordinatePasteNotice && <div className={`col-12 small ${coordinatePasteNotice.error ? 'text-danger' : 'text-success'}`} role="status" aria-live="polite">{coordinatePasteNotice.message}</div>}
-                        <div className="col-md-6">
-                            <label htmlFor={`base-latitude-${device.serial}`} className="form-label">Vĩ độ (WGS 84)</label>
-                            <input
-                                id={`base-latitude-${device.serial}`}
-                                type="text" inputMode="decimal" className="form-control"
-                                value={latitude} onChange={handleDecimalInputChange(setLatitude, activeChip === 'Ublox' ? 9 : 10)}
-                                onPaste={handleCoordinatePaste} aria-describedby={`base-coordinate-paste-help-${device.serial}${activeChip === 'Ublox' ? ` base-ublox-precision-${device.serial}` : activeChip === 'Unicorecomm' ? ` base-unicore-precision-${device.serial}` : ''}`}
-                                disabled={disabled || isSubmitting}
-                                required placeholder="Ví dụ: 21.028511"
-                            />
-                        </div>
-                        <div className="col-md-6">
-                            <label htmlFor={`base-longitude-${device.serial}`} className="form-label">Kinh độ (WGS 84)</label>
-                            <input
-                                id={`base-longitude-${device.serial}`}
-                                type="text" inputMode="decimal" className="form-control"
-                                value={longitude} onChange={handleDecimalInputChange(setLongitude, activeChip === 'Ublox' ? 9 : 10)}
-                                onPaste={handleCoordinatePaste} aria-describedby={`base-coordinate-paste-help-${device.serial}${activeChip === 'Ublox' ? ` base-ublox-precision-${device.serial}` : activeChip === 'Unicorecomm' ? ` base-unicore-precision-${device.serial}` : ''}`}
-                                disabled={disabled || isSubmitting}
-                                required placeholder="Ví dụ: 105.854167"
-                            />
-                        </div>
-                        {activeChip === 'Ublox' && <div id={`base-ublox-precision-${device.serial}`} className="col-12 form-text mt-1">
-                            Ublox: vĩ độ và kinh độ tối đa 9 chữ số sau dấu . hoặc , — không nhận chữ số thứ 10.
-                        </div>}
-                        {activeChip === 'Unicorecomm' && <div id={`base-unicore-precision-${device.serial}`} className="col-12 form-text mt-1">
-                            Unicorecomm: vĩ độ và kinh độ gửi xuống chip có 10 chữ số thập phân; cắt phần dư, không làm tròn. Phép tính giữ đủ độ chính xác.
-                        </div>}
-                        <div className="col-md-6">
-                            <label htmlFor={`base-altitude-${device.serial}`} className="form-label">{activeChip === 'Ublox' || altitudeReference === 'ELLIPSOID' ? 'Độ cao h ellipsoid (mét)' : 'Độ cao theo cấu hình chip (mét)'}</label>
-                            <input
-                                id={`base-altitude-${device.serial}`}
-                                type="text" inputMode="decimal" className="form-control"
-                                value={altitude} onChange={handleDecimalInputChange(setAltitude)}
-                                onPaste={handleCoordinatePaste} aria-describedby={`base-coordinate-paste-help-${device.serial}`}
-                                disabled={disabled || isSubmitting}
-                                required placeholder="Ví dụ: 15.5"
-                            />
-                            {activeChip !== 'Ublox' && <>
-                                <label htmlFor={`base-altitude-reference-${device.serial}`} className="form-label small mt-2">Cách chip hiểu độ cao</label>
-                                <select id={`base-altitude-reference-${device.serial}`} className="form-select"
-                                    value={altitudeReference} disabled={disabled || isSubmitting}
-                                    aria-describedby={`base-altitude-reference-help-${device.serial}`}
-                                    onChange={event => { setAltitudeReference(event.target.value); setCoordinatePasteNotice(null); }}>
-                                    <option value="ELLIPSOID">h ellipsoid WGS 84</option>
-                                    <option value="LEGACY">Giữ theo cấu hình geoid hiện tại của chip</option>
-                                </select>
-                                <div id={`base-altitude-reference-help-${device.serial}`} className="form-text">Dán từ công cụ sẽ chọn h ellipsoid. Cấu hình cũ giữ cách hiểu hiện tại của chip.</div>
-                            </>}
-                        </div>
-                        <div className="col-md-6">
-                            <label htmlFor={`base-accuracy-${device.serial}`} className="form-label fw-bold">Độ chính xác tọa độ Base (3D)</label>
-                            <div className="input-group">
-                            <input
-                                id={`base-accuracy-${device.serial}`}
-                                type="number" className="form-control" min="0.0001" max="10000" step="0.0001"
-                                aria-describedby={`base-accuracy-help-${device.serial}`}
-                                value={fixedAccuracyM} onChange={(e) => setFixedAccuracyM(e.target.value)}
-                                required placeholder="Ví dụ: 0.05"
-                            />
-                            <span className="input-group-text">m</span>
-                            </div>
-                            <div id={`base-accuracy-help-${device.serial}`} className="form-text">Chỉ nhập số: 5 = 5 m. Sai số 3D khai báo của tọa độ gốc; không phải độ chính xác đo được từ RTCM.</div>
-                        </div>
-                    </div>
+                    <AutoCorsConfigFields
+                        device={device}
+                        supportsAutoBaseReview={supportsAutoBaseReview}
+                        supportsAutoBaseNearest={supportsAutoBaseNearest}
+                        corsSourceMode={corsSourceMode}
+                        setCorsSourceMode={setCorsSourceMode}
+                        disabled={disabled}
+                        isAutoSetupActive={isAutoSetupActive}
+                        autoFixedResult={autoFixedResult}
+                        corsHost={corsHost}
+                        setCorsHost={setCorsHost}
+                        corsPort={corsPort}
+                        setCorsPort={setCorsPort}
+                        corsUsername={corsUsername}
+                        setCorsUsername={setCorsUsername}
+                        corsPassword={corsPassword}
+                        setCorsPassword={setCorsPassword}
+                        handleCorsFieldChange={handleCorsFieldChange}
+                        handleLoadCorsMountpoints={handleLoadCorsMountpoints}
+                        isLoadingCorsSources={isLoadingCorsSources}
+                        isSubmitting={isSubmitting}
+                        corsLookupError={corsLookupError}
+                        corsSources={corsSources}
+                        selectedMountpoint={selectedMountpoint}
+                        setSelectedMountpoint={setSelectedMountpoint}
+                        projectionMeridian={projectionMeridian}
+                        setProjectionMeridian={setProjectionMeridian}
+                        projectionScale={projectionScale}
+                        setProjectionScale={setProjectionScale}
+                        isAutoSetupStatus={isAutoSetupStatus}
+                    />
                 ) : (
-                    <div className="row g-3">
-                        <div className="col-12 text-muted small fst-italic mb-2">
-                            * Chế độ này thiết bị sẽ tự đo trung bình cộng vị trí. Phù hợp thiết lập trạm tạm thời.
-                        </div>
-                        <div className="col-md-6">
-                            <label htmlFor="base-survey-duration" className="form-label">Thời gian khảo sát (giây)</label>
-                            <input id="base-survey-duration"
-                                type="number" className="form-control"
-                                value={svinDuration} onChange={(e) => setSvinDuration(e.target.value)}
-                                required
-                            />
-                            <div className="form-text">Tối thiểu: 60s. Khuyên dùng: &gt; 300s.</div>
-                        </div>
-                        <div className="col-md-6">
-                            {activeChip === 'Unicorecomm' ? (
-                                <div className="form-text mt-4">UM tự lấy trung bình theo thời gian. Kết quả cần được kiểm tra trước khi dùng làm tọa độ cố định.</div>
-                            ) : <>
-                            <label htmlFor="base-survey-accuracy" className="form-label fw-bold">Giới hạn sai số (m)</label>
-                            <input id="base-survey-accuracy"
-                                type="number" step="0.01" className="form-control"
-                                value={svinAccuracyM} onChange={(e) => setSvinAccuracyM(e.target.value)}
-                                required placeholder="Ví dụ: 3.0"
-                            />
-                            <div className="form-text text-danger">Đơn vị: MÉT (Ví dụ nhập 3.0 là 3 mét)</div>
-                            </>}
-                        </div>
-                    </div>
+                    <BaseCoordinateMethodFields
+                        method={method}
+                        device={device}
+                        coordinatePasteNotice={coordinatePasteNotice}
+                        latitude={latitude}
+                        setLatitude={setLatitude}
+                        longitude={longitude}
+                        setLongitude={setLongitude}
+                        handleDecimalInputChange={handleDecimalInputChange}
+                        activeChip={activeChip}
+                        handleCoordinatePaste={handleCoordinatePaste}
+                        disabled={disabled}
+                        isSubmitting={isSubmitting}
+                        altitude={altitude}
+                        setAltitude={setAltitude}
+                        altitudeReference={altitudeReference}
+                        setAltitudeReference={setAltitudeReference}
+                        setCoordinatePasteNotice={setCoordinatePasteNotice}
+                        fixedAccuracyM={fixedAccuracyM}
+                        setFixedAccuracyM={setFixedAccuracyM}
+                        svinDuration={svinDuration}
+                        setSvinDuration={setSvinDuration}
+                        svinAccuracyM={svinAccuracyM}
+                        setSvinAccuracyM={setSvinAccuracyM}
+                    />
                 )}
 
                 <GnssOutputPolicyPanel
