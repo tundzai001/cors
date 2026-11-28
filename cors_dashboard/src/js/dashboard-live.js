@@ -1269,6 +1269,316 @@ function getDashboardFixInfo(device, liveDataAvailable, isReadonly4g, rtkStatus)
     return DASHBOARD_RTK_FIX_INFO[rtkStatus] || DASHBOARD_RTK_FIX_INFO.NO_FIX;
 }
 
+const RtcmAntennaPanel = memo(function RtcmAntennaPanel({ device, liveDataAvailable, rtcmMessageTypes, metrics, safeNmeaData }) {
+    return (
+        <>
+            {/* RTCM & ANTENNA ASSESSMENT - REDESIGNED */}
+            <div className="card mb-3 bg-dark border-secondary">
+                <div className="card-header d-flex align-items-center bg-dark">
+                    <i className="bi bi-broadcast me-2 text-primary"></i>
+                    <h6 className="mb-0">RTCM & Antenna Assessment</h6>
+                </div>
+                <div className="card-body p-3">
+                    {(rtcmMessageTypes.length === 0) ? (
+                        <div className="text-muted small text-center my-3">
+                            <i className="bi bi-hourglass-split me-2"></i>
+                            Đang chờ dữ liệu giải mã RTCM từ trạm...
+                        </div>
+                    ) : (() => {
+                        const rtcmDescriptions = {
+                            "1001": { name: "GPS L1 Obs (Basic)", desc: "Quan trắc GPS L1 cơ bản", category: "obs" },
+                            "1002": { name: "GPS L1 Obs (Extended)", desc: "Quan trắc GPS L1 mở rộng", category: "obs" },
+                            "1003": { name: "GPS L1/L2 Obs (Basic)", desc: "Quan trắc GPS L1/L2 cơ bản", category: "obs" },
+                            "1004": { name: "GPS L1/L2 Obs (Extended)", desc: "Quan trắc GPS L1/L2 mở rộng", category: "obs" },
+                            "1005": { name: "Base Position (ARP)", desc: "Tọa độ trạm Base (không có chiều cao ăng-ten)", category: "base" },
+                            "1006": { name: "Base Position + Height", desc: "Tọa độ trạm Base kèm chiều cao ăng-ten", category: "base" },
+                            "1007": { name: "Antenna Descriptor", desc: "Mô tả loại ăng-ten đang sử dụng", category: "base" },
+                            "1008": { name: "Antenna Serial Number", desc: "Số serial ăng-ten", category: "base" },
+                            "1019": { name: "GPS Ephemeris", desc: "Lịch thiên văn GPS – Quỹ đạo chính xác vệ tinh GPS", category: "eph" },
+                            "1020": { name: "GLONASS Ephemeris", desc: "Lịch thiên văn GLONASS – Quỹ đạo vệ tinh GLONASS", category: "eph" },
+                            "1033": { name: "Receiver & Antenna", desc: "Thông tin máy thu và ăng-ten (model, firmware)", category: "base" },
+                            "1042": { name: "BeiDou Ephemeris", desc: "Lịch thiên văn BeiDou – Quỹ đạo vệ tinh BDS", category: "eph" },
+                            "1044": { name: "QZSS Ephemeris", desc: "Lịch thiên văn QZSS – Quỹ đạo vệ tinh Nhật Bản", category: "eph" },
+                            "1045": { name: "Galileo F/NAV Eph", desc: "Lịch thiên văn Galileo F/NAV – Quỹ đạo vệ tinh EU", category: "eph" },
+                            "1046": { name: "Galileo I/NAV Eph", desc: "Lịch thiên văn Galileo I/NAV", category: "eph" },
+                            "1074": { name: "GPS MSM4", desc: "Tín hiệu đo GPS đa tần – Pseudorange + Carrier Phase", category: "msm" },
+                            "1077": { name: "GPS MSM7", desc: "Tín hiệu GPS đầy đủ (Full) – Độ chính xác cao nhất", category: "msm" },
+                            "1084": { name: "GLONASS MSM4", desc: "Tín hiệu đo GLONASS đa tần", category: "msm" },
+                            "1087": { name: "GLONASS MSM7", desc: "Tín hiệu GLONASS đầy đủ (Full)", category: "msm" },
+                            "1094": { name: "Galileo MSM4", desc: "Tín hiệu đo Galileo đa tần", category: "msm" },
+                            "1097": { name: "Galileo MSM7", desc: "Tín hiệu Galileo đầy đủ (Full)", category: "msm" },
+                            "1114": { name: "QZSS MSM4", desc: "Tín hiệu đo QZSS đa tần (Nhật Bản)", category: "msm" },
+                            "1117": { name: "QZSS MSM7", desc: "Tín hiệu QZSS đầy đủ (Full)", category: "msm" },
+                            "1124": { name: "BeiDou MSM4", desc: "Tín hiệu đo BeiDou đa tần (Trung Quốc)", category: "msm" },
+                            "1127": { name: "BeiDou MSM7", desc: "Tín hiệu BeiDou đầy đủ (Full)", category: "msm" },
+                            "1230": { name: "GLONASS Code-Phase Bias", desc: "Hiệu chỉnh sai lệch mã-pha sóng GLONASS", category: "aux" },
+                        };
+                        const categoryLabels = {
+                            "msm": { label: "📡 Tín hiệu vệ tinh (MSM)", color: "#0d6efd" },
+                            "eph": { label: "🌍 Lịch thiên văn (Ephemeris)", color: "#6f42c1" },
+                            "base": { label: "📍 Thông tin trạm Base", color: "#20c997" },
+                            "obs": { label: "📊 Quan trắc cơ bản", color: "#fd7e14" },
+                            "aux": { label: "🔧 Hiệu chỉnh & Phụ trợ", color: "#adb5bd" },
+                        };
+                        const grouped = {};
+                        rtcmMessageTypes.sort((a, b) => Number(a) - Number(b)).forEach(type => {
+                            const info = rtcmDescriptions[type] || { name: `RTCM ${type}`, desc: "Bản tin RTCM khác", category: "aux" };
+                            const cat = info.category;
+                            if (!grouped[cat]) grouped[cat] = [];
+                            grouped[cat].push({ type, stat: device.rtcm_stats[type], ...info });
+                        });
+                        const catOrder = ["msm", "base", "eph", "obs", "aux"];
+                        return (
+                            <div>
+                                {catOrder.filter(c => grouped[c]).map(cat => {
+                                    const catInfo = categoryLabels[cat] || { label: cat, color: "#6c757d" };
+                                    return (
+                                        <div key={cat} className="mb-3">
+                                            <div className="d-flex align-items-center mb-2" style={{ borderLeft: `3px solid ${catInfo.color}`, paddingLeft: '8px' }}>
+                                                <span className="small fw-bold" style={{ color: catInfo.color }}>{catInfo.label}</span>
+                                            </div>
+                                            {grouped[cat].map(item => {
+                                                const isMsm = item.category === "msm";
+                                                let statusColor = "#6c757d";
+                                                let statusBg = "rgba(108,117,125,0.15)";
+                                                if (isMsm) {
+                                                    if (item.stat.interval <= 1.5) { statusColor = "#198754"; statusBg = "rgba(25,135,84,0.12)"; }
+                                                    else if (item.stat.interval <= 3.0) { statusColor = "#ffc107"; statusBg = "rgba(255,193,7,0.12)"; }
+                                                    else { statusColor = "#dc3545"; statusBg = "rgba(220,53,69,0.12)"; }
+                                                } else {
+                                                    if (item.stat.interval <= 15) { statusColor = "#0dcaf0"; statusBg = "rgba(13,202,240,0.10)"; }
+                                                    else { statusColor = "#6c757d"; statusBg = "rgba(108,117,125,0.10)"; }
+                                                }
+                                                return (
+                                                    <div key={item.type} className="d-flex align-items-center py-1 px-2 mb-1 rounded" style={{ backgroundColor: statusBg }}>
+                                                        <div style={{ minWidth: '52px' }}>
+                                                            <span className="badge fw-bold" style={{ backgroundColor: statusColor, fontSize: '0.8rem', minWidth: '44px', display: 'inline-block', textAlign: 'center' }}>{item.type}</span>
+                                                        </div>
+                                                        <div className="flex-grow-1 ms-2" style={{ lineHeight: 1.3 }}>
+                                                            <div className="small fw-semibold text-light">{item.name}</div>
+                                                            <div style={{ fontSize: '0.72rem', color: '#8b949e' }}>{item.desc}</div>
+                                                        </div>
+                                                        <div className="text-end ms-2" style={{ minWidth: '58px' }}>
+                                                            <span className="badge bg-dark bg-opacity-75 border" style={{ borderColor: `${statusColor} !important`, color: statusColor, fontSize: '0.78rem' }}>{item.stat.interval}s</span>
+                                                        </div>
+                                                    </div>
+                                                );
+                                            })}
+                                        </div>
+                                    );
+                                })}
+                            </div>
+                        );
+                    })()}
+                    <div className="mt-3 pt-3" style={{ borderTop: '1px solid rgba(255,255,255,0.08)' }}>
+                        <div className="text-muted small mb-2 text-uppercase">Antenna Quality Diagnostics</div>
+                        {(() => {
+                            const avgSnr = Number(metrics.signalStrength.value) || 0;
+                            const sats = metrics.satellites.value;
+                            const hasCoords = rtcmMessageTypes.some(k => k === "1005" || k === "1006");
+
+                            const antennaStatus = device.antenna_status || device.system_info?.antenna_status;
+                            const hasAgentAssessment = ['OK', 'FAULT'].includes(antennaStatus?.state);
+                            const isAntennaFault = antennaStatus?.state === "FAULT";
+                            const hasDecodedData = rtcmMessageTypes.length > 0;
+                            const hasSignalData = Boolean(safeNmeaData.gga) || Object.keys(safeNmeaData.satellites || {}).length > 0;
+
+                            const rtcmInputBps = liveDataAvailable ? Number(
+                                device.rtcm_input_bps ||
+                                device.ntrip_stats?.rtcm_input_bps ||
+                                device.ntrip_stats?.rtcm_in_bps ||
+                                device.mqtt_stats?.source_bps ||
+                                0
+                            ) : 0;
+
+                            const hasMsm = rtcmMessageTypes.some(k => {
+                                const t = Number(k);
+                                return t >= 1071 && t <= 1127;
+                            });
+
+                            return (
+                                <ul className="mb-0 text-light small ps-3" style={{ listStyleType: "circle" }}>
+                                    {!liveDataAvailable && (hasAgentAssessment || hasDecodedData) && (
+                                        <li className="text-warning mb-1">Trạm offline · Hiển thị dữ liệu đánh giá lần cuối.</li>
+                                    )}
+                                    {hasAgentAssessment && (
+                                        <li className={`${isAntennaFault ? 'text-danger' : 'text-success'} mb-1`}>
+                                            {isAntennaFault ? 'Cảnh báo Ăng-ten: ' : 'Đánh giá từ agent: '}
+                                            {antennaStatus.message || (isAntennaFault ? 'Phát hiện lỗi ăng-ten.' : 'Ăng-ten hoạt động bình thường.')}
+                                        </li>
+                                    )}
+                                    {!hasAgentAssessment && !hasDecodedData && !hasSignalData && (
+                                        <li className="text-info mb-1">Chưa có dữ liệu GNSS/RTCM để đánh giá.</li>
+                                    )}
+                                    {hasDecodedData && <>
+                                    {hasCoords ? (
+                                        <li className="text-success mb-1">Tọa độ Base (1005/1006) đã sẵn sàng.</li>
+                                    ) : (
+                                        <li className="text-danger mb-1">Chưa có gói tọa độ 1005/1006. Rover không thể FIX RTK!</li>
+                                    )}
+
+                                    {liveDataAvailable && !hasMsm && (
+                                        <li className="text-danger mb-1 fw-semibold">
+                                            <i className="bi bi-exclamation-triangle-fill me-1"></i>
+                                            Lỗi Giải mã RTCM: Không nhận được bất kỳ trị đo vệ tinh nào (gói MSM). Rover không thể FIX RTK!
+                                        </li>
+                                    )}
+
+                                    {liveDataAvailable && !hasAgentAssessment && rtcmInputBps > 0 && rtcmInputBps < 100 && !isAntennaFault && (
+                                        <li className="text-danger mb-1 fw-semibold">
+                                            <i className="bi bi-exclamation-triangle-fill me-1"></i>
+                                            Cảnh báo dòng dữ liệu: Tốc độ nhận RTCM từ máy thu cực thấp ({rtcmInputBps} B/s). Ăng-ten có thể đã hỏng hoặc lỏng cáp.
+                                        </li>
+                                    )}
+
+                                    </>}
+                                    {liveDataAvailable && hasSignalData && <>
+                                    {sats === 0 && !hasAgentAssessment && (
+                                        <li className="text-danger mb-1 fw-semibold">
+                                            <i className="bi bi-exclamation-triangle-fill me-1"></i>
+                                            Lỗi Tín hiệu: Không nhận được vệ tinh nào (0 Sats). Kiểm tra kết nối ăng-ten.
+                                        </li>
+                                    )}
+
+                                    {sats < 12 && sats > 0 && (
+                                        <li className="text-warning mb-1">Số lượng vệ tinh quan sát được khá thấp ({sats}). Góc nhìn bầu trời hẹp.</li>
+                                    )}
+
+                                    {avgSnr > 0 && avgSnr < 35 && (
+                                        <li className="text-warning mb-1">Cường độ tín hiệu thấp (SNR trung bình {avgSnr.toFixed(1)} dB-Hz). <strong>Khuyến nghị:</strong> Nâng cao ăng-ten hoặc đưa ra nơi trống trải.</li>
+                                    )}
+                                    {avgSnr >= 38 && (
+                                        <li className="text-success mb-1">C/N0 trung bình của các vệ tinh RTCM: {avgSnr.toFixed(1)} dB-Hz.</li>
+                                    )}
+                                    {avgSnr >= 35 && avgSnr < 38 && (
+                                        <li className="text-info mb-1">Tín hiệu ăng-ten đạt mức khá (SNR trung bình {avgSnr.toFixed(1)} dB-Hz).</li>
+                                    )}
+                                    </>}
+                                </ul>
+                            );
+                        })()}
+                    </div>
+                </div>
+            </div>
+        </>
+    );
+});
+
+const HardwareTelemetryPanel = memo(function HardwareTelemetryPanel({ device, liveDataAvailable, isReadonly4g }) {
+    return (
+        <>
+            {/* HARDWARE & ECO SAVINGS PANEL */}
+            {!isReadonly4g && device.system_info && (
+                <div className="card mb-3 border-0" style={{ background: 'linear-gradient(135deg, rgba(13,110,253,0.08), rgba(32,201,151,0.08))', border: '1px solid rgba(13,110,253,0.25)' }}>
+                    <div className="card-header d-flex align-items-center border-0" style={{ background: 'transparent' }}>
+                        <i className="bi bi-cpu-fill me-2" style={{ color: '#0dcaf0' }}></i>
+                        <h6 className="mb-0 text-light">Hardware Telemetry & Eco Savings</h6>
+                        <span className="badge ms-auto" style={{ backgroundColor: 'rgba(13,202,240,0.15)', color: '#0dcaf0', fontSize: '0.7rem' }}>Aitogy.com.vn</span>
+                    </div>
+                    <div className="card-body pt-0 pb-3 px-3">
+                        {(() => {
+                            const savings = device.savings_stats || device.system_info?.savings_stats || {};
+                            let isAwake = liveDataAvailable && (device.status !== "sleep");
+                            if (savings.is_sleeping !== undefined && savings.is_sleeping !== null) {
+                                isAwake = !savings.is_sleeping;
+                            } else {
+                                const cfg = device.service_config || {};
+                                if (cfg.server1_enabled) {
+                                    const s1Active = cfg.server1_stream_active !== undefined ? cfg.server1_stream_active : cfg.stream_active;
+                                    if (s1Active !== undefined && s1Active !== null) {
+                                        isAwake = !!s1Active;
+                                    }
+                                }
+                            }
+                            if (!liveDataAvailable) isAwake = false;
+
+                            const rtcmBps = liveDataAvailable ? Number(
+                                device.rtcm_input_bps ||
+                                device.ntrip_stats?.rtcm_input_bps ||
+                                device.ntrip_stats?.rtcm_in_bps ||
+                                device.mqtt_stats?.source_bps ||
+                                0
+                            ) : 0;
+                            const telemetryBps = savings.telemetry_bps || 0;
+                            const currentVolts = device.system_info?.cpu?.core_volts || null;
+
+                            return (
+                                <>
+                                    <div className="row g-2 mb-3">
+                                        {/* CỘT THỨC (AWAKE) */}
+                                        <div className="col-6">
+                                            <div className="rounded p-2" style={{ backgroundColor: isAwake ? 'rgba(25,135,84,0.1)' : 'rgba(255,255,255,0.02)', border: isAwake ? '1px solid #198754' : '1px solid transparent' }}>
+                                                <div className="fw-bold mb-2 text-center" style={{ color: isAwake ? '#198754' : '#8b949e', fontSize: '0.85rem' }}>
+                                                    <i className="bi bi-broadcast me-1"></i> Trạng thái Thức
+                                                </div>
+                                                <div className="d-flex justify-content-between mb-1" style={{ fontSize: '0.75rem' }}>
+                                                    <span className="text-muted">Mạng:</span>
+                                                    <span className="fw-bold text-light">{isAwake ? `${rtcmBps + telemetryBps} B/s` : '--'}</span>
+                                                </div>
+                                                <div className="d-flex justify-content-between mb-1" style={{ fontSize: '0.75rem' }}>
+                                                    <span className="text-muted">Điện áp:</span>
+                                                    <span className="fw-bold text-warning">{isAwake && currentVolts ? `${currentVolts}V` : '--'}</span>
+                                                </div>
+                                                <div className="d-flex justify-content-between" style={{ fontSize: '0.75rem' }}>
+                                                    <span className="text-muted">Công suất:</span>
+                                                    <span className="fw-bold text-success">{isAwake ? '3.5 W' : '--'}</span>
+                                                </div>
+                                            </div>
+                                        </div>
+
+                                        {/* CỘT NGỦ (SLEEP) */}
+                                        <div className="col-6">
+                                            <div className="rounded p-2" style={{ backgroundColor: !isAwake ? 'rgba(13,202,240,0.1)' : 'rgba(255,255,255,0.02)', border: !isAwake ? '1px solid #0dcaf0' : '1px solid transparent' }}>
+                                                <div className="fw-bold mb-2 text-center" style={{ color: !isAwake ? '#0dcaf0' : '#8b949e', fontSize: '0.85rem' }}>
+                                                    <i className="bi bi-moon-stars me-1"></i> Trạng thái Ngủ
+                                                </div>
+                                                <div className="d-flex justify-content-between mb-1" style={{ fontSize: '0.75rem' }}>
+                                                    <span className="text-muted">Mạng:</span>
+                                                    <span className="fw-bold text-light">{!isAwake ? `${telemetryBps} B/s` : '--'}</span>
+                                                </div>
+                                                <div className="d-flex justify-content-between mb-1" style={{ fontSize: '0.75rem' }}>
+                                                    <span className="text-muted">Điện áp:</span>
+                                                    <span className="fw-bold text-warning">{!isAwake && currentVolts ? `${currentVolts}V` : '--'}</span>
+                                                </div>
+                                                <div className="d-flex justify-content-between" style={{ fontSize: '0.75rem' }}>
+                                                    <span className="text-muted">Công suất:</span>
+                                                    <span className="fw-bold text-success">{!isAwake ? '2.8 W' : '--'}</span>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+
+                                    {(device.savings_stats || device.system_info?.savings_stats) && (() => {
+                                        const actualSavings = device.savings_stats || device.system_info?.savings_stats || {};
+                                        return (
+                                            <div className="rounded p-2 d-flex align-items-center justify-content-between" style={{ backgroundColor: 'rgba(25,135,84,0.12)', border: '1px solid rgba(25,135,84,0.3)' }}>
+                                                <div className="d-flex align-items-center">
+                                                    <i className="bi bi-shield-check fs-4 me-3" style={{ color: '#198754' }}></i>
+                                                    <div>
+                                                        <div style={{ fontSize: '0.7rem', color: '#8b949e', textTransform: 'uppercase' }}>Tích lũy tài nguyên đã tiết kiệm</div>
+                                                        <div className="fw-bold fs-5" style={{ color: '#198754', lineHeight: 1.2 }}>
+                                                            {((actualSavings.total_data_saved_bytes || 0) / 1048576).toFixed(2)} <span style={{fontSize: '0.65em'}}>MB</span>
+                                                        </div>
+                                                    </div>
+                                                </div>
+                                                <div className="text-end pe-2">
+                                                    <div className="fw-bold fs-5 text-warning" style={{ lineHeight: 1.2 }}>
+                                                        {actualSavings.total_saved_mwh ? actualSavings.total_saved_mwh.toFixed(1) : "0.0"} <span style={{fontSize: '0.65em'}}>mWh</span>
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        );
+                                    })()}
+                                </>
+                            );
+                        })()}
+                    </div>
+                </div>
+            )}
+        </>
+    );
+});
+
 const DashboardPanel = memo(function DashboardPanel({ device, nmeaData }) {
     const [offlineClockNow, setOfflineClockNow] = useState(Date.now());
     useEffect(() => {
@@ -1505,9 +1815,9 @@ const DashboardPanel = memo(function DashboardPanel({ device, nmeaData }) {
                 return acc;
             }, {});
             const avgSnr = activeSatellites.length > 0 ? totalSnr / activeSatellites.length : 0;
-            setSatStats({ 
-                total: activeSatellites.length, 
-                tracking: activeSatellites.filter(s => s.isTracking).length, 
+            setSatStats({
+                total: activeSatellites.length,
+                tracking: activeSatellites.filter(s => s.isTracking).length,
                 bySystem: groupedSats,
                 avgSnr: avgSnr,
                 lowSnrCount: lowSnrCount,
@@ -1583,7 +1893,7 @@ const DashboardPanel = memo(function DashboardPanel({ device, nmeaData }) {
         'GPS_FIX': { label: '3D', color: '#999999', icon: '📡', priority: 2 },
         'NO_FIX': { label: 'NO FIX', color: '#ff0000', icon: '❌', priority: 1 }
     };
-    
+
     const rtk_status = device.rtk_fix_status || 'NO_FIX';
     const fixInfo = FIX_STATUS_MAP[rtk_status] || FIX_STATUS_MAP['NO_FIX'];
     */
@@ -1664,303 +1974,15 @@ const DashboardPanel = memo(function DashboardPanel({ device, nmeaData }) {
                 <BaseLocationMap coords={baseCoords} rtcmOnly={isReadonly4g} />
             </div>
 
-            {/* RTCM & ANTENNA ASSESSMENT - REDESIGNED */}
-            <div className="card mb-3 bg-dark border-secondary">
-                <div className="card-header d-flex align-items-center bg-dark">
-                    <i className="bi bi-broadcast me-2 text-primary"></i>
-                    <h6 className="mb-0">RTCM & Antenna Assessment</h6>
-                </div>
-                <div className="card-body p-3">
-                    {(rtcmMessageTypes.length === 0) ? (
-                        <div className="text-muted small text-center my-3">
-                            <i className="bi bi-hourglass-split me-2"></i>
-                            Đang chờ dữ liệu giải mã RTCM từ trạm...
-                        </div>
-                    ) : (() => {
-                        const rtcmDescriptions = {
-                            "1001": { name: "GPS L1 Obs (Basic)", desc: "Quan trắc GPS L1 cơ bản", category: "obs" },
-                            "1002": { name: "GPS L1 Obs (Extended)", desc: "Quan trắc GPS L1 mở rộng", category: "obs" },
-                            "1003": { name: "GPS L1/L2 Obs (Basic)", desc: "Quan trắc GPS L1/L2 cơ bản", category: "obs" },
-                            "1004": { name: "GPS L1/L2 Obs (Extended)", desc: "Quan trắc GPS L1/L2 mở rộng", category: "obs" },
-                            "1005": { name: "Base Position (ARP)", desc: "Tọa độ trạm Base (không có chiều cao ăng-ten)", category: "base" },
-                            "1006": { name: "Base Position + Height", desc: "Tọa độ trạm Base kèm chiều cao ăng-ten", category: "base" },
-                            "1007": { name: "Antenna Descriptor", desc: "Mô tả loại ăng-ten đang sử dụng", category: "base" },
-                            "1008": { name: "Antenna Serial Number", desc: "Số serial ăng-ten", category: "base" },
-                            "1019": { name: "GPS Ephemeris", desc: "Lịch thiên văn GPS – Quỹ đạo chính xác vệ tinh GPS", category: "eph" },
-                            "1020": { name: "GLONASS Ephemeris", desc: "Lịch thiên văn GLONASS – Quỹ đạo vệ tinh GLONASS", category: "eph" },
-                            "1033": { name: "Receiver & Antenna", desc: "Thông tin máy thu và ăng-ten (model, firmware)", category: "base" },
-                            "1042": { name: "BeiDou Ephemeris", desc: "Lịch thiên văn BeiDou – Quỹ đạo vệ tinh BDS", category: "eph" },
-                            "1044": { name: "QZSS Ephemeris", desc: "Lịch thiên văn QZSS – Quỹ đạo vệ tinh Nhật Bản", category: "eph" },
-                            "1045": { name: "Galileo F/NAV Eph", desc: "Lịch thiên văn Galileo F/NAV – Quỹ đạo vệ tinh EU", category: "eph" },
-                            "1046": { name: "Galileo I/NAV Eph", desc: "Lịch thiên văn Galileo I/NAV", category: "eph" },
-                            "1074": { name: "GPS MSM4", desc: "Tín hiệu đo GPS đa tần – Pseudorange + Carrier Phase", category: "msm" },
-                            "1077": { name: "GPS MSM7", desc: "Tín hiệu GPS đầy đủ (Full) – Độ chính xác cao nhất", category: "msm" },
-                            "1084": { name: "GLONASS MSM4", desc: "Tín hiệu đo GLONASS đa tần", category: "msm" },
-                            "1087": { name: "GLONASS MSM7", desc: "Tín hiệu GLONASS đầy đủ (Full)", category: "msm" },
-                            "1094": { name: "Galileo MSM4", desc: "Tín hiệu đo Galileo đa tần", category: "msm" },
-                            "1097": { name: "Galileo MSM7", desc: "Tín hiệu Galileo đầy đủ (Full)", category: "msm" },
-                            "1114": { name: "QZSS MSM4", desc: "Tín hiệu đo QZSS đa tần (Nhật Bản)", category: "msm" },
-                            "1117": { name: "QZSS MSM7", desc: "Tín hiệu QZSS đầy đủ (Full)", category: "msm" },
-                            "1124": { name: "BeiDou MSM4", desc: "Tín hiệu đo BeiDou đa tần (Trung Quốc)", category: "msm" },
-                            "1127": { name: "BeiDou MSM7", desc: "Tín hiệu BeiDou đầy đủ (Full)", category: "msm" },
-                            "1230": { name: "GLONASS Code-Phase Bias", desc: "Hiệu chỉnh sai lệch mã-pha sóng GLONASS", category: "aux" },
-                        };
-                        const categoryLabels = {
-                            "msm": { label: "📡 Tín hiệu vệ tinh (MSM)", color: "#0d6efd" },
-                            "eph": { label: "🌍 Lịch thiên văn (Ephemeris)", color: "#6f42c1" },
-                            "base": { label: "📍 Thông tin trạm Base", color: "#20c997" },
-                            "obs": { label: "📊 Quan trắc cơ bản", color: "#fd7e14" },
-                            "aux": { label: "🔧 Hiệu chỉnh & Phụ trợ", color: "#adb5bd" },
-                        };
-                        const grouped = {};
-                        rtcmMessageTypes.sort((a, b) => Number(a) - Number(b)).forEach(type => {
-                            const info = rtcmDescriptions[type] || { name: `RTCM ${type}`, desc: "Bản tin RTCM khác", category: "aux" };
-                            const cat = info.category;
-                            if (!grouped[cat]) grouped[cat] = [];
-                            grouped[cat].push({ type, stat: device.rtcm_stats[type], ...info });
-                        });
-                        const catOrder = ["msm", "base", "eph", "obs", "aux"];
-                        return (
-                            <div>
-                                {catOrder.filter(c => grouped[c]).map(cat => {
-                                    const catInfo = categoryLabels[cat] || { label: cat, color: "#6c757d" };
-                                    return (
-                                        <div key={cat} className="mb-3">
-                                            <div className="d-flex align-items-center mb-2" style={{ borderLeft: `3px solid ${catInfo.color}`, paddingLeft: '8px' }}>
-                                                <span className="small fw-bold" style={{ color: catInfo.color }}>{catInfo.label}</span>
-                                            </div>
-                                            {grouped[cat].map(item => {
-                                                const isMsm = item.category === "msm";
-                                                let statusColor = "#6c757d";
-                                                let statusBg = "rgba(108,117,125,0.15)";
-                                                if (isMsm) {
-                                                    if (item.stat.interval <= 1.5) { statusColor = "#198754"; statusBg = "rgba(25,135,84,0.12)"; }
-                                                    else if (item.stat.interval <= 3.0) { statusColor = "#ffc107"; statusBg = "rgba(255,193,7,0.12)"; }
-                                                    else { statusColor = "#dc3545"; statusBg = "rgba(220,53,69,0.12)"; }
-                                                } else {
-                                                    if (item.stat.interval <= 15) { statusColor = "#0dcaf0"; statusBg = "rgba(13,202,240,0.10)"; }
-                                                    else { statusColor = "#6c757d"; statusBg = "rgba(108,117,125,0.10)"; }
-                                                }
-                                                return (
-                                                    <div key={item.type} className="d-flex align-items-center py-1 px-2 mb-1 rounded" style={{ backgroundColor: statusBg }}>
-                                                        <div style={{ minWidth: '52px' }}>
-                                                            <span className="badge fw-bold" style={{ backgroundColor: statusColor, fontSize: '0.8rem', minWidth: '44px', display: 'inline-block', textAlign: 'center' }}>{item.type}</span>
-                                                        </div>
-                                                        <div className="flex-grow-1 ms-2" style={{ lineHeight: 1.3 }}>
-                                                            <div className="small fw-semibold text-light">{item.name}</div>
-                                                            <div style={{ fontSize: '0.72rem', color: '#8b949e' }}>{item.desc}</div>
-                                                        </div>
-                                                        <div className="text-end ms-2" style={{ minWidth: '58px' }}>
-                                                            <span className="badge bg-dark bg-opacity-75 border" style={{ borderColor: `${statusColor} !important`, color: statusColor, fontSize: '0.78rem' }}>{item.stat.interval}s</span>
-                                                        </div>
-                                                    </div>
-                                                );
-                                            })}
-                                        </div>
-                                    );
-                                })}
-                            </div>
-                        );
-                    })()}
-                    <div className="mt-3 pt-3" style={{ borderTop: '1px solid rgba(255,255,255,0.08)' }}>
-                        <div className="text-muted small mb-2 text-uppercase">Antenna Quality Diagnostics</div>
-                        {(() => {
-                            const avgSnr = Number(metrics.signalStrength.value) || 0;
-                            const sats = metrics.satellites.value;
-                            const hasCoords = rtcmMessageTypes.some(k => k === "1005" || k === "1006");
-                            
-                            const antennaStatus = device.antenna_status || device.system_info?.antenna_status;
-                            const hasAgentAssessment = ['OK', 'FAULT'].includes(antennaStatus?.state);
-                            const isAntennaFault = antennaStatus?.state === "FAULT";
-                            const hasDecodedData = rtcmMessageTypes.length > 0;
-                            const hasSignalData = Boolean(safeNmeaData.gga) || Object.keys(safeNmeaData.satellites || {}).length > 0;
-                            
-                            const rtcmInputBps = liveDataAvailable ? Number(
-                                device.rtcm_input_bps ||
-                                device.ntrip_stats?.rtcm_input_bps ||
-                                device.ntrip_stats?.rtcm_in_bps ||
-                                device.mqtt_stats?.source_bps ||
-                                0
-                            ) : 0;
+            <RtcmAntennaPanel
+                device={device}
+                liveDataAvailable={liveDataAvailable}
+                rtcmMessageTypes={rtcmMessageTypes}
+                metrics={metrics}
+                safeNmeaData={safeNmeaData}
+            />
 
-                            const hasMsm = rtcmMessageTypes.some(k => {
-                                const t = Number(k);
-                                return t >= 1071 && t <= 1127;
-                            });
-
-                            return (
-                                <ul className="mb-0 text-light small ps-3" style={{ listStyleType: "circle" }}>
-                                    {!liveDataAvailable && (hasAgentAssessment || hasDecodedData) && (
-                                        <li className="text-warning mb-1">Trạm offline · Hiển thị dữ liệu đánh giá lần cuối.</li>
-                                    )}
-                                    {hasAgentAssessment && (
-                                        <li className={`${isAntennaFault ? 'text-danger' : 'text-success'} mb-1`}>
-                                            {isAntennaFault ? 'Cảnh báo Ăng-ten: ' : 'Đánh giá từ agent: '}
-                                            {antennaStatus.message || (isAntennaFault ? 'Phát hiện lỗi ăng-ten.' : 'Ăng-ten hoạt động bình thường.')}
-                                        </li>
-                                    )}
-                                    {!hasAgentAssessment && !hasDecodedData && !hasSignalData && (
-                                        <li className="text-info mb-1">Chưa có dữ liệu GNSS/RTCM để đánh giá.</li>
-                                    )}
-                                    {hasDecodedData && <>
-                                    {hasCoords ? (
-                                        <li className="text-success mb-1">Tọa độ Base (1005/1006) đã sẵn sàng.</li>
-                                    ) : (
-                                        <li className="text-danger mb-1">Chưa có gói tọa độ 1005/1006. Rover không thể FIX RTK!</li>
-                                    )}
-
-                                    {liveDataAvailable && !hasMsm && (
-                                        <li className="text-danger mb-1 fw-semibold">
-                                            <i className="bi bi-exclamation-triangle-fill me-1"></i>
-                                            Lỗi Giải mã RTCM: Không nhận được bất kỳ trị đo vệ tinh nào (gói MSM). Rover không thể FIX RTK!
-                                        </li>
-                                    )}
-
-                                    {liveDataAvailable && !hasAgentAssessment && rtcmInputBps > 0 && rtcmInputBps < 100 && !isAntennaFault && (
-                                        <li className="text-danger mb-1 fw-semibold">
-                                            <i className="bi bi-exclamation-triangle-fill me-1"></i>
-                                            Cảnh báo dòng dữ liệu: Tốc độ nhận RTCM từ máy thu cực thấp ({rtcmInputBps} B/s). Ăng-ten có thể đã hỏng hoặc lỏng cáp.
-                                        </li>
-                                    )}
-                                    
-                                    </>}
-                                    {liveDataAvailable && hasSignalData && <>
-                                    {sats === 0 && !hasAgentAssessment && (
-                                        <li className="text-danger mb-1 fw-semibold">
-                                            <i className="bi bi-exclamation-triangle-fill me-1"></i>
-                                            Lỗi Tín hiệu: Không nhận được vệ tinh nào (0 Sats). Kiểm tra kết nối ăng-ten.
-                                        </li>
-                                    )}
-                                    
-                                    {sats < 12 && sats > 0 && (
-                                        <li className="text-warning mb-1">Số lượng vệ tinh quan sát được khá thấp ({sats}). Góc nhìn bầu trời hẹp.</li>
-                                    )}
-                                    
-                                    {avgSnr > 0 && avgSnr < 35 && (
-                                        <li className="text-warning mb-1">Cường độ tín hiệu thấp (SNR trung bình {avgSnr.toFixed(1)} dB-Hz). <strong>Khuyến nghị:</strong> Nâng cao ăng-ten hoặc đưa ra nơi trống trải.</li>
-                                    )}
-                                    {avgSnr >= 38 && (
-                                        <li className="text-success mb-1">C/N0 trung bình của các vệ tinh RTCM: {avgSnr.toFixed(1)} dB-Hz.</li>
-                                    )}
-                                    {avgSnr >= 35 && avgSnr < 38 && (
-                                        <li className="text-info mb-1">Tín hiệu ăng-ten đạt mức khá (SNR trung bình {avgSnr.toFixed(1)} dB-Hz).</li>
-                                    )}
-                                    </>}
-                                </ul>
-                            );
-                        })()}
-                    </div>
-                </div>
-            </div>
-
-            {/* HARDWARE & ECO SAVINGS PANEL */}
-            {!isReadonly4g && device.system_info && (
-                <div className="card mb-3 border-0" style={{ background: 'linear-gradient(135deg, rgba(13,110,253,0.08), rgba(32,201,151,0.08))', border: '1px solid rgba(13,110,253,0.25)' }}>
-                    <div className="card-header d-flex align-items-center border-0" style={{ background: 'transparent' }}>
-                        <i className="bi bi-cpu-fill me-2" style={{ color: '#0dcaf0' }}></i>
-                        <h6 className="mb-0 text-light">Hardware Telemetry & Eco Savings</h6>
-                        <span className="badge ms-auto" style={{ backgroundColor: 'rgba(13,202,240,0.15)', color: '#0dcaf0', fontSize: '0.7rem' }}>Aitogy.com.vn</span>
-                    </div>
-                    <div className="card-body pt-0 pb-3 px-3">
-                        {(() => {
-                            const savings = device.savings_stats || device.system_info?.savings_stats || {};
-                            let isAwake = liveDataAvailable && (device.status !== "sleep");
-                            if (savings.is_sleeping !== undefined && savings.is_sleeping !== null) {
-                                isAwake = !savings.is_sleeping;
-                            } else {
-                                const cfg = device.service_config || {};
-                                if (cfg.server1_enabled) {
-                                    const s1Active = cfg.server1_stream_active !== undefined ? cfg.server1_stream_active : cfg.stream_active;
-                                    if (s1Active !== undefined && s1Active !== null) {
-                                        isAwake = !!s1Active;
-                                    }
-                                }
-                            }
-                            if (!liveDataAvailable) isAwake = false;
-
-                            const rtcmBps = liveDataAvailable ? Number(
-                                device.rtcm_input_bps ||
-                                device.ntrip_stats?.rtcm_input_bps ||
-                                device.ntrip_stats?.rtcm_in_bps ||
-                                device.mqtt_stats?.source_bps ||
-                                0
-                            ) : 0;
-                            const telemetryBps = savings.telemetry_bps || 0;
-                            const currentVolts = device.system_info?.cpu?.core_volts || null;
-
-                            return (
-                                <>
-                                    <div className="row g-2 mb-3">
-                                        {/* CỘT THỨC (AWAKE) */}
-                                        <div className="col-6">
-                                            <div className="rounded p-2" style={{ backgroundColor: isAwake ? 'rgba(25,135,84,0.1)' : 'rgba(255,255,255,0.02)', border: isAwake ? '1px solid #198754' : '1px solid transparent' }}>
-                                                <div className="fw-bold mb-2 text-center" style={{ color: isAwake ? '#198754' : '#8b949e', fontSize: '0.85rem' }}>
-                                                    <i className="bi bi-broadcast me-1"></i> Trạng thái Thức
-                                                </div>
-                                                <div className="d-flex justify-content-between mb-1" style={{ fontSize: '0.75rem' }}>
-                                                    <span className="text-muted">Mạng:</span>
-                                                    <span className="fw-bold text-light">{isAwake ? `${rtcmBps + telemetryBps} B/s` : '--'}</span>
-                                                </div>
-                                                <div className="d-flex justify-content-between mb-1" style={{ fontSize: '0.75rem' }}>
-                                                    <span className="text-muted">Điện áp:</span>
-                                                    <span className="fw-bold text-warning">{isAwake && currentVolts ? `${currentVolts}V` : '--'}</span>
-                                                </div>
-                                                <div className="d-flex justify-content-between" style={{ fontSize: '0.75rem' }}>
-                                                    <span className="text-muted">Công suất:</span>
-                                                    <span className="fw-bold text-success">{isAwake ? '3.5 W' : '--'}</span>
-                                                </div>
-                                            </div>
-                                        </div>
-                                        
-                                        {/* CỘT NGỦ (SLEEP) */}
-                                        <div className="col-6">
-                                            <div className="rounded p-2" style={{ backgroundColor: !isAwake ? 'rgba(13,202,240,0.1)' : 'rgba(255,255,255,0.02)', border: !isAwake ? '1px solid #0dcaf0' : '1px solid transparent' }}>
-                                                <div className="fw-bold mb-2 text-center" style={{ color: !isAwake ? '#0dcaf0' : '#8b949e', fontSize: '0.85rem' }}>
-                                                    <i className="bi bi-moon-stars me-1"></i> Trạng thái Ngủ
-                                                </div>
-                                                <div className="d-flex justify-content-between mb-1" style={{ fontSize: '0.75rem' }}>
-                                                    <span className="text-muted">Mạng:</span>
-                                                    <span className="fw-bold text-light">{!isAwake ? `${telemetryBps} B/s` : '--'}</span>
-                                                </div>
-                                                <div className="d-flex justify-content-between mb-1" style={{ fontSize: '0.75rem' }}>
-                                                    <span className="text-muted">Điện áp:</span>
-                                                    <span className="fw-bold text-warning">{!isAwake && currentVolts ? `${currentVolts}V` : '--'}</span>
-                                                </div>
-                                                <div className="d-flex justify-content-between" style={{ fontSize: '0.75rem' }}>
-                                                    <span className="text-muted">Công suất:</span>
-                                                    <span className="fw-bold text-success">{!isAwake ? '2.8 W' : '--'}</span>
-                                                </div>
-                                            </div>
-                                        </div>
-                                    </div>
-                                    
-                                    {(device.savings_stats || device.system_info?.savings_stats) && (() => {
-                                        const actualSavings = device.savings_stats || device.system_info?.savings_stats || {};
-                                        return (
-                                            <div className="rounded p-2 d-flex align-items-center justify-content-between" style={{ backgroundColor: 'rgba(25,135,84,0.12)', border: '1px solid rgba(25,135,84,0.3)' }}>
-                                                <div className="d-flex align-items-center">
-                                                    <i className="bi bi-shield-check fs-4 me-3" style={{ color: '#198754' }}></i>
-                                                    <div>
-                                                        <div style={{ fontSize: '0.7rem', color: '#8b949e', textTransform: 'uppercase' }}>Tích lũy tài nguyên đã tiết kiệm</div>
-                                                        <div className="fw-bold fs-5" style={{ color: '#198754', lineHeight: 1.2 }}>
-                                                            {((actualSavings.total_data_saved_bytes || 0) / 1048576).toFixed(2)} <span style={{fontSize: '0.65em'}}>MB</span>
-                                                        </div>
-                                                    </div>
-                                                </div>
-                                                <div className="text-end pe-2">
-                                                    <div className="fw-bold fs-5 text-warning" style={{ lineHeight: 1.2 }}>
-                                                        {actualSavings.total_saved_mwh ? actualSavings.total_saved_mwh.toFixed(1) : "0.0"} <span style={{fontSize: '0.65em'}}>mWh</span>
-                                                    </div>
-                                                </div>
-                                            </div>
-                                        );
-                                    })()}
-                                </>
-                            );
-                        })()}
-                    </div>
-                </div>
-            )}
+            <HardwareTelemetryPanel device={device} liveDataAvailable={liveDataAvailable} isReadonly4g={isReadonly4g} />
 
             {/* SKYPLOT & SIGNALS */}
             {device.detected_chip_type === 'Unicorecomm' && Object.keys(safeNmeaData.satellites || {}).length === 0 && (

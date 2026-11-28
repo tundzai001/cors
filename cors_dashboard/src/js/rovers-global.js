@@ -2014,50 +2014,93 @@ document.addEventListener('DOMContentLoaded', async () => {
         return `<button class="rover-history-action-button rover-history-delete-session" type="button" data-session-id="${session.id}" data-date="${escapeHtml(selectedDate)}" data-page="${currentPage}"><i class="bi bi-trash3" aria-hidden="true"></i><span>Xóa phiên</span></button>`;
     }
 
-    function renderRoverHistorySessionHtml(session, options) {
-        const {isAdmin, selectedDate, currentPage, autoSaveFixedPointsEnabled, autoPointIntervalLabel} = options;
+    function getRoverHistorySessionState(session) {
         const ended = Boolean(session.ended_at);
-        const points = Array.isArray(session.points) ? session.points : [];
-        const currentFixQuality = session.current_fix_quality == null ? Number.NaN : Number(session.current_fix_quality);
-        const currentFixLabel = Number.isFinite(currentFixQuality) ? roverFixQualityLabel(currentFixQuality) : 'Chưa có dữ liệu';
+        return {
+            ended,
+            className: ended ? 'is-ended' : 'is-active',
+            statusLabel: ended ? 'Đã kết thúc' : 'Đang hoạt động',
+            updatedLabel: formatDateTime(ended ? session.ended_at : session.last_seen_at),
+            updateTitle: ended ? 'Kết thúc' : 'Cập nhật cuối',
+        };
+    }
+
+    function getRoverHistorySessionPoints(session) {
+        return Array.isArray(session.points) ? session.points : [];
+    }
+
+    function getRoverHistorySessionFixLabel(session) {
+        const quality = session.current_fix_quality == null ? Number.NaN : Number(session.current_fix_quality);
+        return Number.isFinite(quality) ? roverFixQualityLabel(quality) : 'Chưa có dữ liệu';
+    }
+
+    function renderRoverHistorySessionMetadataHtml(session, state, fixLabel) {
+        const satellitesLabel = session.satellites == null ? 'Không rõ' : escapeHtml(session.satellites);
+        const uptimeLabel = session.uptime_seconds == null ? 'Không rõ' : escapeHtml(formatDuration(session.uptime_seconds));
+        return `<div class="rover-history-meta">
+            <div><span>Máy chủ</span><strong>${escapeHtml(session.server || 'Caster')}</strong></div>
+            <div><span>Receiver</span><strong>${escapeHtml(session.receiver_id || 'Không rõ')}</strong></div>
+            <div><span>Client</span><strong>${escapeHtml(session.client_id || 'Không rõ')}</strong></div>
+            <div><span>Bắt đầu</span><strong>${formatDateTime(session.started_at)}</strong></div>
+            <div><span>Fix gần nhất</span><strong>${escapeHtml(fixLabel)}</strong></div>
+            <div><span>Vệ tinh gần nhất</span><strong>${satellitesLabel}</strong></div>
+            <div><span>Uptime</span><strong>${uptimeLabel}</strong></div>
+            <div><span>${state.updateTitle}</span><strong>${state.updatedLabel}</strong></div>
+        </div>`;
+    }
+
+    function renderRoverHistorySessionAutoSaveHtml(state, autoSaveEnabled, intervalLabel) {
+        if (state.ended) return '';
+        const note = autoSaveEnabled
+            ? `Tự lưu điểm vị trí đang bật, theo chu kỳ ${intervalLabel}.`
+            : 'Tự lưu điểm vị trí đang tắt cho tài khoản này.';
+        return `<p class="rover-history-auto-save-note">${note}</p>`;
+    }
+
+    function renderRoverHistorySessionShowMapHtml(session, points) {
+        if (!points.length) return '';
+        return `<button class="rover-history-action-button rover-history-show-route" type="button" data-session-id="${escapeHtml(session.id)}" aria-expanded="false"><i class="bi bi-map" aria-hidden="true"></i><span>Xem toàn bộ trên bản đồ</span></button>`;
+    }
+
+    function renderRoverHistorySessionActionsHtml(session, state, options) {
+        const action = renderRoverHistorySessionDeleteHtml(
+            session, state.ended, options.isAdmin, options.selectedDate, options.currentPage
+        );
+        return action ? `<div class="rover-history-session-actions">${action}</div>` : '';
+    }
+
+    function renderRoverHistorySessionHtml(session, options) {
+        const state = getRoverHistorySessionState(session);
+        const points = getRoverHistorySessionPoints(session);
+        const currentFixLabel = getRoverHistorySessionFixLabel(session);
         const positionHtml = renderRoverHistoryPositionHtml(session.last_position);
         const pointsHtml = renderRoverHistoryPointsHtml(points, {...options, sessionId: session.id});
         const routeHtml = roverHistoryGoogleMapsRoutes(points);
-        const showSessionMapHtml = points.length
-            ? `<button class="rover-history-action-button rover-history-show-route" type="button" data-session-id="${escapeHtml(session.id)}" aria-expanded="false"><i class="bi bi-map" aria-hidden="true"></i><span>Xem toàn bộ trên bản đồ</span></button>`
-            : '';
+        const showSessionMapHtml = renderRoverHistorySessionShowMapHtml(session, points);
         const sessionMapHtml = renderRoverHistorySessionMapHtml(session, points, routeHtml);
-        const deleteSessionHtml = renderRoverHistorySessionDeleteHtml(session, ended, isAdmin, selectedDate, currentPage);
-        const satellitesLabel = session.satellites == null ? 'Không rõ' : escapeHtml(session.satellites);
-        const uptimeLabel = session.uptime_seconds == null ? 'Không rõ' : escapeHtml(formatDuration(session.uptime_seconds));
-        const updatedLabel = formatDateTime(ended ? session.ended_at : session.last_seen_at);
-        return `<article class="rover-history-session ${ended ? 'is-ended' : 'is-active'}">
+        const metadataHtml = renderRoverHistorySessionMetadataHtml(session, state, currentFixLabel);
+        const autoSaveHtml = renderRoverHistorySessionAutoSaveHtml(
+            state, options.autoSaveFixedPointsEnabled, options.autoPointIntervalLabel
+        );
+        const actionsHtml = renderRoverHistorySessionActionsHtml(session, state, options);
+        return `<article class="rover-history-session ${state.className}">
             <div class="rover-history-session-heading">
                 <div class="min-w-0">
                     <span class="rover-history-label">Trạm Base</span>
                     <h6>${escapeHtml(session.base_name || 'Không rõ')}</h6>
                     <div class="small text-muted mt-1">Mountpoint · ${escapeHtml(session.mountpoint || 'Không rõ')}</div>
                 </div>
-                <span class="rover-history-status ${ended ? 'is-ended' : 'is-active'}"><i aria-hidden="true"></i>${ended ? 'Đã kết thúc' : 'Đang hoạt động'}</span>
+                <span class="rover-history-status ${state.className}"><i aria-hidden="true"></i>${state.statusLabel}</span>
             </div>
-            <div class="rover-history-meta">
-                <div><span>Máy chủ</span><strong>${escapeHtml(session.server || 'Caster')}</strong></div>
-                <div><span>Receiver</span><strong>${escapeHtml(session.receiver_id || 'Không rõ')}</strong></div>
-                <div><span>Client</span><strong>${escapeHtml(session.client_id || 'Không rõ')}</strong></div>
-                <div><span>Bắt đầu</span><strong>${formatDateTime(session.started_at)}</strong></div>
-                <div><span>Fix gần nhất</span><strong>${escapeHtml(currentFixLabel)}</strong></div>
-                <div><span>Vệ tinh gần nhất</span><strong>${satellitesLabel}</strong></div>
-                <div><span>Uptime</span><strong>${uptimeLabel}</strong></div>
-                <div><span>${ended ? 'Kết thúc' : 'Cập nhật cuối'}</span><strong>${updatedLabel}</strong></div>
-            </div>
+            ${metadataHtml}
             ${positionHtml}
             <section class="rover-history-points" aria-label="Các điểm vị trí trong phiên ${session.id}">
                 <div class="rover-history-points-heading"><strong>Điểm đo đã lưu</strong><div class="rover-history-route-tools"><span>${points.length} điểm</span>${showSessionMapHtml}</div></div>
-                ${ended ? '' : `<p class="rover-history-auto-save-note">${autoSaveFixedPointsEnabled ? `Tự lưu điểm vị trí đang bật, theo chu kỳ ${autoPointIntervalLabel}.` : 'Tự lưu điểm vị trí đang tắt cho tài khoản này.'}</p>`}
+                ${autoSaveHtml}
                 ${sessionMapHtml}
                 ${pointsHtml}
             </section>
-            ${deleteSessionHtml ? `<div class="rover-history-session-actions">${deleteSessionHtml}</div>` : ''}
+            ${actionsHtml}
         </article>`;
     }
 
